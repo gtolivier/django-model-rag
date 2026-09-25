@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no major tags (no @v10): pin the full version.
+      - uses: astral-sh/setup-uv@v10.2.0
       - run: uv run --locked ruff check
       - run: uv run --locked ruff format --check
 
@@ -32,7 +33,7 @@ jobs:
     name: test (django ${{ matrix.django }}, python ${{ matrix.python }})
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
