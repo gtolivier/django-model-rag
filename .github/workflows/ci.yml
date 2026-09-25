@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+      - run: uv run --locked ruff check
+      - run: uv run --locked ruff format --check
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Boundaries only: oldest and newest supported Python for each
+        # supported Django series. Django 5.2 also supports 3.10, but this
+        # package requires 3.11+ (3.10 reaches end of life in October 2026).
+        include:
+          - { django: "5.2", python: "3.11" }
+          - { django: "5.2", python: "3.14" }
+          - { django: "6.0", python: "3.12" }
+          - { django: "6.0", python: "3.14" }
+          - { django: "6.1", python: "3.12" }
+          - { django: "6.1", python: "3.14" }
+    name: test (django ${{ matrix.django }}, python ${{ matrix.python }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv pip install "django~=${{ matrix.django }}.0"
+      - run: uv run --no-sync pytest
