@@ -20,8 +20,10 @@ Always go through `uv run`; do not rely on an activated virtualenv.
 - `tests/testapp/` — the test bench: models copied from the prototype
   (`Category` / `Product` for a plain model, `Page` / `TextPlugin` /
   `AccordionItem` for content scattered across related models). After
-  changing them, regenerate the migration:
-  `uv run django-admin makemigrations testapp --settings=tests.settings --pythonpath=.`
+  changing them, regenerate the migration, then format it (Django's output
+  does not pass ruff): `uv run django-admin makemigrations testapp
+  --settings=tests.settings --pythonpath=. && uv run ruff format tests/testapp/migrations`.
+  A test fails while the migration and the models disagree.
 
 ## Test-driven development
 
@@ -29,8 +31,7 @@ Features are built with the `/tdd:feature` skill of the
 [`tdd` plugin](https://github.com/gtolivier/agent-workflows). Its conventions
 for this repository:
 
-- **Test command:** `uv run pytest`
-- **Lint:** `uv run ruff check` — **format:** `uv run ruff format`
+- **Test, lint and format commands:** those of the Commands section above.
 - **Test files:** everything under `tests/` — test modules and the test bench
   (`tests/settings.py`, `tests/testapp/`). Nothing outside `tests/` is a
   test file.

@@ -3,5 +3,6 @@
 SECRET_KEY = "tests-only-not-secret"
 INSTALLED_APPS = ["tests.testapp"]
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
-USE_TZ = True
+# Pinned: the default changed to BigAutoField in Django 6.0, so leaving it
+# unset would make the test app's migration drift between supported versions.
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"

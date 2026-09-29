@@ -24,7 +24,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-DJANGO_SETTINGS_MODULE = "tests.settings"
+# --ds rather than DJANGO_SETTINGS_MODULE: an exported variable of that name
+# (from another project's shell) would take precedence over the ini option.
+addopts = ["--ds=tests.settings"]
 # Makes the `tests` package (settings, test app) importable before collection.
 pythonpath = ["."]
 
