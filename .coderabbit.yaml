@@ -1,7 +1,23 @@
 # One CodeRabbit review per pull request, when it is opened: the free tier
 # for public repositories allows about one review per hour, and fix-up pushes
 # must not use it up. Ask for another review with "@coderabbitai review".
+# Every feature that writes code is off: review comments go through triage
+# (fix through the TDD subagents, or reply why not), never straight onto
+# the branch.
 reviews:
   auto_review:
     enabled: true
     auto_incremental_review: false
+  finishing_touches:
+    autofix:
+      enabled: false
+    unit_tests:
+      enabled: false
+    docstrings:
+      enabled: false
+    simplify:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false
