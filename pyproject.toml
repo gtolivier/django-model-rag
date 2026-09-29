@@ -18,11 +18,19 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-django>=4.14.0",
     "ruff>=0.16.9",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+DJANGO_SETTINGS_MODULE = "tests.settings"
+# Makes the `tests` package (settings, test app) importable before collection.
+pythonpath = ["."]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "DJ"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixtures copied from the prototype: some models have no __str__ on purpose.
+"tests/testapp/models.py" = ["DJ008"]
