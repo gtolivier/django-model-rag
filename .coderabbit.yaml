@@ -1,0 +1,7 @@
+# One CodeRabbit review per pull request, when it is opened: the free tier
+# for public repositories allows about one review per hour, and fix-up pushes
+# must not use it up. Ask for another review with "@coderabbitai review".
+reviews:
+  auto_review:
+    enabled: true
+    auto_incremental_review: false
