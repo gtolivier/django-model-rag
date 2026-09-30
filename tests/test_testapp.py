@@ -7,7 +7,7 @@ from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlu
 
 
 @pytest.mark.django_db
-def test_fixture_models_can_be_saved_and_related():
+def test_fixture_models_can_be_saved_and_related() -> None:
     category = Category.objects.create(name="Tools")
     Product.objects.create(
         name="Hammer", description="Drives nails.", price="9.90", category=category
@@ -22,5 +22,5 @@ def test_fixture_models_can_be_saved_and_related():
 
 
 @pytest.mark.django_db
-def test_migration_matches_models():
+def test_migration_matches_models() -> None:
     call_command("makemigrations", "testapp", "--check", "--dry-run")

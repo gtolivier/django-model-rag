@@ -15,6 +15,13 @@ jobs:
       - run: uv run --locked ruff check
       - run: uv run --locked ruff format --check
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv run --locked mypy
+
   test:
     runs-on: ubuntu-latest
     strategy:
