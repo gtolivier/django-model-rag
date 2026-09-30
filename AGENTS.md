@@ -8,6 +8,7 @@ Instructions for coding agents working in this repository. Read
 - Install: `uv sync`
 - Test: `uv run pytest`
 - Lint: `uv run ruff check` — format: `uv run ruff format`
+- Type check: `uv run --group typecheck mypy` (strict, with the django-stubs plugin)
 
 Always go through `uv run`; do not rely on an activated virtualenv.
 
@@ -31,7 +32,8 @@ Features are built with the `/tdd:feature` skill of the
 [`tdd` plugin](https://github.com/gtolivier/agent-workflows). Its conventions
 for this repository:
 
-- **Test, lint and format commands:** those of the Commands section above.
+- **Test, lint, type-check and format commands:** those of the Commands
+  section above.
 - **Test files:** everything under `tests/` — test modules and the test bench
   (`tests/settings.py`, `tests/testapp/`). Nothing outside `tests/` is a
   test file.
@@ -46,6 +48,12 @@ for this repository:
 - **Test-first:** every behavior in `src/` is introduced by a failing test.
   An earlier prototype serves as the behavioral reference; do not copy its
   code — re-derive each function from a red test.
+- **Clean code, enforced where a tool can:** ruff flags magic values in
+  comparisons (numbers and strings, outside `tests/`), complexity, naming,
+  unused arguments and commented-out code; mypy runs in strict mode, so
+  every function is annotated. A `# noqa` or `# type: ignore` must name
+  the error it silences (both tools enforce it) and come with a comment
+  saying why.
 - **Supported versions:** Python 3.11+, Django 5.2 LTS / 6.0 / 6.1. Keep the
   CI matrix in `.github/workflows/ci.yml` in sync when this changes.
 - **No `CLAUDE.md`:** this file is the single source of agent instructions.
