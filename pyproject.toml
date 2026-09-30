@@ -25,10 +25,6 @@ typecheck = [
     "django-stubs[compatible-mypy]>=6.1.1",
 ]
 
-[tool.uv]
-# Both groups locally; CI's lint and test jobs skip `typecheck`.
-default-groups = ["dev", "typecheck"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # --ds rather than DJANGO_SETTINGS_MODULE: an exported variable of that name
@@ -51,6 +47,11 @@ select = [
     "RUF100",  # unused `# noqa`
 ]
 
+[tool.ruff.lint.flake8-unused-arguments]
+# `*args` / `**kwargs` that a framework signature requires (signal
+# receivers, overridden methods).
+ignore-variadic-names = true
+
 [tool.ruff.lint.pylint]
 # Magic values: flag strings too, not only numbers (the default allows
 # "str" and "bytes").
@@ -61,7 +62,12 @@ allow-magic-value-types = []
 "tests/testapp/models.py" = ["DJ008"]
 # Literal examples are what tests are made of; pytest fixtures such as `db`
 # are requested for their side effects only.
-"tests/**" = ["PLR2004", "ARG001"]
+"tests/**" = ["PLR2004", "ARG001", "ARG002"]
+# RunPython functions must accept (apps, schema_editor), used or not.
+"**/migrations/**" = ["ARG001"]
+# AppConfig.ready() imports inside the method: at module level, the import
+# would run before the app registry is ready.
+"**/apps.py" = ["PLC0415"]
 
 [tool.mypy]
 files = ["src", "tests"]

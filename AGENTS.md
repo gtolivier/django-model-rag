@@ -8,7 +8,7 @@ Instructions for coding agents working in this repository. Read
 - Install: `uv sync`
 - Test: `uv run pytest`
 - Lint: `uv run ruff check` — format: `uv run ruff format`
-- Type check: `uv run mypy` (strict, with the django-stubs plugin)
+- Type check: `uv run --group typecheck mypy` (strict, with the django-stubs plugin)
 
 Always go through `uv run`; do not rely on an activated virtualenv.
 
