@@ -12,8 +12,8 @@ jobs:
       - uses: actions/checkout@v7
       # setup-uv publishes no major tags (no @v10): pin the full version.
       - uses: astral-sh/setup-uv@v10.2.0
-      - run: uv run --locked ruff check
-      - run: uv run --locked ruff format --check
+      - run: uv run --locked --no-group typecheck ruff check
+      - run: uv run --locked --no-group typecheck ruff format --check
 
   typecheck:
     runs-on: ubuntu-latest
@@ -44,6 +44,6 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           enable-cache: true
-      - run: uv sync --locked
+      - run: uv sync --locked --no-group typecheck
       - run: uv pip install "django~=${{ matrix.django }}.0"
       - run: uv run --no-sync pytest

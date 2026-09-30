@@ -135,10 +135,12 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "django-stubs", extra = ["compatible-mypy"] },
     { name = "pytest" },
     { name = "pytest-django" },
     { name = "ruff" },
+]
+typecheck = [
+    { name = "django-stubs", extra = ["compatible-mypy"] },
 ]
 
 [package.metadata]
@@ -146,11 +148,11 @@ requires-dist = [{ name = "django", specifier = ">=5.2" }]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=6.1.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-django", specifier = ">=4.14.0" },
     { name = "ruff", specifier = ">=0.16.9" },
 ]
+typecheck = [{ name = "django-stubs", extras = ["compatible-mypy"], specifier = ">=6.1.1" }]
 
 [[package]]
 name = "django-stubs"
