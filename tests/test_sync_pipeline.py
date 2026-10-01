@@ -1,6 +1,7 @@
 from collections.abc import Callable
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import Category, Product
@@ -262,3 +263,10 @@ def test_document_text_keeps_a_declared_field_whose_value_is_zero(
     [document] = SyncPipeline().run()
 
     assert document.text == "Sticker\n\n0.00"
+
+
+def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
+    register: Callable[..., None],
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match="nmae"):
+        register(Product, fields=["nmae"])
