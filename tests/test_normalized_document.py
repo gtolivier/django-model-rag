@@ -137,6 +137,23 @@ def test_document_keeps_its_own_copy_of_the_metadata_it_is_given() -> None:
     assert document.metadata == {"category": "Lighting"}
 
 
+def test_document_metadata_cannot_be_modified_through_the_document() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        metadata={"category": "Lighting"},
+    )
+
+    # The assignment deliberately writes to a read-only Mapping: the type
+    # checker rightly rejects it, and the test checks the runtime rejects it too.
+    with pytest.raises(TypeError):
+        document.metadata["category"] = "Furniture"  # type: ignore[index]
+
+    assert document.metadata == {"category": "Lighting"}
+
+
 def test_document_source_key_identifies_its_source() -> None:
     document = NormalizedDocument(
         text="A desk lamp",
