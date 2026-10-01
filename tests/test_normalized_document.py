@@ -38,3 +38,10 @@ def test_document_source_is_mandatory() -> None:
             source_app_label="testapp",
             source_model="product",
         )
+
+
+def test_document_arguments_are_keyword_only() -> None:
+    # The call deliberately passes the arguments positionally: the type checker
+    # rightly rejects it, and the test checks the runtime rejects it too.
+    with pytest.raises(TypeError):
+        NormalizedDocument("A desk lamp", "testapp", "product", 1)  # type: ignore[call-arg]
