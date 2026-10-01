@@ -5,7 +5,7 @@ from dataclasses import dataclass
 __all__ = ["NormalizedDocument"]
 
 
-@dataclass
+@dataclass(kw_only=True)
 class NormalizedDocument:
     """A piece of text together with the model instance it comes from."""
 
