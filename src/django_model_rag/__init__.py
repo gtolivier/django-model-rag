@@ -28,7 +28,7 @@ class NormalizedDocument:
     __hash__: ClassVar[None] = None  # type: ignore[assignment]  # typeshed types object.__hash__ as a method
 
     def __post_init__(self) -> None:
-        """Reject a document whose source instance has no primary key."""
+        """Require a source primary key; copy the metadata so callers can't alter it."""
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
