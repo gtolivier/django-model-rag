@@ -32,6 +32,7 @@ class NormalizedDocument:
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
+        object.__setattr__(self, "metadata", dict(self.metadata))
 
     @property
     def source_key(self) -> str:
