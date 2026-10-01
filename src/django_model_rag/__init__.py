@@ -10,7 +10,7 @@ __all__ = ["NormalizedDocument"]
 _REPR_TEXT_LENGTH = 60
 
 
-def _shorten(value: str) -> str:
+def _short_repr(value: str) -> str:
     """Quote ``value``, cut to its first characters and marked with an ellipsis."""
     if len(value) > _REPR_TEXT_LENGTH:
         return repr(value[:_REPR_TEXT_LENGTH]) + "…"
@@ -49,6 +49,6 @@ class NormalizedDocument:
 
     def __repr__(self) -> str:
         """Show the source key, the title and the text, truncated to stay short."""
-        title = _shorten(self.title)
-        text = _shorten(self.text)
+        title = _short_repr(self.title)
+        text = _short_repr(self.text)
         return f"<NormalizedDocument {self.source_key} title={title} text={text}>"
