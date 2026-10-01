@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
-__all__ = ["NormalizedDocument"]
+__all__ = ["NormalizedDocument", "SyncPipeline"]
 
 _REPR_TEXT_LENGTH = 60
 
@@ -52,3 +52,11 @@ class NormalizedDocument:
         title = _short_repr(self.title)
         text = _short_repr(self.text)
         return f"<NormalizedDocument {self.source_key} title={title} text={text}>"
+
+
+class SyncPipeline:
+    """Turn registered models into normalized documents."""
+
+    def run(self) -> list[NormalizedDocument]:
+        """Produce the documents of every registered model."""
+        return []
