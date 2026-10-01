@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Hashable
 from typing import Any
 
 import pytest
@@ -244,3 +245,12 @@ def test_document_attributes_cannot_be_reassigned(field_name: str) -> None:
     # it type-checks the same before and after the class becomes immutable.
     with pytest.raises(AttributeError):
         setattr(document, field_name, "Other")
+
+
+def test_document_is_not_hashable() -> None:
+    # Documents compare by value but are not meant for sets or dict keys.
+    document = NormalizedDocument(**DOCUMENT_VALUES)
+
+    assert not isinstance(document, Hashable)
+    with pytest.raises(TypeError):
+        hash(document)
