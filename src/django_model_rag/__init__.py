@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
-__all__ = ["NormalizedDocument", "SyncPipeline", "rag"]
+__all__ = ["AlreadyRegistered", "NormalizedDocument", "SyncPipeline", "rag"]
 
 _REPR_TEXT_LENGTH = 60
 _FIELD_SEPARATOR = "\n\n"
@@ -113,6 +113,10 @@ def _require_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message) from error
 
 
+class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
+    """A model is registered a second time."""
+
+
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
@@ -124,8 +128,12 @@ class Registry:
         """Register ``model`` with the fields to extract.
 
         Raises:
+            AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: a field is not one of the model's.
         """
+        if model in self._fields:
+            message = f"{model.__name__} is already registered"
+            raise AlreadyRegistered(message)
         for name in fields:
             _require_field(model, name)
         self._fields[model] = fields
