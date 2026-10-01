@@ -5,7 +5,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
-__all__ = ["NormalizedDocument", "SyncPipeline"]
+from django.db.models import Model
+
+__all__ = ["NormalizedDocument", "SyncPipeline", "rag"]
 
 _REPR_TEXT_LENGTH = 60
 
@@ -60,3 +62,22 @@ class SyncPipeline:
     def run(self) -> list[NormalizedDocument]:
         """Produce the documents of every registered model."""
         return []
+
+
+class Registry:
+    """Hold the models whose content feeds the pipeline."""
+
+    def __init__(self) -> None:
+        """Start with no registered model."""
+        self._fields: dict[type[Model], list[str]] = {}
+
+    def register(self, model: type[Model], *, fields: list[str]) -> None:
+        """Register ``model`` with the fields to extract."""
+        self._fields[model] = fields
+
+    def unregister(self, model: type[Model]) -> None:
+        """Forget ``model``."""
+        del self._fields[model]
+
+
+rag = Registry()
