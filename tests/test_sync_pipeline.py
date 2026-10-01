@@ -3,7 +3,7 @@ from collections.abc import Callable
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from django_model_rag import AlreadyRegistered, SyncPipeline, rag
+from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
 from tests.testapp.models import Category, Product
 
 
@@ -317,3 +317,8 @@ def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
 
     [document] = SyncPipeline().run()
     assert document.text == "Hammer"
+
+
+def test_unregistering_a_model_that_is_not_registered_fails() -> None:
+    with pytest.raises(NotRegistered):
+        rag.unregister(Product)
