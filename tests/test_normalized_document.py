@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 
 from django_model_rag import NormalizedDocument
@@ -116,3 +118,24 @@ def test_document_source_key_identifies_its_source() -> None:
     )
 
     assert document.source_key == "testapp.product:1"
+
+
+def test_document_source_key_uses_the_string_form_of_any_primary_key() -> None:
+    page_uuid = uuid.UUID("12345678-1234-5678-1234-567812345678")
+    uuid_document = NormalizedDocument(
+        text="Welcome",
+        source_app_label="testapp",
+        source_model="page",
+        source_pk=page_uuid,
+    )
+    string_document = NormalizedDocument(
+        text="Welcome",
+        source_app_label="testapp",
+        source_model="page",
+        source_pk="intro",
+    )
+
+    assert uuid_document.source_key == (
+        "testapp.page:12345678-1234-5678-1234-567812345678"
+    )
+    assert string_document.source_key == "testapp.page:intro"
