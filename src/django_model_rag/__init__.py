@@ -6,7 +6,7 @@ from typing import Any
 
 __all__ = ["NormalizedDocument"]
 
-REPR_TEXT_LENGTH = 60
+_REPR_TEXT_LENGTH = 60
 
 
 @dataclass(frozen=True, kw_only=True, repr=False)
@@ -29,8 +29,8 @@ class NormalizedDocument:
 
     def __repr__(self) -> str:
         text = self.text
-        if len(text) > REPR_TEXT_LENGTH:
-            text = text[:REPR_TEXT_LENGTH] + "…"
+        if len(text) > _REPR_TEXT_LENGTH:
+            text = text[:_REPR_TEXT_LENGTH] + "…"
         return (
             f"<NormalizedDocument {self.source_key} title={self.title!r} text={text!r}>"
         )
