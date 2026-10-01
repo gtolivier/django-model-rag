@@ -15,3 +15,4 @@ class NormalizedDocument:
     source_pk: int
     title: str = ""
     url: str = ""
+    language: str | None = None
