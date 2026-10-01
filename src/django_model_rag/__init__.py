@@ -100,6 +100,19 @@ class SyncPipeline:
         ]
 
 
+def _require_field(model: type[Model], name: str) -> None:
+    """Fail unless ``model`` has a field called ``name``.
+
+    Raises:
+        ImproperlyConfigured: ``model`` has no such field.
+    """
+    try:
+        model._meta.get_field(name)
+    except FieldDoesNotExist as error:
+        message = f"{model.__name__} has no field {name!r}"
+        raise ImproperlyConfigured(message) from error
+
+
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
@@ -114,11 +127,7 @@ class Registry:
             ImproperlyConfigured: a field is not one of the model's.
         """
         for name in fields:
-            try:
-                model._meta.get_field(name)
-            except FieldDoesNotExist as error:
-                message = f"{model.__name__} has no field {name!r}"
-                raise ImproperlyConfigured(message) from error
+            _require_field(model, name)
         self._fields[model] = fields
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
