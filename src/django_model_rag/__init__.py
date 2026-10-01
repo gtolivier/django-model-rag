@@ -61,7 +61,16 @@ class SyncPipeline:
 
     def run(self) -> list[NormalizedDocument]:
         """Produce the documents of every registered model."""
-        return []
+        return [
+            NormalizedDocument(
+                text=str(getattr(instance, fields[0])),
+                source_app_label=model._meta.app_label,  # Django's public meta API
+                source_model=model._meta.model_name or "",  # Django's public meta API
+                source_pk=instance.pk,
+            )
+            for model, fields in rag.declarations()
+            for instance in model._default_manager.all()
+        ]
 
 
 class Registry:
@@ -74,6 +83,10 @@ class Registry:
     def register(self, model: type[Model], *, fields: list[str]) -> None:
         """Register ``model`` with the fields to extract."""
         self._fields[model] = fields
+
+    def declarations(self) -> list[tuple[type[Model], list[str]]]:
+        """List each registered model with its declared fields."""
+        return list(self._fields.items())
 
     def unregister(self, model: type[Model]) -> None:
         """Forget ``model``."""
