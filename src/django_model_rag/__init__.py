@@ -23,6 +23,7 @@ class NormalizedDocument:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        """Reject a document whose source instance has no primary key."""
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
@@ -33,6 +34,7 @@ class NormalizedDocument:
         return f"{self.source_app_label}.{self.source_model}:{self.source_pk}"
 
     def __repr__(self) -> str:
+        """Show the source key, the title and the text, truncated to stay short."""
         text = self.text
         if len(text) > _REPR_TEXT_LENGTH:
             text = text[:_REPR_TEXT_LENGTH] + "…"
