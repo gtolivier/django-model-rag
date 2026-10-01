@@ -76,7 +76,7 @@ class SyncPipeline:
         """Produce the documents of every registered model."""
         return [
             NormalizedDocument(
-                text=_document_text(instance, fields),
+                text=text,
                 source_app_label=model._meta.app_label,  # Django's public meta API
                 source_model=model._meta.model_name or "",  # Django's public meta API
                 source_pk=instance.pk,
@@ -84,7 +84,7 @@ class SyncPipeline:
             )
             for model, fields in rag.declarations()
             for instance in model._default_manager.all()
-            if _document_text(instance, fields)
+            if (text := _document_text(instance, fields))
         ]
 
 
