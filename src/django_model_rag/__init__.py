@@ -60,7 +60,8 @@ class NormalizedDocument:
 
 def _field_text(instance: Model, name: str) -> str:
     """Read the field ``name`` of ``instance`` as text."""
-    return str(getattr(instance, name))
+    value = getattr(instance, name)
+    return "" if value is None else str(value)
 
 
 def _is_blank(text: str) -> bool:
