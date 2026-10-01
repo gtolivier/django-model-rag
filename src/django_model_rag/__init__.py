@@ -88,22 +88,30 @@ def _document_title(instance: Model, fields: list[str]) -> str:
     return "" if _is_blank(title) else title
 
 
+def _document(instance: Model, fields: list[str]) -> NormalizedDocument | None:
+    """Build the document of ``instance``, or nothing when its ``fields`` are blank."""
+    text = _document_text(instance, fields)
+    if not text:
+        return None
+    return NormalizedDocument(
+        text=text,
+        source_app_label=instance._meta.app_label,  # Django's public meta API
+        source_model=instance._meta.model_name or "",  # Django's public meta API
+        source_pk=instance.pk,
+        title=_document_title(instance, fields),
+    )
+
+
 class SyncPipeline:
     """Turn registered models into normalized documents."""
 
     def run(self) -> list[NormalizedDocument]:
         """Produce the documents of every registered model."""
         return [
-            NormalizedDocument(
-                text=text,
-                source_app_label=model._meta.app_label,  # Django's public meta API
-                source_model=model._meta.model_name or "",  # Django's public meta API
-                source_pk=instance.pk,
-                title=_document_title(instance, fields),
-            )
+            document
             for model, fields in rag.declarations()
             for instance in model._default_manager.order_by("pk")
-            if (text := _document_text(instance, fields))
+            if (document := _document(instance, fields)) is not None
         ]
 
 
