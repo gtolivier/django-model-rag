@@ -32,6 +32,12 @@ The prototype is the behavioral reference: each behavior is re-derived from
 a failing test, and its code is not copied. Leaves come first, so that each
 feature builds on code that is already green.
 
+When a feature starts, its list of behaviors says, for each behavior of the
+prototype it covers, whether it is kept, fixed or dropped — broad
+`except Exception` clauses, for instance, or a title taken from a field even
+when that field is empty. The prototype is a reference to judge, not a model
+to copy.
+
 - [ ] **1. `guess_text_fields(instance)`** — which fields of a model hold
   semantic text: text field types, excluded names, text fields whose name
   ends in `_id`, and an order that puts title-like names first.
