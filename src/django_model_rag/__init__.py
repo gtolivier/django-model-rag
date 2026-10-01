@@ -10,6 +10,7 @@ from django.db.models import Model
 __all__ = ["NormalizedDocument", "SyncPipeline", "rag"]
 
 _REPR_TEXT_LENGTH = 60
+_FIELD_SEPARATOR = "\n\n"
 
 
 def _short_repr(value: str) -> str:
@@ -63,7 +64,9 @@ class SyncPipeline:
         """Produce the documents of every registered model."""
         return [
             NormalizedDocument(
-                text="\n\n".join(str(getattr(instance, name)) for name in fields),
+                text=_FIELD_SEPARATOR.join(
+                    str(getattr(instance, name)) for name in fields
+                ),
                 source_app_label=model._meta.app_label,  # Django's public meta API
                 source_model=model._meta.model_name or "",  # Django's public meta API
                 source_pk=instance.pk,
