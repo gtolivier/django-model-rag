@@ -13,3 +13,5 @@ class NormalizedDocument:
     source_app_label: str
     source_model: str
     source_pk: int
+    title: str = ""
+    url: str = ""
