@@ -44,7 +44,7 @@ Features are described by what they do. Only the public API is named:
 internal functions get their names and signatures from the tests and the
 refactoring, not from the prototype.
 
-- [ ] **1. `NormalizedDocument`** — its attributes, a stable `source_key`
+- [x] **1. `NormalizedDocument`** — its attributes, a stable `source_key`
   (`app_label.model_name:pk`) and a readable `repr`.
 - [ ] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
   then `SyncPipeline().run()` returns one document per instance of the
