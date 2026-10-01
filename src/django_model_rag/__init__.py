@@ -22,6 +22,11 @@ class NormalizedDocument:
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if self.source_pk is None:
+            msg = "source_pk cannot be None"
+            raise ValueError(msg)
+
     @property
     def source_key(self) -> str:
         """Identify the source instance as ``app_label.model:pk``."""
