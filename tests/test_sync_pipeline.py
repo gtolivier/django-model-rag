@@ -98,6 +98,19 @@ def test_document_text_leaves_out_a_declared_field_with_a_blank_value(
 
 
 @pytest.mark.django_db
+def test_instance_without_text_in_its_declared_fields_produces_no_document(
+    register: Callable[..., None],
+) -> None:
+    named = Category.objects.create(name="Tools")
+    Category.objects.create(name="")
+    register(Category, fields=["name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.source_pk for document in documents] == [named.pk]
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field(
     register: Callable[..., None],
 ) -> None:
