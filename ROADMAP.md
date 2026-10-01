@@ -29,8 +29,10 @@ feature also ticks it here.
 ## Rewrite of the prototype
 
 The prototype is the behavioral reference: each behavior is re-derived from
-a failing test, and its code is not copied. Leaves come first, so that each
-feature builds on code that is already green.
+a failing test, and its code is not copied. The work goes outside in: each
+feature starts from the public API — `rag.register` and `SyncPipeline` — and
+the internal functions appear in the refactoring, so that the package does
+not inherit the prototype's breakdown.
 
 When a feature starts, its list of behaviors says, for each behavior of the
 prototype it covers, whether it is kept, fixed or dropped — broad
@@ -42,33 +44,32 @@ Features are described by what they do. Only the public API is named:
 internal functions get their names and signatures from the tests and the
 refactoring, not from the prototype.
 
-- [ ] **1. Guess the text fields of a model** — which fields hold semantic
-  text: text field types, excluded names, text fields whose name ends in
-  `_id`, and an order that puts title-like names first.
-- [ ] **2. Guess the language and the URL of an instance** — a language
-  read from common attribute names, a URL from `get_absolute_url`, and
-  their fallbacks.
-- [ ] **3. Collect the text of related objects** — across foreign keys,
-  reverse relations and many-to-many relations; a missing or empty relation
-  yields no text.
-- [ ] **4. `NormalizedDocument`** — its attributes, a stable `source_key`
+- [ ] **1. `NormalizedDocument`** — its attributes, a stable `source_key`
   (`app_label.model_name:pk`) and a readable `repr`.
-- [ ] **5. Extract a document from an instance** — the base class a project
-  subclasses for its own extractors (`BaseExtractor`), and the default
-  extraction behind `rag.register`: declared or guessed fields, followed
-  relations, no document for empty content, a title taken from the first
-  field (or the instance's string form when there is no field), a language
-  and a URL from configured fields or from the guesses, permissions passed
-  through.
-- [ ] **6. The registry and the `rag` singleton** — `rag.register`,
-  `rag.register_extractor` (a class decorator), the list of registered
-  models, and the public API: `rag`, `BaseExtractor`, `NormalizedDocument`
-  and `SyncPipeline` importable from `django_model_rag`, as a project needs
-  them to write its own extractors.
-- [ ] **7. `SyncPipeline`, without a chunker** — a full run over the
-  registered models or a subset of them, a run for a single instance, and
-  extractors that return one document, several or none; each document goes
-  to the output. The questions below are settled before it starts.
+- [ ] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
+  then `SyncPipeline().run()` returns one document per instance of the
+  registered models: the text of the declared fields, a title taken from the
+  first field, the source of the document, and no document for empty
+  content. `rag`, `NormalizedDocument` and `SyncPipeline` are importable
+  from `django_model_rag`.
+- [ ] **3. Custom extractors** — `rag.register_extractor` (a class
+  decorator) and `BaseExtractor`, also importable from `django_model_rag`;
+  extractors that return one document, several or none; a run over a subset
+  of the models, a run for a single instance, and the list of registered
+  models.
+- [ ] **4. Guessed fields** — `rag.register(Model)` without `fields`: which
+  fields hold semantic text (text field types, excluded names, text fields
+  whose name ends in `_id`), an order that puts title-like names first, and
+  the instance's string form as the title when there is no field.
+- [ ] **5. Followed relations** — `follow=[...]` adds the text of related
+  objects, across foreign keys, reverse relations and many-to-many
+  relations; a missing or empty relation adds nothing.
+- [ ] **6. Language, URL and permissions** — from configured fields
+  (`language_field`, `url_field`) or guessed (common attribute names,
+  `get_absolute_url`), with their fallbacks; permissions passed through.
+- [ ] **7. The output** — each document goes to an output that the project
+  supplies, instead of only being returned. The questions below are settled
+  before it starts.
 
 Then, in django-model-rag-demo, an integration test replays the prototype's
 demo scenario against the installed package: a product with its category, a
