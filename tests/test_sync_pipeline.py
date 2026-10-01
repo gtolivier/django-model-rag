@@ -99,6 +99,21 @@ def test_document_text_leaves_out_a_declared_field_with_a_blank_value(
 
 
 @pytest.mark.django_db
+def test_document_text_leaves_out_a_declared_field_whose_value_is_none(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    register(Product, fields=["name", "subtitle"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Hammer"
+
+
+@pytest.mark.django_db
 def test_instance_without_text_in_its_declared_fields_produces_no_document(
     register: Callable[..., None],
 ) -> None:

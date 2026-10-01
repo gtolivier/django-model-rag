@@ -20,6 +20,7 @@ class Category(models.Model):
 class Product(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField()
+    subtitle = models.CharField(max_length=200, blank=True, null=True)  # noqa: DJ001 -- the test bench needs a field whose value can be None
     price = models.DecimalField(max_digits=8, decimal_places=2)
     category = models.ForeignKey(
         Category, on_delete=models.CASCADE, related_name="products"
