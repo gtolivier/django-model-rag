@@ -63,7 +63,7 @@ class SyncPipeline:
         """Produce the documents of every registered model."""
         return [
             NormalizedDocument(
-                text=str(getattr(instance, fields[0])),
+                text="\n\n".join(str(getattr(instance, name)) for name in fields),
                 source_app_label=model._meta.app_label,  # Django's public meta API
                 source_model=model._meta.model_name or "",  # Django's public meta API
                 source_pk=instance.pk,
