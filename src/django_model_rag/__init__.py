@@ -94,7 +94,7 @@ class SyncPipeline:
                 title=_document_title(instance, fields),
             )
             for model, fields in rag.declarations()
-            for instance in model._default_manager.all()
+            for instance in model._default_manager.order_by("pk")
             if (text := _document_text(instance, fields))
         ]
 
