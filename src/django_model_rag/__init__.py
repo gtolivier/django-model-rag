@@ -1,6 +1,7 @@
 """Discover and normalize text content from any Django model."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 __all__ = ["NormalizedDocument"]
 
@@ -16,3 +17,4 @@ class NormalizedDocument:
     title: str = ""
     url: str = ""
     language: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
