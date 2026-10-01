@@ -46,11 +46,13 @@ refactoring, not from the prototype.
 
 - [x] **1. `NormalizedDocument`** — its attributes, a stable `source_key`
   (`app_label.model_name:pk`) and a readable `repr`.
-- [ ] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
+- [x] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
   then `SyncPipeline().run()` returns one document per instance of the
   registered models: the text of the declared fields, a title taken from the
   first field, the source of the document, and no document for empty
-  content. `rag`, `NormalizedDocument` and `SyncPipeline` are importable
+  content. `rag.unregister`, and `AlreadyRegistered` / `NotRegistered` as in
+  `django.contrib.admin`; an unknown field fails at registration. `rag`,
+  `NormalizedDocument`, `SyncPipeline` and the two exceptions are importable
   from `django_model_rag`.
 - [ ] **3. Custom extractors** — `rag.register_extractor` (a class
   decorator) and `BaseExtractor`, also importable from `django_model_rag`;
