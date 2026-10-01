@@ -141,6 +141,21 @@ def test_document_title_follows_the_declared_field_order(
 
 
 @pytest.mark.django_db
+def test_document_title_is_empty_when_the_first_declared_field_is_blank(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="   ", price="9.90", category=category
+    )
+    register(Product, fields=["description", "name"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.title == ""
+
+
+@pytest.mark.django_db
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
