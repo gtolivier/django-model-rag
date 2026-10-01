@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 __all__ = ["NormalizedDocument"]
@@ -32,7 +33,7 @@ class NormalizedDocument:
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
 
     @property
     def source_key(self) -> str:
