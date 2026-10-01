@@ -38,6 +38,21 @@ def test_registered_model_produces_a_document_from_its_declared_field(
 
 
 @pytest.mark.django_db
+def test_document_text_joins_declared_fields_with_a_blank_line(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    register(Product, fields=["name", "description"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Hammer\n\nDrives nails."
+
+
+@pytest.mark.django_db
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
