@@ -235,6 +235,25 @@ def test_document_repr_shows_a_text_of_exactly_60_characters_whole() -> None:
     )
 
 
+def test_document_repr_cuts_a_long_title_to_its_first_60_characters() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        title=(
+            "Desk lamp with an adjustable arm, "
+            "a weighted base and a warm white LED bulb"
+        ),
+    )
+
+    assert repr(document) == (
+        "<NormalizedDocument testapp.product:1 "
+        "title='Desk lamp with an adjustable arm, a weighted base and a warm…' "
+        "text='A desk lamp'>"
+    )
+
+
 DOCUMENT_VALUES: dict[str, Any] = {
     "text": "A desk lamp",
     "source_app_label": "testapp",
