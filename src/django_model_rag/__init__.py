@@ -11,10 +11,10 @@ _REPR_TEXT_LENGTH = 60
 
 
 def _shorten(value: str) -> str:
-    """Cut ``value`` to its first characters, marking the cut with an ellipsis."""
+    """Quote ``value``, cut to its first characters and marked with an ellipsis."""
     if len(value) > _REPR_TEXT_LENGTH:
-        return value[:_REPR_TEXT_LENGTH] + "…"
-    return value
+        return repr(value[:_REPR_TEXT_LENGTH]) + "…"
+    return repr(value)
 
 
 @dataclass(frozen=True, kw_only=True, repr=False)
@@ -51,4 +51,4 @@ class NormalizedDocument:
         """Show the source key, the title and the text, truncated to stay short."""
         title = _shorten(self.title)
         text = _shorten(self.text)
-        return f"<NormalizedDocument {self.source_key} title={title!r} text={text!r}>"
+        return f"<NormalizedDocument {self.source_key} title={title} text={text}>"
