@@ -68,3 +68,22 @@ def test_document_language_is_unknown_by_default() -> None:
     )
 
     assert document.language is None
+
+
+def test_document_metadata_defaults_to_its_own_empty_dict() -> None:
+    first = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+    )
+    second = NormalizedDocument(
+        text="An office chair",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=2,
+    )
+
+    assert first.metadata == {}
+    assert second.metadata == {}
+    assert first.metadata is not second.metadata
