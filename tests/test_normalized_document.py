@@ -122,6 +122,21 @@ def test_document_exposes_its_title_url_language_and_metadata() -> None:
     assert document.metadata == {"category": "Lighting"}
 
 
+def test_document_keeps_its_own_copy_of_the_metadata_it_is_given() -> None:
+    metadata = {"category": "Lighting"}
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        metadata=metadata,
+    )
+
+    metadata["category"] = "Furniture"
+
+    assert document.metadata == {"category": "Lighting"}
+
+
 def test_document_source_key_identifies_its_source() -> None:
     document = NormalizedDocument(
         text="A desk lamp",
