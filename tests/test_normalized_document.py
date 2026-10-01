@@ -214,7 +214,7 @@ def test_document_repr_cuts_a_long_text_to_its_first_60_characters() -> None:
 
     assert repr(document) == (
         "<NormalizedDocument testapp.product:1 title='Lamp' "
-        "text='A desk lamp with an adjustable arm, a weighted base and a wa…'>"
+        "text='A desk lamp with an adjustable arm, a weighted base and a wa'…>"
     )
 
 
@@ -249,7 +249,7 @@ def test_document_repr_cuts_a_long_title_to_its_first_60_characters() -> None:
 
     assert repr(document) == (
         "<NormalizedDocument testapp.product:1 "
-        "title='Desk lamp with an adjustable arm, a weighted base and a warm…' "
+        "title='Desk lamp with an adjustable arm, a weighted base and a warm'… "
         "text='A desk lamp'>"
     )
 
