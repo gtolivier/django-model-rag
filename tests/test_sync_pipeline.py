@@ -83,6 +83,21 @@ def test_document_title_is_the_value_of_the_first_declared_field(
 
 
 @pytest.mark.django_db
+def test_document_title_follows_the_declared_field_order(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    register(Product, fields=["description", "name"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.title == "Drives nails."
+
+
+@pytest.mark.django_db
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
