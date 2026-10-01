@@ -188,3 +188,18 @@ def test_document_carries_the_source_of_its_own_model(
         document.source_model,
         document.source_pk,
     ) == ("testapp", "category", category.pk)
+
+
+@pytest.mark.django_db
+def test_document_text_holds_the_string_form_of_a_non_text_field(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Drill", description="Bores holes.", price="149.00", category=category
+    )
+    register(Product, fields=["name", "price"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Drill\n\n149.00"
