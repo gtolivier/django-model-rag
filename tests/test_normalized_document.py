@@ -45,3 +45,15 @@ def test_document_arguments_are_keyword_only() -> None:
     # rightly rejects it, and the test checks the runtime rejects it too.
     with pytest.raises(TypeError):
         NormalizedDocument("A desk lamp", "testapp", "product", 1)  # type: ignore[call-arg]
+
+
+def test_document_title_and_url_default_to_empty() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+    )
+
+    assert document.title == ""
+    assert document.url == ""
