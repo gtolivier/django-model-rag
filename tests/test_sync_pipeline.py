@@ -111,6 +111,25 @@ def test_instance_without_text_in_its_declared_fields_produces_no_document(
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_documents_come_in_ascending_primary_key_order(
+    register: Callable[..., None],
+) -> None:
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    kitchen = Category.objects.create(name="Kitchen")
+    register(Category, fields=["name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.source_pk for document in documents] == [
+        tools.pk,
+        garden.pk,
+        kitchen.pk,
+    ]
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field(
     register: Callable[..., None],
 ) -> None:

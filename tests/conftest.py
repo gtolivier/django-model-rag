@@ -1,9 +1,24 @@
 from collections.abc import Callable, Iterator
 
 import pytest
+from django.db import connection
 from django.db.models import Model
 
 from django_model_rag import rag
+
+
+@pytest.fixture
+def unordered_selects_reversed(db: None) -> Iterator[None]:
+    """Make SQLite return the rows of any query without ORDER BY in reverse.
+
+    SQLite otherwise tends to return rows in primary key order anyway, which
+    would hide a query that relies on that instead of ordering explicitly.
+    """
+    with connection.cursor() as cursor:
+        cursor.execute("PRAGMA reverse_unordered_selects = ON")
+    yield
+    with connection.cursor() as cursor:
+        cursor.execute("PRAGMA reverse_unordered_selects = OFF")
 
 
 @pytest.fixture
