@@ -9,7 +9,7 @@ __all__ = ["NormalizedDocument"]
 REPR_TEXT_LENGTH = 60
 
 
-@dataclass(kw_only=True, repr=False)
+@dataclass(frozen=True, kw_only=True, repr=False)
 class NormalizedDocument:
     """A piece of text together with the model instance it comes from."""
 
