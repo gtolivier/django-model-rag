@@ -62,11 +62,22 @@ def _field_text(instance: Model, name: str) -> str:
     return str(getattr(instance, name))
 
 
+def _is_blank(text: str) -> bool:
+    """Tell whether ``text`` holds nothing but whitespace."""
+    return not text.strip()
+
+
 def _document_text(instance: Model, fields: list[str]) -> str:
     """Join the non-blank values of the ``fields`` of ``instance``, in order."""
     return _FIELD_SEPARATOR.join(
-        text for name in fields if (text := _field_text(instance, name)).strip()
+        text for name in fields if not _is_blank(text := _field_text(instance, name))
     )
+
+
+def _document_title(instance: Model, fields: list[str]) -> str:
+    """Read the first of the ``fields`` of ``instance``, or nothing when it is blank."""
+    title = _field_text(instance, fields[0])
+    return "" if _is_blank(title) else title
 
 
 class SyncPipeline:
@@ -80,8 +91,7 @@ class SyncPipeline:
                 source_app_label=model._meta.app_label,  # Django's public meta API
                 source_model=model._meta.model_name or "",  # Django's public meta API
                 source_pk=instance.pk,
-                title=_field_text(instance, fields[0]).strip()
-                and _field_text(instance, fields[0]),
+                title=_document_title(instance, fields),
             )
             for model, fields in rag.declarations()
             for instance in model._default_manager.all()
