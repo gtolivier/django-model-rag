@@ -54,3 +54,19 @@ def test_document_carries_the_source_of_its_product(
         document.source_model,
         document.source_pk,
     ) == ("testapp", "product", product.pk)
+
+
+@pytest.mark.django_db
+def test_document_carries_the_source_of_its_own_model(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(pk=42, name="Tools")
+    register(Category, fields=["name"])
+
+    [document] = SyncPipeline().run()
+
+    assert (
+        document.source_app_label,
+        document.source_model,
+        document.source_pk,
+    ) == ("testapp", "category", category.pk)
