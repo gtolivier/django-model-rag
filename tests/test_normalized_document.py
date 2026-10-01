@@ -139,3 +139,17 @@ def test_document_source_key_uses_the_string_form_of_any_primary_key() -> None:
         "testapp.page:12345678-1234-5678-1234-567812345678"
     )
     assert string_document.source_key == "testapp.page:intro"
+
+
+def test_document_repr_shows_its_source_key_title_and_text() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        title="Lamp",
+    )
+
+    assert repr(document) == (
+        "<NormalizedDocument testapp.product:1 title='Lamp' text='A desk lamp'>"
+    )
