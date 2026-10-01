@@ -22,6 +22,9 @@ class NormalizedDocument:
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    # Compare by value, but keep documents out of sets and dict keys.
+    __hash__ = None  # type: ignore[assignment]  # dataclass would generate a hash
+
     def __post_init__(self) -> None:
         """Reject a document whose source instance has no primary key."""
         if self.source_pk is None:
