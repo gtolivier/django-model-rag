@@ -35,3 +35,22 @@ def test_registered_model_produces_a_document_from_its_declared_field(
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Hammer"]
+
+
+@pytest.mark.django_db
+def test_document_carries_the_source_of_its_product(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    product = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    register(Product, fields=["name"])
+
+    [document] = SyncPipeline().run()
+
+    assert (
+        document.source_app_label,
+        document.source_model,
+        document.source_pk,
+    ) == ("testapp", "product", product.pk)
