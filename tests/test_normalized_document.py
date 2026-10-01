@@ -1,4 +1,5 @@
 import uuid
+from typing import Any
 
 import pytest
 
@@ -188,3 +189,37 @@ def test_document_repr_shows_a_text_of_exactly_60_characters_whole() -> None:
         "<NormalizedDocument testapp.product:1 title='Lamp' "
         "text='A desk lamp with an adjustable arm and a weighted metal base'>"
     )
+
+
+DOCUMENT_VALUES: dict[str, Any] = {
+    "text": "A desk lamp",
+    "source_app_label": "testapp",
+    "source_model": "product",
+    "source_pk": 1,
+    "title": "Lamp",
+    "url": "/products/1/",
+    "language": "en",
+    "metadata": {"category": "Lighting"},
+}
+
+
+@pytest.mark.parametrize(
+    ("field_name", "other_value"),
+    [
+        ("text", "An office chair"),
+        ("source_app_label", "otherapp"),
+        ("source_model", "category"),
+        ("source_pk", 2),
+        ("title", "Chair"),
+        ("url", "/products/2/"),
+        ("language", "fr"),
+        ("metadata", {"category": "Furniture"}),
+    ],
+)
+def test_documents_compare_by_value(field_name: str, other_value: object) -> None:
+    document = NormalizedDocument(**DOCUMENT_VALUES)
+    same = NormalizedDocument(**DOCUMENT_VALUES)
+    different = NormalizedDocument(**{**DOCUMENT_VALUES, field_name: other_value})
+
+    assert document == same
+    assert document != different
