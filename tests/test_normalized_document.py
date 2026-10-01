@@ -105,3 +105,14 @@ def test_document_exposes_its_title_url_language_and_metadata() -> None:
     assert document.url == "/products/1/"
     assert document.language == "en"
     assert document.metadata == {"category": "Lighting"}
+
+
+def test_document_source_key_identifies_its_source() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+    )
+
+    assert document.source_key == "testapp.product:1"
