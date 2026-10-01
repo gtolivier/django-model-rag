@@ -203,3 +203,18 @@ def test_document_text_holds_the_string_form_of_a_non_text_field(
     [document] = SyncPipeline().run()
 
     assert document.text == "Drill\n\n149.00"
+
+
+@pytest.mark.django_db
+def test_document_text_keeps_a_declared_field_whose_value_is_zero(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Sticker", description="A free gift.", price="0", category=category
+    )
+    register(Product, fields=["name", "price"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Sticker\n\n0.00"
