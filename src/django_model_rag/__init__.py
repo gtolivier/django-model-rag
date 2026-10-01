@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 __all__ = ["NormalizedDocument"]
 
@@ -22,8 +22,10 @@ class NormalizedDocument:
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
-    # Compare by value, but keep documents out of sets and dict keys.
-    __hash__ = None  # type: ignore[assignment]  # dataclass would generate a hash
+    # Compare by value, but keep documents out of sets and dict keys: a frozen
+    # dataclass would otherwise generate a hash. ClassVar[None] lets mypy see
+    # the class itself as unhashable, not only its instances.
+    __hash__: ClassVar[None] = None  # type: ignore[assignment]  # typeshed types object.__hash__ as a method
 
     def __post_init__(self) -> None:
         """Reject a document whose source instance has no primary key."""
