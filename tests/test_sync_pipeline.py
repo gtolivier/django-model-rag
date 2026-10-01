@@ -7,16 +7,21 @@ from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
 from tests.testapp.models import Category, Product
 
 
+def create_product(*, name: str, description: str, price: str) -> Product:
+    """Create a product in a category of its own."""
+    category = Category.objects.create(name="Tools")
+    return Product.objects.create(
+        name=name, description=description, price=price, category=category
+    )
+
+
 def test_pipeline_without_registered_model_produces_no_document() -> None:
     assert SyncPipeline().run() == []
 
 
 @pytest.mark.django_db
 def test_unregistered_model_produces_no_document() -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name"])
     rag.unregister(Product)
 
@@ -27,10 +32,7 @@ def test_unregistered_model_produces_no_document() -> None:
 def test_registered_model_produces_a_document_from_its_declared_field(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["name"])
 
     documents = SyncPipeline().run()
@@ -42,10 +44,7 @@ def test_registered_model_produces_a_document_from_its_declared_field(
 def test_document_text_joins_declared_fields_with_a_blank_line(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["name", "description"])
 
     [document] = SyncPipeline().run()
@@ -57,10 +56,7 @@ def test_document_text_joins_declared_fields_with_a_blank_line(
 def test_document_text_follows_the_declared_field_order(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["description", "name"])
 
     [document] = SyncPipeline().run()
@@ -72,10 +68,7 @@ def test_document_text_follows_the_declared_field_order(
 def test_document_text_leaves_out_a_declared_field_with_an_empty_value(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="", price="9.90")
     register(Product, fields=["name", "description"])
 
     [document] = SyncPipeline().run()
@@ -87,10 +80,7 @@ def test_document_text_leaves_out_a_declared_field_with_an_empty_value(
 def test_document_text_leaves_out_a_declared_field_with_a_blank_value(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="  \n ", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="  \n ", price="9.90")
     register(Product, fields=["name", "description"])
 
     [document] = SyncPipeline().run()
@@ -102,10 +92,7 @@ def test_document_text_leaves_out_a_declared_field_with_a_blank_value(
 def test_document_text_leaves_out_a_declared_field_whose_value_is_none(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["name", "subtitle"])
 
     [document] = SyncPipeline().run()
@@ -174,10 +161,7 @@ def test_documents_of_several_models_come_grouped_in_registration_order(
 def test_document_title_is_the_value_of_the_first_declared_field(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["name", "description"])
 
     [document] = SyncPipeline().run()
@@ -189,10 +173,7 @@ def test_document_title_is_the_value_of_the_first_declared_field(
 def test_document_title_follows_the_declared_field_order(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["description", "name"])
 
     [document] = SyncPipeline().run()
@@ -204,10 +185,7 @@ def test_document_title_follows_the_declared_field_order(
 def test_document_title_is_empty_when_the_first_declared_field_is_blank(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="   ", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="   ", price="9.90")
     register(Product, fields=["description", "name"])
 
     [document] = SyncPipeline().run()
@@ -219,10 +197,7 @@ def test_document_title_is_empty_when_the_first_declared_field_is_blank(
 def test_document_title_is_empty_when_the_first_declared_field_is_none(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["subtitle", "name"])
 
     [document] = SyncPipeline().run()
@@ -234,10 +209,7 @@ def test_document_title_is_empty_when_the_first_declared_field_is_none(
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    product = Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    product = create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["name"])
 
     [document] = SyncPipeline().run()
@@ -269,10 +241,7 @@ def test_document_carries_the_source_of_its_own_model(
 def test_document_text_holds_the_string_form_of_a_non_text_field(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Drill", description="Bores holes.", price="149.00", category=category
-    )
+    create_product(name="Drill", description="Bores holes.", price="149.00")
     register(Product, fields=["name", "price"])
 
     [document] = SyncPipeline().run()
@@ -284,10 +253,7 @@ def test_document_text_holds_the_string_form_of_a_non_text_field(
 def test_document_text_keeps_a_declared_field_whose_value_is_zero(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Sticker", description="A free gift.", price="0", category=category
-    )
+    create_product(name="Sticker", description="A free gift.", price="0")
     register(Product, fields=["name", "price"])
 
     [document] = SyncPipeline().run()
@@ -306,10 +272,7 @@ def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
 def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     register: Callable[..., None],
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
     register(Product, fields=["name"])
 
     with pytest.raises(AlreadyRegistered):
