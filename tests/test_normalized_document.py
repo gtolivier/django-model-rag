@@ -57,3 +57,14 @@ def test_document_title_and_url_default_to_empty() -> None:
 
     assert document.title == ""
     assert document.url == ""
+
+
+def test_document_language_is_unknown_by_default() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+    )
+
+    assert document.language is None
