@@ -171,3 +171,20 @@ def test_document_repr_cuts_a_long_text_to_its_first_60_characters() -> None:
         "<NormalizedDocument testapp.product:1 title='Lamp' "
         "text='A desk lamp with an adjustable arm, a weighted base and a wa…'>"
     )
+
+
+def test_document_repr_shows_a_text_of_exactly_60_characters_whole() -> None:
+    text = "A desk lamp with an adjustable arm and a weighted metal base"
+    assert len(text) == 60
+    document = NormalizedDocument(
+        text=text,
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        title="Lamp",
+    )
+
+    assert repr(document) == (
+        "<NormalizedDocument testapp.product:1 title='Lamp' "
+        "text='A desk lamp with an adjustable arm and a weighted metal base'>"
+    )
