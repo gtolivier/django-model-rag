@@ -50,6 +50,17 @@ def test_document_arguments_are_keyword_only() -> None:
         NormalizedDocument("A desk lamp", "testapp", "product", 1)  # type: ignore[call-arg]
 
 
+def test_document_source_pk_cannot_be_none() -> None:
+    # A document comes from a saved instance, which always has a primary key.
+    with pytest.raises(ValueError, match="source_pk"):
+        NormalizedDocument(
+            text="A desk lamp",
+            source_app_label="testapp",
+            source_model="product",
+            source_pk=None,
+        )
+
+
 def test_document_title_and_url_default_to_empty() -> None:
     document = NormalizedDocument(
         text="A desk lamp",
