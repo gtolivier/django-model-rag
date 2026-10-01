@@ -14,7 +14,7 @@ class NormalizedDocument:
     text: str
     source_app_label: str
     source_model: str
-    source_pk: int
+    source_pk: object
     title: str = ""
     url: str = ""
     language: str | None = None
