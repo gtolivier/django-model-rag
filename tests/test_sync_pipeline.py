@@ -3,7 +3,7 @@ from collections.abc import Callable
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from django_model_rag import SyncPipeline, rag
+from django_model_rag import AlreadyRegistered, SyncPipeline, rag
 from tests.testapp.models import Category, Product
 
 
@@ -270,3 +270,20 @@ def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
 ) -> None:
     with pytest.raises(ImproperlyConfigured, match="nmae"):
         register(Product, fields=["nmae"])
+
+
+@pytest.mark.django_db
+def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    register(Product, fields=["name"])
+
+    with pytest.raises(AlreadyRegistered):
+        register(Product, fields=["description"])
+
+    [document] = SyncPipeline().run()
+    assert document.text == "Hammer"
