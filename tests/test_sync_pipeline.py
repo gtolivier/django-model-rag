@@ -130,6 +130,31 @@ def test_documents_come_in_ascending_primary_key_order(
 
 
 @pytest.mark.django_db
+def test_documents_of_several_models_come_grouped_in_registration_order(
+    register: Callable[..., None],
+) -> None:
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rake = Product.objects.create(
+        name="Rake", description="Gathers leaves.", price="14.50", category=garden
+    )
+    register(Product, fields=["name"])
+    register(Category, fields=["name"])
+
+    documents = SyncPipeline().run()
+
+    assert [(document.source_model, document.source_pk) for document in documents] == [
+        ("product", hammer.pk),
+        ("product", rake.pk),
+        ("category", tools.pk),
+        ("category", garden.pk),
+    ]
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field(
     register: Callable[..., None],
 ) -> None:
