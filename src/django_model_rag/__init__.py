@@ -1,5 +1,6 @@
 """Discover and normalize text content from any Django model."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,4 +18,4 @@ class NormalizedDocument:
     title: str = ""
     url: str = ""
     language: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Mapping[str, Any] = field(default_factory=dict)
