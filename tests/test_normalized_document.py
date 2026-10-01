@@ -153,3 +153,21 @@ def test_document_repr_shows_its_source_key_title_and_text() -> None:
     assert repr(document) == (
         "<NormalizedDocument testapp.product:1 title='Lamp' text='A desk lamp'>"
     )
+
+
+def test_document_repr_cuts_a_long_text_to_its_first_60_characters() -> None:
+    document = NormalizedDocument(
+        text=(
+            "A desk lamp with an adjustable arm, "
+            "a weighted base and a warm white LED bulb."
+        ),
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        title="Lamp",
+    )
+
+    assert repr(document) == (
+        "<NormalizedDocument testapp.product:1 title='Lamp' "
+        "text='A desk lamp with an adjustable arm, a weighted base and a wa…'>"
+    )
