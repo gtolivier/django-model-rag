@@ -84,6 +84,7 @@ class SyncPipeline:
             )
             for model, fields in rag.declarations()
             for instance in model._default_manager.all()
+            if _document_text(instance, fields)
         ]
 
 
