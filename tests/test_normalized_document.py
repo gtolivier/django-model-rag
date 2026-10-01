@@ -87,3 +87,21 @@ def test_document_metadata_defaults_to_its_own_empty_dict() -> None:
     assert first.metadata == {}
     assert second.metadata == {}
     assert first.metadata is not second.metadata
+
+
+def test_document_exposes_its_title_url_language_and_metadata() -> None:
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        title="Desk lamp",
+        url="/products/1/",
+        language="en",
+        metadata={"category": "Lighting"},
+    )
+
+    assert document.title == "Desk lamp"
+    assert document.url == "/products/1/"
+    assert document.language == "en"
+    assert document.metadata == {"category": "Lighting"}
