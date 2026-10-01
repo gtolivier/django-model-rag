@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
 __all__ = ["NormalizedDocument", "SyncPipeline", "rag"]
@@ -107,7 +108,17 @@ class Registry:
         self._fields: dict[type[Model], list[str]] = {}
 
     def register(self, model: type[Model], *, fields: list[str]) -> None:
-        """Register ``model`` with the fields to extract."""
+        """Register ``model`` with the fields to extract.
+
+        Raises:
+            ImproperlyConfigured: a field is not one of the model's.
+        """
+        for name in fields:
+            try:
+                model._meta.get_field(name)
+            except FieldDoesNotExist as error:
+                message = f"{model.__name__} has no field {name!r}"
+                raise ImproperlyConfigured(message) from error
         self._fields[model] = fields
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
