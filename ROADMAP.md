@@ -38,27 +38,33 @@ prototype it covers, whether it is kept, fixed or dropped — broad
 when that field is empty. The prototype is a reference to judge, not a model
 to copy.
 
-- [ ] **1. `guess_text_fields(instance)`** — which fields of a model hold
-  semantic text: text field types, excluded names, text fields whose name
-  ends in `_id`, and an order that puts title-like names first.
-- [ ] **2. `guess_language(instance)` and `guess_url(instance)`** — a
-  language read from common attribute names, a URL from
-  `get_absolute_url`, and their fallbacks.
-- [ ] **3. `resolve_relation_text(instance, relation_name)`** — the text of
-  related objects, across foreign keys, reverse relations and many-to-many
-  relations; a missing or empty relation yields no text.
+Features are described by what they do. Only the public API is named:
+internal functions get their names and signatures from the tests and the
+refactoring, not from the prototype.
+
+- [ ] **1. Guess the text fields of a model** — which fields hold semantic
+  text: text field types, excluded names, text fields whose name ends in
+  `_id`, and an order that puts title-like names first.
+- [ ] **2. Guess the language and the URL of an instance** — a language
+  read from common attribute names, a URL from `get_absolute_url`, and
+  their fallbacks.
+- [ ] **3. Collect the text of related objects** — across foreign keys,
+  reverse relations and many-to-many relations; a missing or empty relation
+  yields no text.
 - [ ] **4. `NormalizedDocument`** — its attributes, a stable `source_key`
   (`app_label.model_name:pk`) and a readable `repr`.
-- [ ] **5. `BaseExtractor` and `GenericModelExtractor`** — declared or
-  guessed fields, followed relations, no document for empty content, a
-  title taken from the first field (or the instance's string form when there
-  is no field), a language and a URL from configured fields or from the
-  guesses, permissions passed through.
-- [ ] **6. The registry and the `rag` singleton** — `register`,
-  `register_extractor` (a class decorator), `registered_models`,
-  `extractor_for`, `is_registered`, and the public API: `rag`,
-  `BaseExtractor`, `NormalizedDocument` and `SyncPipeline` importable from
-  `django_model_rag`, as a project needs them to write its own extractors.
+- [ ] **5. Extract a document from an instance** — the base class a project
+  subclasses for its own extractors (`BaseExtractor`), and the default
+  extraction behind `rag.register`: declared or guessed fields, followed
+  relations, no document for empty content, a title taken from the first
+  field (or the instance's string form when there is no field), a language
+  and a URL from configured fields or from the guesses, permissions passed
+  through.
+- [ ] **6. The registry and the `rag` singleton** — `rag.register`,
+  `rag.register_extractor` (a class decorator), the list of registered
+  models, and the public API: `rag`, `BaseExtractor`, `NormalizedDocument`
+  and `SyncPipeline` importable from `django_model_rag`, as a project needs
+  them to write its own extractors.
 - [ ] **7. `SyncPipeline`, without a chunker** — a full run over the
   registered models or a subset of them, a run for a single instance, and
   extractors that return one document, several or none; each document goes
