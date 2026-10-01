@@ -57,6 +57,11 @@ class NormalizedDocument:
         return f"<NormalizedDocument {self.source_key} title={title} text={text}>"
 
 
+def _field_text(instance: Model, name: str) -> str:
+    """Read the field ``name`` of ``instance`` as text."""
+    return str(getattr(instance, name))
+
+
 class SyncPipeline:
     """Turn registered models into normalized documents."""
 
@@ -65,12 +70,12 @@ class SyncPipeline:
         return [
             NormalizedDocument(
                 text=_FIELD_SEPARATOR.join(
-                    str(getattr(instance, name)) for name in fields
+                    _field_text(instance, name) for name in fields
                 ),
                 source_app_label=model._meta.app_label,  # Django's public meta API
                 source_model=model._meta.model_name or "",  # Django's public meta API
                 source_pk=instance.pk,
-                title=str(getattr(instance, fields[0])),
+                title=_field_text(instance, fields[0]),
             )
             for model, fields in rag.declarations()
             for instance in model._default_manager.all()
