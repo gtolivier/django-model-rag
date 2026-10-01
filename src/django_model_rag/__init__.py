@@ -8,7 +8,13 @@ from typing import Any, ClassVar
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
-__all__ = ["AlreadyRegistered", "NormalizedDocument", "SyncPipeline", "rag"]
+__all__ = [
+    "AlreadyRegistered",
+    "NormalizedDocument",
+    "NotRegistered",
+    "SyncPipeline",
+    "rag",
+]
 
 _REPR_TEXT_LENGTH = 60
 _FIELD_SEPARATOR = "\n\n"
@@ -118,6 +124,10 @@ class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django a
     """A model is registered a second time."""
 
 
+class NotRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's NotRegistered
+    """A model that is not registered is unregistered."""
+
+
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
@@ -144,7 +154,14 @@ class Registry:
         return list(self._fields.items())
 
     def unregister(self, model: type[Model]) -> None:
-        """Forget ``model``."""
+        """Forget ``model``.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        if model not in self._fields:
+            message = f"{model.__name__} is not registered"
+            raise NotRegistered(message)
         del self._fields[model]
 
 
