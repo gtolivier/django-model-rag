@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import pytest
 
 from django_model_rag import SyncPipeline, rag
@@ -18,3 +20,18 @@ def test_unregistered_model_produces_no_document() -> None:
     rag.unregister(Product)
 
     assert SyncPipeline().run() == []
+
+
+@pytest.mark.django_db
+def test_registered_model_produces_a_document_from_its_declared_field(
+    register: Callable[..., None],
+) -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    register(Product, fields=["name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Hammer"]
