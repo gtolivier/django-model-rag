@@ -19,3 +19,8 @@ class NormalizedDocument:
     url: str = ""
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def source_key(self) -> str:
+        """Identify the source instance as ``app_label.model:pk``."""
+        return f"{self.source_app_label}.{self.source_model}:{self.source_pk}"
