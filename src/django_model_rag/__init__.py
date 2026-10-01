@@ -63,7 +63,7 @@ def _field_text(instance: Model, name: str) -> str:
 
 
 def _document_text(instance: Model, fields: list[str]) -> str:
-    """Join the non-empty values of the ``fields`` of ``instance``, in order."""
+    """Join the non-blank values of the ``fields`` of ``instance``, in order."""
     return _FIELD_SEPARATOR.join(
         text for name in fields if (text := _field_text(instance, name)).strip()
     )
