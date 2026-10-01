@@ -223,3 +223,13 @@ def test_documents_compare_by_value(field_name: str, other_value: object) -> Non
 
     assert document == same
     assert document != different
+
+
+@pytest.mark.parametrize("field_name", list(DOCUMENT_VALUES))
+def test_document_attributes_cannot_be_reassigned(field_name: str) -> None:
+    document = NormalizedDocument(**DOCUMENT_VALUES)
+
+    # setattr rather than a plain assignment: the test covers every field, and
+    # it type-checks the same before and after the class becomes immutable.
+    with pytest.raises(AttributeError):
+        setattr(document, field_name, "Other")
