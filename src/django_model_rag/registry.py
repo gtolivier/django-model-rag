@@ -56,6 +56,21 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
         _require_content_field(model, name)
 
 
+def _require_extractor_class(extractor_class: type) -> None:
+    """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
+
+    Raises:
+        ImproperlyConfigured: ``extractor_class`` does not derive from
+            ``BaseExtractor``, or does not implement ``extract``.
+    """
+    if not issubclass(extractor_class, BaseExtractor):
+        message = f"{extractor_class.__name__} must derive from BaseExtractor"
+        raise ImproperlyConfigured(message)
+    if inspect.isabstract(extractor_class):
+        message = f"{extractor_class.__name__} does not implement extract"
+        raise ImproperlyConfigured(message)
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -113,16 +128,11 @@ class Registry:
 
         Raises:
             ImproperlyConfigured: the decorated class does not derive from
-                ``BaseExtractor``.
+                ``BaseExtractor``, or does not implement ``extract``.
         """
 
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
-            if not issubclass(extractor_class, BaseExtractor):
-                message = f"{extractor_class.__name__} must derive from BaseExtractor"
-                raise ImproperlyConfigured(message)
-            if inspect.isabstract(extractor_class):
-                message = f"{extractor_class.__name__} does not implement extract"
-                raise ImproperlyConfigured(message)
+            _require_extractor_class(extractor_class)
             self._extractors[model] = extractor_class()
             return extractor_class
 
