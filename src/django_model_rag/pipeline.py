@@ -1,6 +1,6 @@
 """The pipeline that turns registered models into normalized documents."""
 
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from typing import Any
 
 from django.db.models import Model
@@ -92,12 +92,19 @@ def _extracted_documents(
 class SyncPipeline:
     """Turn registered models into normalized documents."""
 
-    def run(self) -> list[NormalizedDocument]:
-        """Produce the documents of every registered model."""
+    def run(
+        self, models: Collection[type[Model]] | None = None
+    ) -> list[NormalizedDocument]:
+        """Produce the documents of the registered models.
+
+        Only the given ``models`` are run, or every registered model by default.
+        """
         declarations = dict(rag.declarations())
         extractors = dict(rag.extractors())
         documents: list[NormalizedDocument] = []
         for model in rag.models():
+            if models is not None and model not in models:
+                continue
             if model in declarations:
                 documents.extend(_model_documents(model, declarations[model]))
             else:
