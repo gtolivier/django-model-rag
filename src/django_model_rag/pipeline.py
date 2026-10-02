@@ -21,7 +21,9 @@ def _is_blank(text: str) -> bool:
 
 def _document_text(field_texts: list[str]) -> str:
     """Join the non-blank ``field_texts``, in order."""
-    return _FIELD_SEPARATOR.join(text for text in field_texts if not _is_blank(text))
+    return _FIELD_SEPARATOR.join(
+        text.strip() for text in field_texts if not _is_blank(text)
+    )
 
 
 def _document_title(field_texts: list[str]) -> str:
