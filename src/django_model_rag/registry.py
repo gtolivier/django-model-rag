@@ -111,6 +111,9 @@ class Registry:
         """Register the decorated extractor class as the one of ``model``."""
 
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
+            if not issubclass(extractor_class, BaseExtractor):
+                message = f"{extractor_class.__name__} must derive from BaseExtractor"
+                raise ImproperlyConfigured(message)
             self._extractors[model] = extractor_class()
             return extractor_class
 
