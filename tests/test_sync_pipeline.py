@@ -283,6 +283,20 @@ def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     assert document.text == "Hammer"
 
 
+@pytest.mark.django_db
+def test_changing_the_declared_fields_list_after_registering_has_no_effect(
+    register: Callable[..., None],
+) -> None:
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
+    fields = ["name"]
+    register(Product, fields=fields)
+
+    fields.append("description")
+
+    [document] = SyncPipeline().run()
+    assert document.text == "Hammer"
+
+
 def test_unregistering_a_model_that_is_not_registered_fails() -> None:
     with pytest.raises(NotRegistered):
         rag.unregister(Product)
