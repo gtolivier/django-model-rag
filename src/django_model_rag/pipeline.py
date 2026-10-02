@@ -98,14 +98,12 @@ class SyncPipeline:
 
     def run(self) -> list[NormalizedDocument]:
         """Produce the documents of every registered model."""
-        documents = [
-            document
-            for model, declaration in rag.declarations()
-            for document in _model_documents(model, declaration)
-        ]
-        documents.extend(
-            document
-            for model, extractor in rag.extractors()
-            for document in _extracted_documents(model, extractor)
-        )
+        declarations = dict(rag.declarations())
+        extractors = dict(rag.extractors())
+        documents: list[NormalizedDocument] = []
+        for model in rag.models():
+            if model in declarations:
+                documents.extend(_model_documents(model, declarations[model]))
+            else:
+                documents.extend(_extracted_documents(model, extractors[model]))
         return documents

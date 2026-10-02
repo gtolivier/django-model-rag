@@ -94,6 +94,11 @@ class Registry:
         """Start with no registered model."""
         self._declarations: dict[type[Model], Declaration] = {}
         self._extractors: dict[type[Model], BaseExtractor[Any]] = {}
+        self._order: list[type[Model]] = []
+
+    def models(self) -> list[type[Model]]:
+        """List the registered models, in registration order."""
+        return list(self._order)
 
     def _is_registered(self, model: type[Model]) -> bool:
         """Tell whether ``model`` is registered with fields or an extractor."""
@@ -132,6 +137,7 @@ class Registry:
         if title_field is not None:
             _require_content_field(model, title_field)
         self._declarations[model] = Declaration(tuple(fields), title_field)
+        self._order.append(model)
 
     def register_extractor(
         self, model: type[Model]
@@ -148,6 +154,7 @@ class Registry:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
             self._extractors[model] = extractor_class()
+            self._order.append(model)
             return extractor_class
 
         return decorator
@@ -171,6 +178,7 @@ class Registry:
             raise NotRegistered(message)
         self._declarations.pop(model, None)
         self._extractors.pop(model, None)
+        self._order.remove(model)
 
 
 rag = Registry()
