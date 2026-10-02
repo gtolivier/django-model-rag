@@ -25,6 +25,11 @@ class Product(models.Model):
     category = models.ForeignKey(
         Category, on_delete=models.CASCADE, related_name="products"
     )
+    condition = models.CharField(
+        max_length=10,
+        choices=[("new", "New"), ("used", "Second-hand")],
+        default="new",
+    )
 
     def get_absolute_url(self) -> str:
         return f"/products/{self.pk}/"

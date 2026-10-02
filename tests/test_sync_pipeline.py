@@ -286,6 +286,20 @@ def test_document_text_keeps_a_declared_field_whose_value_is_zero(
     assert document.text == "Sticker\n\n0.00"
 
 
+@pytest.mark.django_db
+def test_document_text_holds_the_label_of_a_field_with_choices(
+    register: Callable[..., None],
+) -> None:
+    product = create_product(name="Hammer", description="Drives nails.", price="9.90")
+    product.condition = "used"
+    product.save()
+    register(Product, fields=["name", "condition"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Hammer\n\nSecond-hand"
+
+
 def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
     register: Callable[..., None],
 ) -> None:
