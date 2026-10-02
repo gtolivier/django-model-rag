@@ -50,10 +50,10 @@ class NotRegistered(Exception):  # noqa: N818 - public name mirrors Django admin
 
 
 @dataclass(frozen=True)
-class _Declaration:
+class Declaration:
     """What a model declares when it is registered."""
 
-    fields: list[str]
+    fields: tuple[str, ...]
     title_field: str | None
 
 
@@ -62,7 +62,7 @@ class Registry:
 
     def __init__(self) -> None:
         """Start with no registered model."""
-        self._declarations: dict[type[Model], _Declaration] = {}
+        self._declarations: dict[type[Model], Declaration] = {}
 
     def register(
         self,
@@ -87,19 +87,11 @@ class Registry:
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
-        self._declarations[model] = _Declaration(list(fields), title_field)
+        self._declarations[model] = Declaration(tuple(fields), title_field)
 
-    def title_field(self, model: type[Model]) -> str | None:
-        """Name the field declared as the title of ``model``, if any."""
-        declaration = self._declarations.get(model)
-        return None if declaration is None else declaration.title_field
-
-    def declarations(self) -> list[tuple[type[Model], list[str]]]:
-        """List each registered model with its declared fields."""
-        return [
-            (model, declaration.fields)
-            for model, declaration in self._declarations.items()
-        ]
+    def declarations(self) -> list[tuple[type[Model], Declaration]]:
+        """List each registered model with what it declared."""
+        return list(self._declarations.items())
 
     def unregister(self, model: type[Model]) -> None:
         """Forget ``model``.
