@@ -125,3 +125,8 @@ class SyncPipeline:
             else:
                 documents.extend(_extracted_documents(model, extractors[model]))
         return documents
+
+    def run_instance(self, instance: Model) -> list[NormalizedDocument]:
+        """Produce the documents of ``instance`` only."""
+        document = _document(instance, dict(rag.declarations())[type(instance)])
+        return [] if document is None else [document]
