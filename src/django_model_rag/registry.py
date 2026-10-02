@@ -108,7 +108,12 @@ class Registry:
     def register_extractor(
         self, model: type[Model]
     ) -> Callable[[type[ExtractorClass]], type[ExtractorClass]]:
-        """Register the decorated extractor class as the one of ``model``."""
+        """Register the decorated extractor class as the one of ``model``.
+
+        Raises:
+            ImproperlyConfigured: the decorated class does not derive from
+                ``BaseExtractor``.
+        """
 
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
             if not issubclass(extractor_class, BaseExtractor):
