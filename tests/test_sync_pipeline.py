@@ -357,6 +357,13 @@ def test_registering_a_reverse_relation_names_it_in_the_error(
         register(Category, fields=["name", "products"])
 
 
+def test_registering_a_title_field_the_model_does_not_have_names_it_in_the_error(
+    register: Callable[..., None],
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match="nmae"):
+        register(Product, fields=["name"], title_field="nmae")
+
+
 def test_registering_a_model_without_any_declared_field_fails(
     register: Callable[..., None],
 ) -> None:
