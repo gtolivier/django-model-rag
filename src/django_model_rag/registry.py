@@ -36,7 +36,7 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
             or a field is not one of ``model``'s or is a relation.
     """
     if not isinstance(fields, list | tuple):
-        message = f"{model.__name__}: fields must be a list of field names"
+        message = f"{model.__name__}: fields must be a list or a tuple of field names"
         raise ImproperlyConfigured(message)
     if not fields:
         message = f"{model.__name__} declares no field"
