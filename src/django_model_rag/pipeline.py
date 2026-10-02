@@ -11,6 +11,10 @@ _FIELD_SEPARATOR = "\n\n"
 def _field_text(instance: Model, name: str) -> str:
     """Read the field ``name`` of ``instance`` as text."""
     value = getattr(instance, name)
+    # Django adds get_<name>_display to fields that have choices
+    display = getattr(instance, f"get_{name}_display", None)
+    if display is not None:
+        value = display()
     return "" if value is None else str(value)
 
 
