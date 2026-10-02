@@ -95,13 +95,17 @@ class Registry:
         self._declarations: dict[type[Model], Declaration] = {}
         self._extractors: dict[type[Model], BaseExtractor[Any]] = {}
 
+    def _is_registered(self, model: type[Model]) -> bool:
+        """Tell whether ``model`` is registered with fields or an extractor."""
+        return model in self._declarations or model in self._extractors
+
     def _require_unregistered(self, model: type[Model]) -> None:
         """Fail if ``model`` is already registered with fields or an extractor.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
         """
-        if model in self._declarations or model in self._extractors:
+        if self._is_registered(model):
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
 
@@ -162,7 +166,7 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model not in self._declarations and model not in self._extractors:
+        if not self._is_registered(model):
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
         self._declarations.pop(model, None)
