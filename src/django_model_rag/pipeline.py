@@ -83,6 +83,12 @@ def _extracted_documents(
         extracted = extractor.extract(instance)
         if isinstance(extracted, NormalizedDocument):
             yield extracted
+        elif isinstance(extracted, str):
+            message = (
+                f"{type(extractor).__name__}.extract() returned a string, "
+                "not a NormalizedDocument"
+            )
+            raise TypeError(message)
         elif extracted is not None:
             yield from extracted
 
