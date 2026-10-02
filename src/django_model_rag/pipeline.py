@@ -27,7 +27,7 @@ def _document_text(field_texts: list[str]) -> str:
 
 
 def _document_title(field_texts: list[str]) -> str:
-    """Take the first of the ``field_texts``, or nothing when it is blank."""
+    """Take the first of the ``field_texts``, stripped."""
     return field_texts[0].strip()
 
 
