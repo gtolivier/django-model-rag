@@ -1,5 +1,6 @@
 """The registry of models whose content feeds the pipeline."""
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeAlias, TypeVar
@@ -118,6 +119,9 @@ class Registry:
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
             if not issubclass(extractor_class, BaseExtractor):
                 message = f"{extractor_class.__name__} must derive from BaseExtractor"
+                raise ImproperlyConfigured(message)
+            if inspect.isabstract(extractor_class):
+                message = f"{extractor_class.__name__} does not implement extract"
                 raise ImproperlyConfigured(message)
             self._extractors[model] = extractor_class()
             return extractor_class
