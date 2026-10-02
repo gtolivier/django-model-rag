@@ -421,3 +421,34 @@ def test_build_document_takes_the_source_from_the_instance_of_any_model() -> Non
             source_pk=returns.pk,
         ),
     ]
+
+
+@pytest.mark.django_db
+def test_build_document_passes_on_title_url_language_and_metadata() -> None:
+    page = Page.objects.create(title="FAQ", slug="faq")
+    plugin = TextPlugin.objects.create(page=page, body="We ship within two days.")
+
+    @rag.register_extractor(TextPlugin)
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=instance.body,
+                title=instance.page.title,
+                url=instance.page.get_absolute_url(),
+                language="en",
+                metadata={"plugin_type": "text", "page_id": instance.page.pk},
+            )
+
+    assert SyncPipeline().run() == [
+        NormalizedDocument(
+            text="We ship within two days.",
+            source_app_label="testapp",
+            source_model="textplugin",
+            source_pk=plugin.pk,
+            title="FAQ",
+            url="/pages/faq/",
+            language="en",
+            metadata={"plugin_type": "text", "page_id": page.pk},
+        )
+    ]
