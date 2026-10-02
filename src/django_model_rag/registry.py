@@ -27,11 +27,11 @@ def _require_content_fields(model: type[Model], fields: list[str]) -> None:
     """Fail unless ``fields`` is a non-empty list of ``model``'s content fields.
 
     Raises:
-        ImproperlyConfigured: ``fields`` is a single string instead of a
-            list, it is empty, or a field is not one of the model's or is a
+        ImproperlyConfigured: ``fields`` is not a list (a bare string or a
+            set, say), it is empty, or a field is not one of the model's or is a
             relation.
     """
-    if isinstance(fields, str):
+    if not isinstance(fields, list):
         message = f"{model.__name__}: fields must be a list of field names"
         raise ImproperlyConfigured(message)
     if not fields:
