@@ -95,6 +95,16 @@ class Registry:
         self._declarations: dict[type[Model], Declaration] = {}
         self._extractors: dict[type[Model], BaseExtractor[Any]] = {}
 
+    def _require_unregistered(self, model: type[Model]) -> None:
+        """Fail if ``model`` is already registered with fields.
+
+        Raises:
+            AlreadyRegistered: ``model`` is already registered.
+        """
+        if model in self._declarations:
+            message = f"{model.__name__} is already registered"
+            raise AlreadyRegistered(message)
+
     def register(
         self,
         model: type[Model],
@@ -113,9 +123,7 @@ class Registry:
                 (``title_field`` included) is not one of the model's or is a
                 relation.
         """
-        if model in self._declarations:
-            message = f"{model.__name__} is already registered"
-            raise AlreadyRegistered(message)
+        self._require_unregistered(model)
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
@@ -134,9 +142,7 @@ class Registry:
 
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
             _require_extractor_class(extractor_class)
-            if model in self._declarations:
-                message = f"{model.__name__} is already registered"
-                raise AlreadyRegistered(message)
+            self._require_unregistered(model)
             self._extractors[model] = extractor_class()
             return extractor_class
 
