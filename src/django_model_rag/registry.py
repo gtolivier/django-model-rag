@@ -95,13 +95,9 @@ class Registry:
         # One dict for both kinds keeps the registration order across them
         self._registrations: dict[type[Model], Declaration | BaseExtractor[Any]] = {}
 
-    def models(self) -> list[type[Model]]:
-        """List the registered models, in registration order."""
-        return list(self._registrations)
-
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
-        return self.models()
+        return list(self._registrations)
 
     def _is_registered(self, model: type[Model]) -> bool:
         """Tell whether ``model`` is registered with fields or an extractor."""

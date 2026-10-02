@@ -119,7 +119,7 @@ def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
         NotRegistered: one of ``models`` is not registered.
     """
     if models is None:
-        return rag.models()
+        return rag.registered_models()
     for model in models:
         rag.require_registered(model)
     return list(models)
