@@ -258,3 +258,24 @@ def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> 
 
     [document] = SyncPipeline().run()
     assert document.text == "Tools"
+
+
+@pytest.mark.django_db
+def test_fields_for_a_model_with_an_extractor_fail_and_keep_the_extractor() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=f"Everything filed under {instance.name}.",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=instance.pk,
+            )
+
+    with pytest.raises(AlreadyRegistered):
+        rag.register(Category, fields=["name"])
+
+    [document] = SyncPipeline().run()
+    assert document.text == "Everything filed under Tools."
