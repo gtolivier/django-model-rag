@@ -212,6 +212,15 @@ def test_run_instance_produces_the_documents_of_that_instance_only() -> None:
 
 
 @pytest.mark.django_db
+def test_run_instance_of_an_unregistered_model_fails_naming_that_model() -> None:
+    hammer = create_product(name="Hammer", description="Drives nails.", price="9.90")
+    rag.register(Category, fields=["name"])
+
+    with pytest.raises(NotRegistered, match=r"\bProduct\b"):
+        SyncPipeline().run_instance(hammer)
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
