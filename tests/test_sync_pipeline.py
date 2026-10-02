@@ -335,6 +335,19 @@ def test_document_text_holds_the_label_of_a_field_with_choices(
     assert document.text == "Hammer\n\nSecond-hand"
 
 
+@pytest.mark.django_db
+def test_document_text_ignores_a_display_method_of_a_field_without_choices(
+    register: Callable[..., None],
+) -> None:
+    # Category.get_name_display, written by hand, upper-cases the name.
+    Category.objects.create(name="Tools")
+    register(Category, fields=["name"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Tools"
+
+
 def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
     register: Callable[..., None],
 ) -> None:

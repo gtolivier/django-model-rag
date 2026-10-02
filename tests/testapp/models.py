@@ -16,6 +16,12 @@ class Category(models.Model):
     def __str__(self) -> str:
         return self.name
 
+    def get_name_display(self) -> str:
+        # Named like Django's display method, but written by hand for a field
+        # without choices: the pipeline must not mistake it for a label. It
+        # keeps a blank name blank, so only the case of the text tells it apart.
+        return self.name.upper()
+
 
 class Product(models.Model):
     name = models.CharField(max_length=200)
