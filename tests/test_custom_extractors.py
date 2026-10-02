@@ -10,7 +10,7 @@ from django_model_rag import (
     SyncPipeline,
     rag,
 )
-from tests.testapp.models import AccordionItem, Category, Page, Product
+from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
 
 
 @pytest.mark.django_db
@@ -389,4 +389,35 @@ def test_build_document_takes_the_source_from_the_instance() -> None:
             source_model="category",
             source_pk=category.pk,
         )
+    ]
+
+
+@pytest.mark.django_db
+def test_build_document_takes_the_source_from_the_instance_of_any_model() -> None:
+    page = Page.objects.create(title="FAQ", slug="faq")
+    # Two plugins on one page: the second one's key cannot match the page's,
+    # so a source taken from the page instead of the plugin would show.
+    shipping = TextPlugin.objects.create(page=page, body="We ship within two days.")
+    returns = TextPlugin.objects.create(
+        page=page, body="Returns are free for thirty days."
+    )
+
+    @rag.register_extractor(TextPlugin)
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.body)
+
+    assert SyncPipeline().run() == [
+        NormalizedDocument(
+            text="We ship within two days.",
+            source_app_label="testapp",
+            source_model="textplugin",
+            source_pk=shipping.pk,
+        ),
+        NormalizedDocument(
+            text="Returns are free for thirty days.",
+            source_app_label="testapp",
+            source_model="textplugin",
+            source_pk=returns.pk,
+        ),
     ]
