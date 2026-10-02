@@ -97,14 +97,16 @@ class SyncPipeline:
     ) -> list[NormalizedDocument]:
         """Produce the documents of the registered models.
 
-        Only the given ``models`` are run, or every registered model by default.
+        Only the given ``models`` are run, in their order, or every registered
+        model by default.
         """
         declarations = dict(rag.declarations())
         extractors = dict(rag.extractors())
         documents: list[NormalizedDocument] = []
-        for model in rag.models():
-            if models is not None and model not in models:
-                continue
+        registered = list(rag.models())
+        if models is not None:
+            registered = [model for model in models if model in registered]
+        for model in registered:
             if model in declarations:
                 documents.extend(_model_documents(model, declarations[model]))
             else:
