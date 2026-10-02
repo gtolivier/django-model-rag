@@ -71,22 +71,29 @@ def _model_documents(
             yield document
 
 
+def _extracted_instance_documents(
+    instance: Model, extractor: BaseExtractor[Any]
+) -> Iterator[NormalizedDocument]:
+    """Build the documents of ``instance`` with ``extractor``."""
+    extracted = extractor.extract(instance)
+    if isinstance(extracted, NormalizedDocument):
+        yield extracted
+    elif isinstance(extracted, str):
+        message = (
+            f"{type(extractor).__name__}.extract() returned a string, "
+            "not a NormalizedDocument"
+        )
+        raise TypeError(message)
+    elif extracted is not None:
+        yield from extracted
+
+
 def _extracted_documents(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances with ``extractor``, in pk order."""
     for instance in _instances(model):
-        extracted = extractor.extract(instance)
-        if isinstance(extracted, NormalizedDocument):
-            yield extracted
-        elif isinstance(extracted, str):
-            message = (
-                f"{type(extractor).__name__}.extract() returned a string, "
-                "not a NormalizedDocument"
-            )
-            raise TypeError(message)
-        elif extracted is not None:
-            yield from extracted
+        yield from _extracted_instance_documents(instance, extractor)
 
 
 def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
@@ -128,5 +135,9 @@ class SyncPipeline:
 
     def run_instance(self, instance: Model) -> list[NormalizedDocument]:
         """Produce the documents of ``instance`` only."""
-        document = _document(instance, dict(rag.declarations())[type(instance)])
+        model = type(instance)
+        extractors = dict(rag.extractors())
+        if model in extractors:
+            return list(_extracted_instance_documents(instance, extractors[model]))
+        document = _document(instance, dict(rag.declarations())[model])
         return [] if document is None else [document]
