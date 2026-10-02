@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 
 import pytest
 from django.db import connection
@@ -40,9 +40,3 @@ def restored_registry() -> Iterator[None]:
     yield
     for model in registered_models() - registered_before:
         rag.unregister(model)
-
-
-@pytest.fixture
-def register() -> Callable[..., None]:
-    """Register models with ``rag``; ``restored_registry`` unregisters them."""
-    return rag.register
