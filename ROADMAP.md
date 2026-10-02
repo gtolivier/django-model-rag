@@ -48,9 +48,9 @@ refactoring, not from the prototype.
   (`app_label.model_name:pk`) and a readable `repr`.
 - [x] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
   then `SyncPipeline().run()` returns one document per instance of the
-  registered models: the text of the declared fields, a title taken from the
-  first field, the source of the document, and no document for empty
-  content. `rag.unregister`, and `AlreadyRegistered` / `NotRegistered` as in
+  registered models: the text of the declared fields, a title taken from
+  `title_field` (the first declared field when it is not given), the source
+  of the document, and no document for empty content. `rag.unregister`, and `AlreadyRegistered` / `NotRegistered` as in
   `django.contrib.admin`; an unknown field, a relation, an empty list or a
   single string fails at registration. Values are stripped, a field with
   choices gives its label. `rag`, `NormalizedDocument`, `SyncPipeline` and
