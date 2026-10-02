@@ -269,6 +269,13 @@ def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
         register(Product, fields=["nmae"])
 
 
+def test_registering_a_model_without_any_declared_field_fails(
+    register: Callable[..., None],
+) -> None:
+    with pytest.raises(ImproperlyConfigured):
+        register(Product, fields=[])
+
+
 @pytest.mark.django_db
 def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     register: Callable[..., None],
