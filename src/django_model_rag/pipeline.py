@@ -26,8 +26,12 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
-def _document_title(field_texts: list[str]) -> str:
-    """Take the first of the ``field_texts``."""
+def _document_title(
+    instance: Model, field_texts: list[str], title_field: str | None
+) -> str:
+    """Read the ``title_field``, or take the first of the ``field_texts``."""
+    if title_field is not None:
+        return _field_text(instance, title_field)
     return field_texts[0]
 
 
@@ -42,7 +46,7 @@ def _document(instance: Model, fields: list[str]) -> NormalizedDocument | None:
         source_app_label=instance._meta.app_label,  # Django's public meta API
         source_model=instance._meta.model_name or "",  # Django's public meta API
         source_pk=instance.pk,
-        title=_document_title(field_texts),
+        title=_document_title(instance, field_texts, rag.title_field(type(instance))),
     )
 
 

@@ -53,9 +53,18 @@ class Registry:
     def __init__(self) -> None:
         """Start with no registered model."""
         self._fields: dict[type[Model], list[str]] = {}
+        self._title_fields: dict[type[Model], str | None] = {}
 
-    def register(self, model: type[Model], *, fields: list[str]) -> None:
+    def register(
+        self,
+        model: type[Model],
+        *,
+        fields: list[str],
+        title_field: str | None = None,
+    ) -> None:
         """Register ``model`` with the fields to extract.
+
+        ``title_field`` names the field whose value is the document title.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -68,6 +77,11 @@ class Registry:
             raise AlreadyRegistered(message)
         _require_content_fields(model, fields)
         self._fields[model] = list(fields)
+        self._title_fields[model] = title_field
+
+    def title_field(self, model: type[Model]) -> str | None:
+        """Name the field declared as the title of ``model``, if any."""
+        return self._title_fields.get(model)
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
         """List each registered model with its declared fields."""
@@ -83,6 +97,7 @@ class Registry:
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
         del self._fields[model]
+        del self._title_fields[model]
 
 
 rag = Registry()
