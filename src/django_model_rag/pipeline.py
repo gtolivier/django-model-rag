@@ -89,6 +89,14 @@ def _extracted_documents(
             yield from extracted
 
 
+def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
+    """Select the registered ``models``, in their order, or every registered model."""
+    registered = list(rag.models())
+    if models is None:
+        return registered
+    return [model for model in models if model in registered]
+
+
 class SyncPipeline:
     """Turn registered models into normalized documents."""
 
@@ -103,10 +111,7 @@ class SyncPipeline:
         declarations = dict(rag.declarations())
         extractors = dict(rag.extractors())
         documents: list[NormalizedDocument] = []
-        registered = list(rag.models())
-        if models is not None:
-            registered = [model for model in models if model in registered]
-        for model in registered:
+        for model in _models_to_run(models):
             if model in declarations:
                 documents.extend(_model_documents(model, declarations[model]))
             else:
