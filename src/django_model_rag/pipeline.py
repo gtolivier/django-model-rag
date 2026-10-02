@@ -6,7 +6,7 @@ from typing import Any
 from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor
+from django_model_rag.extractors import BaseExtractor, document_from_instance
 from django_model_rag.registry import Declaration, rag
 
 _FIELD_SEPARATOR = "\n\n"
@@ -51,12 +51,8 @@ def _document(instance: Model, declaration: Declaration) -> NormalizedDocument |
     text = _document_text(field_texts)
     if not text:
         return None
-    return NormalizedDocument(
-        text=text,
-        source_app_label=instance._meta.app_label,  # Django's public meta API
-        source_model=instance._meta.model_name or "",  # Django's public meta API
-        source_pk=instance.pk,
-        title=_document_title(instance, declaration, field_texts),
+    return document_from_instance(
+        instance, text=text, title=_document_title(instance, declaration, field_texts)
     )
 
 

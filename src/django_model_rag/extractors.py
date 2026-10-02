@@ -11,6 +11,19 @@ from django_model_rag.documents import NormalizedDocument
 M = TypeVar("M", bound=Model)
 
 
+def document_from_instance(
+    instance: Model, *, text: str, title: str = ""
+) -> NormalizedDocument:
+    """Build a document of ``text`` and ``title``, sourced from ``instance``."""
+    return NormalizedDocument(
+        text=text,
+        source_app_label=instance._meta.app_label,  # Django's public meta API
+        source_model=instance._meta.model_name or "",  # Django's public meta API
+        source_pk=instance.pk,
+        title=title,
+    )
+
+
 class BaseExtractor(ABC, Generic[M]):
     """Build the document(s) of an instance of a model."""
 
@@ -22,10 +35,4 @@ class BaseExtractor(ABC, Generic[M]):
 
     def build_document(self, instance: M, *, text: str) -> NormalizedDocument:
         """Build a document with ``text``, its source taken from ``instance``."""
-        app_label, model_name = instance._meta.label_lower.split(".")
-        return NormalizedDocument(
-            text=text,
-            source_app_label=app_label,
-            source_model=model_name,
-            source_pk=instance.pk,
-        )
+        return document_from_instance(instance, text=text)
