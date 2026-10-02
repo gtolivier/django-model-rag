@@ -377,6 +377,13 @@ def test_registering_a_model_without_any_declared_field_fails(
         register(Product, fields=[])
 
 
+def test_registering_a_field_declared_twice_names_it_in_the_error(
+    register: Callable[..., None],
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bname\b"):
+        register(Product, fields=["name", "description", "name"])
+
+
 def test_registering_a_single_field_name_instead_of_a_list_fails() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bfields\b.*\blist\b"):
         # A bare string is the slip under test: the type checker rightly
