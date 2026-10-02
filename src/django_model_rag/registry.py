@@ -85,6 +85,8 @@ class Registry:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
         _require_content_fields(model, fields)
+        if title_field is not None:
+            _require_content_field(model, title_field)
         self._declarations[model] = _Declaration(list(fields), title_field)
 
     def title_field(self, model: type[Model]) -> str | None:
