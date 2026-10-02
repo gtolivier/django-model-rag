@@ -96,12 +96,12 @@ class Registry:
         self._extractors: dict[type[Model], BaseExtractor[Any]] = {}
 
     def _require_unregistered(self, model: type[Model]) -> None:
-        """Fail if ``model`` is already registered with fields.
+        """Fail if ``model`` is already registered with fields or an extractor.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
         """
-        if model in self._declarations:
+        if model in self._declarations or model in self._extractors:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
 
