@@ -10,7 +10,7 @@ from django_model_rag import (
     SyncPipeline,
     rag,
 )
-from tests.testapp.models import AccordionItem, Category, Page
+from tests.testapp.models import AccordionItem, Category, Page, Product
 
 
 @pytest.mark.django_db
@@ -328,3 +328,44 @@ def test_unregistered_model_with_an_extractor_produces_no_document() -> None:
     rag.unregister(Category)
 
     assert SyncPipeline().run() == []
+
+
+@pytest.mark.django_db
+def test_documents_come_grouped_in_registration_order_whatever_its_kind() -> None:
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rake = Product.objects.create(
+        name="Rake", description="Gathers leaves.", price="14.50", category=garden
+    )
+    faq = Page.objects.create(title="FAQ", slug="faq")
+    about = Page.objects.create(title="About", slug="about")
+
+    # Fields, then an extractor, then fields again: grouping the models by
+    # kind of registration, in either order, would get it wrong.
+    rag.register(Product, fields=["name"])
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=f"Everything filed under {instance.name}.",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=instance.pk,
+            )
+
+    rag.register(Page, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert [(document.source_model, document.source_pk) for document in documents] == [
+        ("product", hammer.pk),
+        ("product", rake.pk),
+        ("category", tools.pk),
+        ("category", garden.pk),
+        ("page", faq.pk),
+        ("page", about.pk),
+    ]
