@@ -41,7 +41,12 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
     if not fields:
         message = f"{model.__name__} declares no field"
         raise ImproperlyConfigured(message)
+    seen: set[str] = set()
     for name in fields:
+        if name in seen:
+            message = f"{model.__name__}: field {name!r} is declared twice"
+            raise ImproperlyConfigured(message)
+        seen.add(name)
         _require_content_field(model, name)
 
 
