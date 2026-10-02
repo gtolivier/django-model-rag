@@ -182,6 +182,46 @@ def test_extractor_may_yield_its_documents_for_one_instance() -> None:
 
 
 @pytest.mark.django_db
+def test_run_instance_produces_the_extracted_documents_of_that_instance_only() -> None:
+    faq = Page.objects.create(title="FAQ", slug="faq")
+    AccordionItem.objects.create(
+        page=faq, title="Shipping", body="We ship within two days."
+    )
+    AccordionItem.objects.create(
+        page=faq, title="Returns", body="Returns are free for thirty days."
+    )
+    about = Page.objects.create(title="About", slug="about")
+    AccordionItem.objects.create(
+        page=about, title="History", body="Founded in a garage."
+    )
+
+    @rag.register_extractor(Page)
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> list[NormalizedDocument]:
+            return [
+                self.build_document(instance, text=item.body, title=item.title)
+                for item in instance.accordion_items.order_by("pk")
+            ]
+
+    assert SyncPipeline().run_instance(faq) == [
+        NormalizedDocument(
+            text="We ship within two days.",
+            source_app_label="testapp",
+            source_model="page",
+            source_pk=faq.pk,
+            title="Shipping",
+        ),
+        NormalizedDocument(
+            text="Returns are free for thirty days.",
+            source_app_label="testapp",
+            source_model="page",
+            source_pk=faq.pk,
+            title="Returns",
+        ),
+    ]
+
+
+@pytest.mark.django_db
 def test_extractor_returning_a_string_fails_naming_the_extractor() -> None:
     Category.objects.create(name="Tools")
 
