@@ -392,6 +392,14 @@ def test_registering_an_unordered_set_of_field_names_fails() -> None:
         rag.register(Product, fields={"name", "description"})  # type: ignore[arg-type]
 
 
+def test_registering_a_one_shot_generator_of_field_names_fails() -> None:
+    with pytest.raises(ImproperlyConfigured):
+        # A generator is spent by the checks and would be registered empty:
+        # the type checker rightly rejects it, and rag.register is called
+        # directly so it does.
+        rag.register(Product, fields=(name for name in ["name"]))  # type: ignore[arg-type]
+
+
 @pytest.mark.django_db
 def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     register: Callable[..., None],
