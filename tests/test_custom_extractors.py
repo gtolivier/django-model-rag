@@ -187,3 +187,20 @@ def test_extractor_returning_a_string_fails_naming_the_extractor() -> None:
 
     with pytest.raises(TypeError, match="SloppyCategoryExtractor"):
         SyncPipeline().run()
+
+
+def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=f"Everything filed under {instance.name}.",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=instance.pk,
+            )
+
+    # Applying the decorator by hand is what ``@rag.register_extractor(...)``
+    # does to the class, and keeps a handle on the undecorated class.
+    decorated = rag.register_extractor(Category)(CategoryExtractor)
+
+    assert decorated is CategoryExtractor
