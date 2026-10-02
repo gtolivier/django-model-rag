@@ -23,7 +23,9 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _require_content_fields(model: type[Model], fields: list[str]) -> None:
+def _require_content_fields(
+    model: type[Model], fields: list[str] | tuple[str, ...]
+) -> None:
     """Fail unless ``fields`` is a non-empty list of ``model``'s content fields.
 
     Raises:
@@ -31,7 +33,7 @@ def _require_content_fields(model: type[Model], fields: list[str]) -> None:
             set, say), it is empty, or a field is not one of the model's or is a
             relation.
     """
-    if not isinstance(fields, list):
+    if not isinstance(fields, list | tuple):
         message = f"{model.__name__}: fields must be a list of field names"
         raise ImproperlyConfigured(message)
     if not fields:
@@ -68,7 +70,7 @@ class Registry:
         self,
         model: type[Model],
         *,
-        fields: list[str],
+        fields: list[str] | tuple[str, ...],
         title_field: str | None = None,
     ) -> None:
         """Register ``model`` with the fields to extract.
