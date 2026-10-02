@@ -199,6 +199,19 @@ def test_pipeline_given_an_unregistered_model_fails_naming_that_model() -> None:
 
 
 @pytest.mark.django_db
+def test_run_instance_produces_the_documents_of_that_instance_only() -> None:
+    hammer = create_product(name="Hammer", description="Drives nails.", price="9.90")
+    create_product(name="Rake", description="Gathers leaves.", price="14.50")
+    rag.register(Product, fields=["name"])
+
+    documents = SyncPipeline().run_instance(hammer)
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (hammer.pk, "Hammer"),
+    ]
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
