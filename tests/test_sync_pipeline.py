@@ -166,6 +166,23 @@ def test_pipeline_given_models_produces_only_the_documents_of_those_models() -> 
 
 
 @pytest.mark.django_db
+def test_pipeline_given_models_follows_their_order_not_registration_order() -> None:
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+
+    documents = SyncPipeline().run(models=[Category, Product])
+
+    assert [(document.source_model, document.source_pk) for document in documents] == [
+        ("category", tools.pk),
+        ("product", hammer.pk),
+    ]
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
