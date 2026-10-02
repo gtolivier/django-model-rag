@@ -401,6 +401,17 @@ def test_registering_a_one_shot_generator_of_field_names_fails() -> None:
 
 
 @pytest.mark.django_db
+def test_declared_fields_given_as_a_tuple_give_the_same_text_as_a_list() -> None:
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
+    # rag.register is called directly so the type checker sees the tuple.
+    rag.register(Product, fields=("name", "description"))
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Hammer\n\nDrives nails."
+
+
+@pytest.mark.django_db
 def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     register: Callable[..., None],
 ) -> None:
