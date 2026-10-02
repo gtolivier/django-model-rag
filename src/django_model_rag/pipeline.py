@@ -146,6 +146,11 @@ class SyncPipeline:
         return documents
 
     def run_instance(self, instance: Model) -> list[NormalizedDocument]:
-        """Produce the documents of ``instance`` only."""
+        """Produce the documents of ``instance`` only.
+
+        Raises:
+            NotRegistered: the model of ``instance`` is not registered.
+        """
+        rag.require_registered(type(instance))
         registration = _registrations()[type(instance)]
         return list(_instance_documents(instance, registration))
