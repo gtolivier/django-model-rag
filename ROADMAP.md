@@ -65,7 +65,12 @@ refactoring, not from the prototype.
   the instance's string form as the title when there is no field.
 - [ ] **5. Followed relations** — `follow=[...]` adds the text of related
   objects, across foreign keys, reverse relations and many-to-many
-  relations; a missing or empty relation adds nothing.
+  relations; a missing or empty relation adds nothing. Open, to settle
+  when it starts: lookup paths in `fields` (`fields=["name",
+  "category__name"]`, as in `list_display` or `values()`), which pick one
+  field of the related object, in a chosen order, where `follow=` takes all
+  its text. The two could coexist. Until then, a relation in `fields` is an
+  error.
 - [ ] **6. Language, URL and permissions** — from configured fields
   (`language_field`, `url_field`) or guessed (common attribute names,
   `get_absolute_url`), with their fallbacks; permissions passed through.
