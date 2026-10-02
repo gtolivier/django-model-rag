@@ -3,7 +3,13 @@ from collections.abc import Iterator
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
-from django_model_rag import BaseExtractor, NormalizedDocument, SyncPipeline, rag
+from django_model_rag import (
+    AlreadyRegistered,
+    BaseExtractor,
+    NormalizedDocument,
+    SyncPipeline,
+    rag,
+)
 from tests.testapp.models import AccordionItem, Category, Page
 
 
@@ -231,3 +237,24 @@ def test_registering_an_extractor_without_extract_fails() -> None:
         # An extractor left abstract is the slip under test: the type checker
         # rightly rejects it.
         rag.register_extractor(Category)(UnfinishedCategoryExtractor)  # type: ignore[type-abstract]
+
+
+@pytest.mark.django_db
+def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> None:
+    Category.objects.create(name="Tools")
+    rag.register(Category, fields=["name"])
+
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=f"Everything filed under {instance.name}.",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=instance.pk,
+            )
+
+    with pytest.raises(AlreadyRegistered):
+        rag.register_extractor(Category)(CategoryExtractor)
+
+    [document] = SyncPipeline().run()
+    assert document.text == "Tools"
