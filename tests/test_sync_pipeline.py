@@ -384,6 +384,14 @@ def test_registering_a_single_field_name_instead_of_a_list_fails() -> None:
         rag.register(Product, fields="name")  # type: ignore[arg-type]
 
 
+def test_registering_an_unordered_set_of_field_names_fails() -> None:
+    with pytest.raises(ImproperlyConfigured):
+        # A set has no stable order to give the text and the title: the type
+        # checker rightly rejects it, and rag.register is called directly so
+        # it does.
+        rag.register(Product, fields={"name", "description"})  # type: ignore[arg-type]
+
+
 @pytest.mark.django_db
 def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     register: Callable[..., None],
