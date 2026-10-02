@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 
 from django_model_rag import BaseExtractor, NormalizedDocument, SyncPipeline, rag
 from tests.testapp.models import AccordionItem, Category, Page
@@ -204,3 +205,19 @@ def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
     decorated = rag.register_extractor(Category)(CategoryExtractor)
 
     assert decorated is CategoryExtractor
+
+
+def test_registering_a_class_not_derived_from_base_extractor_fails() -> None:
+    class StandaloneCategoryExtractor:
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=f"Everything filed under {instance.name}.",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=instance.pk,
+            )
+
+    with pytest.raises(ImproperlyConfigured, match="StandaloneCategoryExtractor"):
+        # A class that only looks like an extractor is the slip under test:
+        # the type checker rightly rejects it.
+        rag.register_extractor(Category)(StandaloneCategoryExtractor)  # type: ignore[type-var]
