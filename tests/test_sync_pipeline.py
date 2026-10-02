@@ -276,6 +276,13 @@ def test_registering_a_relation_field_names_it_in_the_error(
         register(Product, fields=["name", "category"])
 
 
+def test_registering_a_reverse_relation_names_it_in_the_error(
+    register: Callable[..., None],
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bproducts\b"):
+        register(Category, fields=["name", "products"])
+
+
 def test_registering_a_model_without_any_declared_field_fails(
     register: Callable[..., None],
 ) -> None:
