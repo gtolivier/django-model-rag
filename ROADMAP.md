@@ -75,6 +75,10 @@ refactoring, not from the prototype.
 - [ ] **6. Language, URL and permissions** — from configured fields
   (`language_field`, `url_field`) or guessed (common attribute names,
   `get_absolute_url`), with their fallbacks; permissions passed through.
+  Once this feature settles everything the pipeline reads from an instance,
+  reconsider loading only those columns (`QuerySet.only()`): until then,
+  each attribute read outside the loaded ones would cost a query per
+  instance.
 - [ ] **7. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.
