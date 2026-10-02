@@ -78,8 +78,8 @@ class Registry:
         Raises:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: ``fields`` is a single string instead of
-                a list, no field is declared, or a field is not one of the
-                model's or is a relation.
+                a list, no field is declared, or a field (``title_field``
+                included) is not one of the model's or is a relation.
         """
         if model in self._declarations:
             message = f"{model.__name__} is already registered"
