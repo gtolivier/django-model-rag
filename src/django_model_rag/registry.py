@@ -4,8 +4,8 @@ from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
 
-def _require_field(model: type[Model], name: str) -> None:
-    """Fail unless ``model`` has a field called ``name``.
+def _require_content_field(model: type[Model], name: str) -> None:
+    """Fail unless ``model`` has a non-relation field called ``name``.
 
     Raises:
         ImproperlyConfigured: ``model`` has no such field, or it is a
@@ -43,7 +43,7 @@ class Registry:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: ``fields`` is a single string instead of
                 a list, no field is declared, or a field is not one of the
-                model's.
+                model's or is a relation.
         """
         if model in self._fields:
             message = f"{model.__name__} is already registered"
@@ -55,7 +55,7 @@ class Registry:
             message = f"{model.__name__} declares no field"
             raise ImproperlyConfigured(message)
         for name in fields:
-            _require_field(model, name)
+            _require_content_field(model, name)
         self._fields[model] = list(fields)
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
