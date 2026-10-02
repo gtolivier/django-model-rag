@@ -99,6 +99,10 @@ class Registry:
         """List the registered models, in registration order."""
         return list(self._registrations)
 
+    def registered_models(self) -> list[type[Model]]:
+        """List the registered models, in registration order."""
+        return self.models()
+
     def _is_registered(self, model: type[Model]) -> bool:
         """Tell whether ``model`` is registered with fields or an extractor."""
         return model in self._registrations
