@@ -44,7 +44,7 @@ class Registry:
             raise AlreadyRegistered(message)
         for name in fields:
             _require_field(model, name)
-        self._fields[model] = fields
+        self._fields[model] = list(fields)
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
         """List each registered model with its declared fields."""
