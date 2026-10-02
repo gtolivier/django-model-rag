@@ -7,7 +7,7 @@ from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor, document_from_instance
-from django_model_rag.registry import Declaration, rag
+from django_model_rag.registry import Declaration, NotRegistered, rag
 
 _FIELD_SEPARATOR = "\n\n"
 
@@ -94,7 +94,11 @@ def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
     registered = list(rag.models())
     if models is None:
         return registered
-    return [model for model in models if model in registered]
+    for model in models:
+        if model not in registered:
+            message = f"{model.__name__} is not registered"
+            raise NotRegistered(message)
+    return list(models)
 
 
 class SyncPipeline:
