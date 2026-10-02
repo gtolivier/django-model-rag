@@ -276,6 +276,14 @@ def test_registering_a_model_without_any_declared_field_fails(
         register(Product, fields=[])
 
 
+@pytest.mark.usefixtures("restored_registry")
+def test_registering_a_single_field_name_instead_of_a_list_fails() -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bfields\b.*\blist\b"):
+        # A bare string is the slip under test: the type checker rightly
+        # rejects it, and rag.register is called directly so it does.
+        rag.register(Product, fields="name")  # type: ignore[arg-type]
+
+
 @pytest.mark.django_db
 def test_registering_a_model_twice_fails_and_keeps_the_first_registration(
     register: Callable[..., None],
