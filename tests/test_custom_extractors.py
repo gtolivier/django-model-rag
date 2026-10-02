@@ -221,3 +221,13 @@ def test_registering_a_class_not_derived_from_base_extractor_fails() -> None:
         # A class that only looks like an extractor is the slip under test:
         # the type checker rightly rejects it.
         rag.register_extractor(Category)(StandaloneCategoryExtractor)  # type: ignore[type-var]
+
+
+def test_registering_an_extractor_without_extract_fails() -> None:
+    class UnfinishedCategoryExtractor(BaseExtractor[Category]):
+        pass
+
+    with pytest.raises(ImproperlyConfigured, match="UnfinishedCategoryExtractor"):
+        # An extractor left abstract is the slip under test: the type checker
+        # rightly rejects it.
+        rag.register_extractor(Category)(UnfinishedCategoryExtractor)  # type: ignore[type-abstract]
