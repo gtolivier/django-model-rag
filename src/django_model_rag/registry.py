@@ -8,13 +8,17 @@ def _require_field(model: type[Model], name: str) -> None:
     """Fail unless ``model`` has a field called ``name``.
 
     Raises:
-        ImproperlyConfigured: ``model`` has no such field.
+        ImproperlyConfigured: ``model`` has no such field, or it is a
+            relation.
     """
     try:
-        model._meta.get_field(name)
+        field = model._meta.get_field(name)
     except FieldDoesNotExist as error:
         message = f"{model.__name__} has no field {name!r}"
         raise ImproperlyConfigured(message) from error
+    if field.is_relation:
+        message = f"{model.__name__}.{name} is a relation, not a content field"
+        raise ImproperlyConfigured(message)
 
 
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
