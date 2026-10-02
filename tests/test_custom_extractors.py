@@ -309,3 +309,22 @@ def test_second_extractor_for_a_model_fails_and_keeps_the_first() -> None:
 
     [document] = SyncPipeline().run()
     assert document.text == "Everything filed under Tools."
+
+
+@pytest.mark.django_db
+def test_unregistered_model_with_an_extractor_produces_no_document() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=f"Everything filed under {instance.name}.",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=instance.pk,
+            )
+
+    rag.unregister(Category)
+
+    assert SyncPipeline().run() == []
