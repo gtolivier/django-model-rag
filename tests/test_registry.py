@@ -22,3 +22,13 @@ def test_registered_models_lists_models_in_registration_order_across_kinds() -> 
     rag.register(Page, fields=["title"])
 
     assert rag.registered_models() == [Product, Category, Page]
+
+
+def test_unregistered_model_leaves_registered_models_others_in_order() -> None:
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+    rag.register(Page, fields=["title"])
+
+    rag.unregister(Category)
+
+    assert rag.registered_models() == [Product, Page]
