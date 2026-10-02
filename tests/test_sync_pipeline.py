@@ -191,6 +191,14 @@ def test_pipeline_given_an_empty_list_of_models_produces_no_document() -> None:
 
 
 @pytest.mark.django_db
+def test_pipeline_given_an_unregistered_model_fails_naming_that_model() -> None:
+    rag.register(Category, fields=["name"])
+
+    with pytest.raises(NotRegistered, match=r"\bProduct\b"):
+        SyncPipeline().run(models=[Product])
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
