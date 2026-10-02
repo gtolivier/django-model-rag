@@ -9,7 +9,7 @@ _FIELD_SEPARATOR = "\n\n"
 
 
 def _field_text(instance: Model, name: str) -> str:
-    """Read the field ``name`` of ``instance`` as text."""
+    """Read the field ``name`` of ``instance`` as text, its label if it has choices."""
     value = getattr(instance, name)
     # Django adds get_<name>_display to fields that have choices
     display = getattr(instance, f"get_{name}_display", None)
