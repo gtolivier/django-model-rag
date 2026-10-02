@@ -1,6 +1,7 @@
 """The base class of custom extractors."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable
 from typing import Generic, TypeVar
 
 from django.db.models import Model
@@ -16,5 +17,5 @@ class BaseExtractor(ABC, Generic[M]):
     @abstractmethod
     def extract(
         self, instance: M
-    ) -> NormalizedDocument | list[NormalizedDocument] | None:
+    ) -> NormalizedDocument | Iterable[NormalizedDocument] | None:
         """Build the document(s) of ``instance``, or nothing to skip it."""
