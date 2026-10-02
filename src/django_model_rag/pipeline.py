@@ -80,9 +80,11 @@ def _extracted_documents(
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances with ``extractor``, in pk order."""
     for instance in _instances(model):
-        document = extractor.extract(instance)
-        if document is not None:
-            yield document
+        extracted = extractor.extract(instance)
+        if isinstance(extracted, NormalizedDocument):
+            yield extracted
+        elif extracted is not None:
+            yield from extracted
 
 
 class SyncPipeline:

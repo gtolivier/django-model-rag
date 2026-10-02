@@ -14,5 +14,7 @@ class BaseExtractor(ABC, Generic[M]):
     """Build the document of an instance of a model."""
 
     @abstractmethod
-    def extract(self, instance: M) -> NormalizedDocument | None:
-        """Build the document of ``instance``, or nothing to skip it."""
+    def extract(
+        self, instance: M
+    ) -> NormalizedDocument | list[NormalizedDocument] | None:
+        """Build the document(s) of ``instance``, or nothing to skip it."""
