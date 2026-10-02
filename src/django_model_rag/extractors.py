@@ -11,7 +11,7 @@ M = TypeVar("M", bound=Model)
 
 
 class BaseExtractor(ABC, Generic[M]):
-    """Build the document of an instance of a model."""
+    """Build the document(s) of an instance of a model."""
 
     @abstractmethod
     def extract(
