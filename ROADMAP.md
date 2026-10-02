@@ -51,9 +51,10 @@ refactoring, not from the prototype.
   registered models: the text of the declared fields, a title taken from the
   first field, the source of the document, and no document for empty
   content. `rag.unregister`, and `AlreadyRegistered` / `NotRegistered` as in
-  `django.contrib.admin`; an unknown field fails at registration. `rag`,
-  `NormalizedDocument`, `SyncPipeline` and the two exceptions are importable
-  from `django_model_rag`.
+  `django.contrib.admin`; an unknown field, a relation, an empty list or a
+  single string fails at registration. Values are stripped, a field with
+  choices gives its label. `rag`, `NormalizedDocument`, `SyncPipeline` and
+  the two exceptions are importable from `django_model_rag`.
 - [ ] **3. Custom extractors** — `rag.register_extractor` (a class
   decorator) and `BaseExtractor`, also importable from `django_model_rag`;
   extractors that return one document, several or none; a run over a subset
