@@ -26,9 +26,12 @@ def registered_models() -> set[type[Model]]:
     return {model for model, _fields in rag.declarations()}
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def restored_registry() -> Iterator[None]:
-    """Unregister, when the test ends, every model it left registered with ``rag``.
+    """Unregister, when any test ends, every model it left registered with ``rag``.
+
+    Autouse, so that no test leaves a model registered behind it and every
+    test starts with the registry the previous one found.
 
     Only models still registered are unregistered, so a test may unregister
     a model itself without making the teardown fail.
@@ -40,6 +43,6 @@ def restored_registry() -> Iterator[None]:
 
 
 @pytest.fixture
-def register(restored_registry: None) -> Callable[..., None]:
-    """Register models with ``rag``; unregister them when the test ends."""
+def register() -> Callable[..., None]:
+    """Register models with ``rag``; ``restored_registry`` unregisters them."""
     return rag.register

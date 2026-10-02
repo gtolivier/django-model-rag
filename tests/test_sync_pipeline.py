@@ -20,7 +20,6 @@ def test_pipeline_without_registered_model_produces_no_document() -> None:
 
 
 @pytest.mark.django_db
-@pytest.mark.usefixtures("restored_registry")
 def test_unregistered_model_produces_no_document() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name"])
@@ -378,7 +377,6 @@ def test_registering_a_model_without_any_declared_field_fails(
         register(Product, fields=[])
 
 
-@pytest.mark.usefixtures("restored_registry")
 def test_registering_a_single_field_name_instead_of_a_list_fails() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bfields\b.*\blist\b"):
         # A bare string is the slip under test: the type checker rightly
