@@ -32,8 +32,8 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
 
     Raises:
         ImproperlyConfigured: ``fields`` is not a list or a tuple (a bare
-            string or a set, say), it is empty, or a field is not one of
-            ``model``'s or is a relation.
+            string or a set, say), it is empty, a field is declared twice,
+            or a field is not one of ``model``'s or is a relation.
     """
     if not isinstance(fields, list | tuple):
         message = f"{model.__name__}: fields must be a list of field names"
@@ -87,8 +87,9 @@ class Registry:
         Raises:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: ``fields`` is not a list or a tuple, no
-                field is declared, or a field (``title_field`` included) is
-                not one of the model's or is a relation.
+                field is declared, a field is declared twice, or a field
+                (``title_field`` included) is not one of the model's or is a
+                relation.
         """
         if model in self._declarations:
             message = f"{model.__name__} is already registered"
