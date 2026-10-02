@@ -369,3 +369,24 @@ def test_documents_come_grouped_in_registration_order_whatever_its_kind() -> Non
         ("page", faq.pk),
         ("page", about.pk),
     ]
+
+
+@pytest.mark.django_db
+def test_build_document_takes_the_source_from_the_instance() -> None:
+    category = Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"Everything filed under {instance.name}."
+            )
+
+    assert SyncPipeline().run() == [
+        NormalizedDocument(
+            text="Everything filed under Tools.",
+            source_app_label="testapp",
+            source_model="category",
+            source_pk=category.pk,
+        )
+    ]
