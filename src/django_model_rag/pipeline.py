@@ -16,10 +16,9 @@ def _field_text(instance: Model, name: str) -> str:
     A field with choices reads as its label.
     """
     value = getattr(instance, name)
-    # Django adds get_<name>_display to fields that have choices
-    display = getattr(instance, f"get_{name}_display", None)
-    if display is not None:
-        value = display()
+    # Django adds get_<name>_display only to fields that have choices
+    if getattr(instance._meta.get_field(name), "choices", None):
+        value = getattr(instance, f"get_{name}_display")()
     return "" if value is None else str(value).strip()
 
 
