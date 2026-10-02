@@ -135,7 +135,7 @@ class Registry:
         """Register the decorated extractor class as the one of ``model``.
 
         Raises:
-            AlreadyRegistered: ``model`` is registered with fields.
+            AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: the decorated class does not derive from
                 ``BaseExtractor``, or does not implement ``extract``.
         """
