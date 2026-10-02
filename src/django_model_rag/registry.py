@@ -1,10 +1,15 @@
 """The registry of models whose content feeds the pipeline."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Any, TypeAlias, TypeVar
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
+
+from django_model_rag.extractors import BaseExtractor
+
+ExtractorClass = TypeVar("ExtractorClass", bound=BaseExtractor[Any])
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
@@ -72,6 +77,7 @@ class Registry:
     def __init__(self) -> None:
         """Start with no registered model."""
         self._declarations: dict[type[Model], Declaration] = {}
+        self._extractors: dict[type[Model], BaseExtractor[Any]] = {}
 
     def register(
         self,
@@ -98,6 +104,21 @@ class Registry:
         if title_field is not None:
             _require_content_field(model, title_field)
         self._declarations[model] = Declaration(tuple(fields), title_field)
+
+    def register_extractor(
+        self, model: type[Model]
+    ) -> Callable[[type[ExtractorClass]], type[ExtractorClass]]:
+        """Register the decorated extractor class as the one of ``model``."""
+
+        def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
+            self._extractors[model] = extractor_class()
+            return extractor_class
+
+        return decorator
+
+    def extractors(self) -> list[tuple[type[Model], BaseExtractor[Any]]]:
+        """List each model with the extractor registered for it."""
+        return list(self._extractors.items())
 
     def declarations(self) -> list[tuple[type[Model], Declaration]]:
         """List each registered model with what it declared."""

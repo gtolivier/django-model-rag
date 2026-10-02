@@ -73,8 +73,14 @@ class SyncPipeline:
 
     def run(self) -> list[NormalizedDocument]:
         """Produce the documents of every registered model."""
-        return [
+        documents = [
             document
             for model, declaration in rag.declarations()
             for document in _model_documents(model, declaration)
         ]
+        documents.extend(
+            extractor.extract(instance)
+            for model, extractor in rag.extractors()
+            for instance in model._default_manager.order_by("pk").iterator()
+        )
+        return documents
