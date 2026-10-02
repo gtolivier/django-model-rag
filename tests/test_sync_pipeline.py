@@ -269,6 +269,13 @@ def test_registering_a_field_the_model_does_not_have_names_it_in_the_error(
         register(Product, fields=["nmae"])
 
 
+def test_registering_a_relation_field_names_it_in_the_error(
+    register: Callable[..., None],
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bcategory\b"):
+        register(Product, fields=["name", "category"])
+
+
 def test_registering_a_model_without_any_declared_field_fails(
     register: Callable[..., None],
 ) -> None:
