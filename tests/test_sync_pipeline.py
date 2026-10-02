@@ -243,6 +243,18 @@ def test_document_title_is_the_value_of_the_declared_title_field(
 
 
 @pytest.mark.django_db
+def test_title_field_outside_the_declared_fields_gives_the_title_not_the_text(
+    register: Callable[..., None],
+) -> None:
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
+    register(Product, fields=["description"], title_field="name")
+
+    [document] = SyncPipeline().run()
+
+    assert (document.title, document.text) == ("Hammer", "Drives nails.")
+
+
+@pytest.mark.django_db
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
