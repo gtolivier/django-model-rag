@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+
 import pytest
 
 from django_model_rag import BaseExtractor, NormalizedDocument, SyncPipeline, rag
@@ -113,6 +115,46 @@ def test_extractor_may_return_several_documents_for_one_instance() -> None:
                 )
                 for item in instance.accordion_items.order_by("pk")
             ]
+
+    assert SyncPipeline().run() == [
+        NormalizedDocument(
+            text="We ship within two days.",
+            source_app_label="testapp",
+            source_model="page",
+            source_pk=page.pk,
+            title="Shipping",
+        ),
+        NormalizedDocument(
+            text="Returns are free for thirty days.",
+            source_app_label="testapp",
+            source_model="page",
+            source_pk=page.pk,
+            title="Returns",
+        ),
+    ]
+
+
+@pytest.mark.django_db
+def test_extractor_may_yield_its_documents_for_one_instance() -> None:
+    page = Page.objects.create(title="FAQ", slug="faq")
+    AccordionItem.objects.create(
+        page=page, title="Shipping", body="We ship within two days."
+    )
+    AccordionItem.objects.create(
+        page=page, title="Returns", body="Returns are free for thirty days."
+    )
+
+    @rag.register_extractor(Page)
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> Iterator[NormalizedDocument]:
+            for item in instance.accordion_items.order_by("pk"):
+                yield NormalizedDocument(
+                    text=item.body,
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=instance.pk,
+                    title=item.title,
+                )
 
     assert SyncPipeline().run() == [
         NormalizedDocument(
