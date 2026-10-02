@@ -35,7 +35,9 @@ def _document_title(
     return field_texts[0]
 
 
-def _document(instance: Model, fields: list[str]) -> NormalizedDocument | None:
+def _document(
+    instance: Model, fields: list[str], title_field: str | None
+) -> NormalizedDocument | None:
     """Build the document of ``instance``, or nothing when its ``fields`` are blank."""
     field_texts = [_field_text(instance, name) for name in fields]
     text = _document_text(field_texts)
@@ -46,7 +48,7 @@ def _document(instance: Model, fields: list[str]) -> NormalizedDocument | None:
         source_app_label=instance._meta.app_label,  # Django's public meta API
         source_model=instance._meta.model_name or "",  # Django's public meta API
         source_pk=instance.pk,
-        title=_document_title(instance, field_texts, rag.title_field(type(instance))),
+        title=_document_title(instance, field_texts, title_field),
     )
 
 
@@ -59,5 +61,6 @@ class SyncPipeline:
             document
             for model, fields in rag.declarations()
             for instance in model._default_manager.order_by("pk").iterator()
-            if (document := _document(instance, fields)) is not None
+            if (document := _document(instance, fields, rag.title_field(model)))
+            is not None
         ]

@@ -1,5 +1,7 @@
 """The registry of models whose content feeds the pipeline."""
 
+from dataclasses import dataclass
+
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
@@ -47,13 +49,20 @@ class NotRegistered(Exception):  # noqa: N818 - public name mirrors Django admin
     """A model that is not registered is unregistered."""
 
 
+@dataclass(frozen=True)
+class _Declaration:
+    """What a model declares when it is registered."""
+
+    fields: list[str]
+    title_field: str | None
+
+
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
     def __init__(self) -> None:
         """Start with no registered model."""
-        self._fields: dict[type[Model], list[str]] = {}
-        self._title_fields: dict[type[Model], str | None] = {}
+        self._declarations: dict[type[Model], _Declaration] = {}
 
     def register(
         self,
@@ -72,20 +81,23 @@ class Registry:
                 a list, no field is declared, or a field is not one of the
                 model's or is a relation.
         """
-        if model in self._fields:
+        if model in self._declarations:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
         _require_content_fields(model, fields)
-        self._fields[model] = list(fields)
-        self._title_fields[model] = title_field
+        self._declarations[model] = _Declaration(list(fields), title_field)
 
     def title_field(self, model: type[Model]) -> str | None:
         """Name the field declared as the title of ``model``, if any."""
-        return self._title_fields.get(model)
+        declaration = self._declarations.get(model)
+        return None if declaration is None else declaration.title_field
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
         """List each registered model with its declared fields."""
-        return list(self._fields.items())
+        return [
+            (model, declaration.fields)
+            for model, declaration in self._declarations.items()
+        ]
 
     def unregister(self, model: type[Model]) -> None:
         """Forget ``model``.
@@ -93,11 +105,10 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model not in self._fields:
+        if model not in self._declarations:
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
-        del self._fields[model]
-        del self._title_fields[model]
+        del self._declarations[model]
 
 
 rag = Registry()
