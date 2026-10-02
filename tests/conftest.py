@@ -21,15 +21,25 @@ def unordered_selects_reversed(db: None) -> Iterator[None]:
         cursor.execute("PRAGMA reverse_unordered_selects = OFF")
 
 
+def registered_models() -> set[type[Model]]:
+    """Return the models currently registered with ``rag``."""
+    return {model for model, _fields in rag.declarations()}
+
+
 @pytest.fixture
-def register() -> Iterator[Callable[..., None]]:
-    """Register models with ``rag``; unregister them when the test ends."""
-    registered: list[type[Model]] = []
+def restored_registry() -> Iterator[None]:
+    """Unregister, when the test ends, every model it left registered with ``rag``.
 
-    def register_model(model: type[Model], *, fields: list[str]) -> None:
-        rag.register(model, fields=fields)
-        registered.append(model)
-
-    yield register_model
-    for model in registered:
+    Only models still registered are unregistered, so a test may unregister
+    a model itself without making the teardown fail.
+    """
+    registered_before = registered_models()
+    yield
+    for model in registered_models() - registered_before:
         rag.unregister(model)
+
+
+@pytest.fixture
+def register(restored_registry: None) -> Callable[..., None]:
+    """Register models with ``rag``; unregister them when the test ends."""
+    return rag.register

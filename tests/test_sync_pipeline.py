@@ -20,6 +20,7 @@ def test_pipeline_without_registered_model_produces_no_document() -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("restored_registry")
 def test_unregistered_model_produces_no_document() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name"])
