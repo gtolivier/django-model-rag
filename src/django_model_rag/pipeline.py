@@ -1,7 +1,7 @@
 """The pipeline that turns registered models into normalized documents."""
 
 from collections.abc import Collection, Iterator
-from typing import Any
+from typing import Any, TypeAlias
 
 from django.db.models import Model
 
@@ -10,6 +10,9 @@ from django_model_rag.extractors import BaseExtractor, document_from_instance
 from django_model_rag.registry import Declaration, rag
 
 _FIELD_SEPARATOR = "\n\n"
+
+_Registration: TypeAlias = Declaration | BaseExtractor[Any]
+"""How a registered model turns into documents: declared fields or an extractor."""
 
 
 def _field_text(instance: Model, name: str) -> str:
@@ -61,14 +64,13 @@ def _instances(model: type[Model]) -> Iterator[Model]:
     return model._default_manager.order_by("pk").iterator()
 
 
-def _model_documents(
-    model: type[Model], declaration: Declaration
+def _declared_instance_documents(
+    instance: Model, declaration: Declaration
 ) -> Iterator[NormalizedDocument]:
-    """Build the documents of ``model``'s instances, in primary key order."""
-    for instance in _instances(model):
-        document = _document(instance, declaration)
-        if document is not None:
-            yield document
+    """Build the document of ``instance``, if its declared fields are not blank."""
+    document = _document(instance, declaration)
+    if document is not None:
+        yield document
 
 
 def _extracted_instance_documents(
@@ -88,12 +90,26 @@ def _extracted_instance_documents(
         yield from extracted
 
 
-def _extracted_documents(
-    model: type[Model], extractor: BaseExtractor[Any]
+def _registrations() -> dict[type[Model], _Registration]:
+    """Map each registered model to its declaration or its extractor."""
+    return {**dict(rag.declarations()), **dict(rag.extractors())}
+
+
+def _instance_documents(
+    instance: Model, registration: _Registration
 ) -> Iterator[NormalizedDocument]:
-    """Build the documents of ``model``'s instances with ``extractor``, in pk order."""
+    """Build the documents of ``instance`` as its model's ``registration`` says."""
+    if isinstance(registration, Declaration):
+        return _declared_instance_documents(instance, registration)
+    return _extracted_instance_documents(instance, registration)
+
+
+def _model_documents(
+    model: type[Model], registration: _Registration
+) -> Iterator[NormalizedDocument]:
+    """Build the documents of ``model``'s instances, in primary key order."""
     for instance in _instances(model):
-        yield from _extracted_instance_documents(instance, extractor)
+        yield from _instance_documents(instance, registration)
 
 
 def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
@@ -123,21 +139,13 @@ class SyncPipeline:
         Raises:
             NotRegistered: one of ``models`` is not registered.
         """
-        declarations = dict(rag.declarations())
-        extractors = dict(rag.extractors())
+        registrations = _registrations()
         documents: list[NormalizedDocument] = []
         for model in _models_to_run(models):
-            if model in declarations:
-                documents.extend(_model_documents(model, declarations[model]))
-            else:
-                documents.extend(_extracted_documents(model, extractors[model]))
+            documents.extend(_model_documents(model, registrations[model]))
         return documents
 
     def run_instance(self, instance: Model) -> list[NormalizedDocument]:
         """Produce the documents of ``instance`` only."""
-        model = type(instance)
-        extractors = dict(rag.extractors())
-        if model in extractors:
-            return list(_extracted_instance_documents(instance, extractors[model]))
-        document = _document(instance, dict(rag.declarations())[model])
-        return [] if document is None else [document]
+        registration = _registrations()[type(instance)]
+        return list(_instance_documents(instance, registration))
