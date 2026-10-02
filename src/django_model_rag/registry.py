@@ -127,12 +127,16 @@ class Registry:
         """Register the decorated extractor class as the one of ``model``.
 
         Raises:
+            AlreadyRegistered: ``model`` is registered with fields.
             ImproperlyConfigured: the decorated class does not derive from
                 ``BaseExtractor``, or does not implement ``extract``.
         """
 
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
             _require_extractor_class(extractor_class)
+            if model in self._declarations:
+                message = f"{model.__name__} is already registered"
+                raise AlreadyRegistered(message)
             self._extractors[model] = extractor_class()
             return extractor_class
 
