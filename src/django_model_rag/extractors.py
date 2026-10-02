@@ -19,3 +19,13 @@ class BaseExtractor(ABC, Generic[M]):
         self, instance: M
     ) -> NormalizedDocument | Iterable[NormalizedDocument] | None:
         """Build the document(s) of ``instance``, or nothing to skip it."""
+
+    def build_document(self, instance: M, *, text: str) -> NormalizedDocument:
+        """Build a document with ``text``, its source taken from ``instance``."""
+        app_label, model_name = instance._meta.label_lower.split(".")
+        return NormalizedDocument(
+            text=text,
+            source_app_label=app_label,
+            source_model=model_name,
+            source_pk=instance.pk,
+        )
