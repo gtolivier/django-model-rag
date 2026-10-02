@@ -28,8 +28,7 @@ def _document_text(field_texts: list[str]) -> str:
 
 def _document_title(field_texts: list[str]) -> str:
     """Take the first of the ``field_texts``, or nothing when it is blank."""
-    title = field_texts[0]
-    return "" if _is_blank(title) else title
+    return field_texts[0].strip()
 
 
 def _document(instance: Model, fields: list[str]) -> NormalizedDocument | None:
