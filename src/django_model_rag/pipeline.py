@@ -1,5 +1,7 @@
 """The pipeline that turns registered models into normalized documents."""
 
+from collections.abc import Iterator
+
 from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
@@ -52,6 +54,16 @@ def _document(
     )
 
 
+def _model_documents(
+    model: type[Model], fields: list[str], title_field: str | None
+) -> Iterator[NormalizedDocument]:
+    """Build the documents of ``model``'s instances, in primary key order."""
+    for instance in model._default_manager.order_by("pk").iterator():
+        document = _document(instance, fields, title_field)
+        if document is not None:
+            yield document
+
+
 class SyncPipeline:
     """Turn registered models into normalized documents."""
 
@@ -60,7 +72,5 @@ class SyncPipeline:
         return [
             document
             for model, fields in rag.declarations()
-            for instance in model._default_manager.order_by("pk").iterator()
-            if (document := _document(instance, fields, rag.title_field(model)))
-            is not None
+            for document in _model_documents(model, fields, rag.title_field(model))
         ]
