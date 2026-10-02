@@ -219,6 +219,18 @@ def test_document_title_is_empty_when_the_first_declared_field_is_none(
 
 
 @pytest.mark.django_db
+def test_document_title_strips_the_surrounding_whitespace_of_its_value(
+    register: Callable[..., None],
+) -> None:
+    create_product(name="  Hammer\n", description="Drives nails.", price="9.90")
+    register(Product, fields=["name", "description"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.title == "Hammer"
+
+
+@pytest.mark.django_db
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
