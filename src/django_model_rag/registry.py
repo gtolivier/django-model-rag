@@ -1,9 +1,13 @@
 """The registry of models whose content feeds the pipeline."""
 
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
+
+FieldNames: TypeAlias = list[str] | tuple[str, ...]
+"""The field names a model declares: a list or a tuple, never a bare string."""
 
 
 def _require_content_field(model: type[Model], name: str) -> None:
@@ -23,15 +27,13 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _require_content_fields(
-    model: type[Model], fields: list[str] | tuple[str, ...]
-) -> None:
-    """Fail unless ``fields`` is a non-empty list of ``model``'s content fields.
+def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
+    """Fail unless ``fields`` is a non-empty list or tuple of content fields.
 
     Raises:
-        ImproperlyConfigured: ``fields`` is not a list (a bare string or a
-            set, say), it is empty, or a field is not one of the model's or is a
-            relation.
+        ImproperlyConfigured: ``fields`` is not a list or a tuple (a bare
+            string or a set, say), it is empty, or a field is not one of
+            ``model``'s or is a relation.
     """
     if not isinstance(fields, list | tuple):
         message = f"{model.__name__}: fields must be a list of field names"
@@ -70,7 +72,7 @@ class Registry:
         self,
         model: type[Model],
         *,
-        fields: list[str] | tuple[str, ...],
+        fields: FieldNames,
         title_field: str | None = None,
     ) -> None:
         """Register ``model`` with the fields to extract.
@@ -79,9 +81,9 @@ class Registry:
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields`` is a single string instead of
-                a list, no field is declared, or a field (``title_field``
-                included) is not one of the model's or is a relation.
+            ImproperlyConfigured: ``fields`` is not a list or a tuple, no
+                field is declared, or a field (``title_field`` included) is
+                not one of the model's or is a relation.
         """
         if model in self._declarations:
             message = f"{model.__name__} is already registered"
