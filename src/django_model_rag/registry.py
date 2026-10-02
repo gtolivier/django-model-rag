@@ -113,6 +113,16 @@ class Registry:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
 
+    def require_registered(self, model: type[Model]) -> None:
+        """Fail unless ``model`` is registered with fields or an extractor.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        if not self._is_registered(model):
+            message = f"{model.__name__} is not registered"
+            raise NotRegistered(message)
+
     def register(
         self,
         model: type[Model],
@@ -178,9 +188,7 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if not self._is_registered(model):
-            message = f"{model.__name__} is not registered"
-            raise NotRegistered(message)
+        self.require_registered(model)
         del self._registrations[model]
 
 

@@ -7,7 +7,7 @@ from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor, document_from_instance
-from django_model_rag.registry import Declaration, NotRegistered, rag
+from django_model_rag.registry import Declaration, rag
 
 _FIELD_SEPARATOR = "\n\n"
 
@@ -90,14 +90,15 @@ def _extracted_documents(
 
 
 def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
-    """Select the registered ``models``, in their order, or every registered model."""
-    registered = list(rag.models())
+    """Select ``models``, in their order, or every registered model.
+
+    Raises:
+        NotRegistered: one of ``models`` is not registered.
+    """
     if models is None:
-        return registered
+        return rag.models()
     for model in models:
-        if model not in registered:
-            message = f"{model.__name__} is not registered"
-            raise NotRegistered(message)
+        rag.require_registered(model)
     return list(models)
 
 
@@ -111,6 +112,9 @@ class SyncPipeline:
 
         Only the given ``models`` are run, in their order, or every registered
         model by default.
+
+        Raises:
+            NotRegistered: one of ``models`` is not registered.
         """
         declarations = dict(rag.declarations())
         extractors = dict(rag.extractors())
