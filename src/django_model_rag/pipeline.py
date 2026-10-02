@@ -9,30 +9,26 @@ _FIELD_SEPARATOR = "\n\n"
 
 
 def _field_text(instance: Model, name: str) -> str:
-    """Read the field ``name`` of ``instance`` as text, its label if it has choices."""
+    """Read the field ``name`` of ``instance`` as stripped text.
+
+    A field with choices reads as its label.
+    """
     value = getattr(instance, name)
     # Django adds get_<name>_display to fields that have choices
     display = getattr(instance, f"get_{name}_display", None)
     if display is not None:
         value = display()
-    return "" if value is None else str(value)
-
-
-def _is_blank(text: str) -> bool:
-    """Tell whether ``text`` holds nothing but whitespace."""
-    return not text.strip()
+    return "" if value is None else str(value).strip()
 
 
 def _document_text(field_texts: list[str]) -> str:
-    """Join the non-blank ``field_texts``, stripped, in order."""
-    return _FIELD_SEPARATOR.join(
-        text.strip() for text in field_texts if not _is_blank(text)
-    )
+    """Join the non-empty ``field_texts``, in order."""
+    return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
 def _document_title(field_texts: list[str]) -> str:
-    """Take the first of the ``field_texts``, stripped."""
-    return field_texts[0].strip()
+    """Take the first of the ``field_texts``."""
+    return field_texts[0]
 
 
 def _document(instance: Model, fields: list[str]) -> NormalizedDocument | None:

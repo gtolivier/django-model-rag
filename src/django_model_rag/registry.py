@@ -21,6 +21,24 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _require_content_fields(model: type[Model], fields: list[str]) -> None:
+    """Fail unless ``fields`` is a non-empty list of ``model``'s content fields.
+
+    Raises:
+        ImproperlyConfigured: ``fields`` is a single string instead of a
+            list, it is empty, or a field is not one of the model's or is a
+            relation.
+    """
+    if isinstance(fields, str):
+        message = f"{model.__name__}: fields must be a list of field names"
+        raise ImproperlyConfigured(message)
+    if not fields:
+        message = f"{model.__name__} declares no field"
+        raise ImproperlyConfigured(message)
+    for name in fields:
+        _require_content_field(model, name)
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -48,14 +66,7 @@ class Registry:
         if model in self._fields:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
-        if isinstance(fields, str):
-            message = f"{model.__name__}: fields must be a list of field names"
-            raise ImproperlyConfigured(message)
-        if not fields:
-            message = f"{model.__name__} declares no field"
-            raise ImproperlyConfigured(message)
-        for name in fields:
-            _require_content_field(model, name)
+        _require_content_fields(model, fields)
         self._fields[model] = list(fields)
 
     def declarations(self) -> list[tuple[type[Model], list[str]]]:
