@@ -20,7 +20,7 @@ def _is_blank(text: str) -> bool:
 
 
 def _document_text(field_texts: list[str]) -> str:
-    """Join the non-blank ``field_texts``, in order."""
+    """Join the non-blank ``field_texts``, stripped, in order."""
     return _FIELD_SEPARATOR.join(
         text.strip() for text in field_texts if not _is_blank(text)
     )
