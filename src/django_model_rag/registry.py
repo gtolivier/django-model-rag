@@ -162,10 +162,11 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model not in self._declarations:
+        if model not in self._declarations and model not in self._extractors:
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
-        del self._declarations[model]
+        self._declarations.pop(model, None)
+        self._extractors.pop(model, None)
 
 
 rag = Registry()
