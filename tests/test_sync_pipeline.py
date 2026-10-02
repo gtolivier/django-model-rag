@@ -90,6 +90,18 @@ def test_document_text_leaves_out_a_declared_field_with_a_blank_value(
 
 
 @pytest.mark.django_db
+def test_document_text_strips_the_surrounding_whitespace_of_each_value(
+    register: Callable[..., None],
+) -> None:
+    create_product(name="  Hammer\n", description="\nDrives nails.  ", price="9.90")
+    register(Product, fields=["name", "description"])
+
+    [document] = SyncPipeline().run()
+
+    assert document.text == "Hammer\n\nDrives nails."
+
+
+@pytest.mark.django_db
 def test_document_text_leaves_out_a_declared_field_whose_value_is_none(
     register: Callable[..., None],
 ) -> None:
