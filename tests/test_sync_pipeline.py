@@ -231,6 +231,18 @@ def test_document_title_strips_the_surrounding_whitespace_of_its_value(
 
 
 @pytest.mark.django_db
+def test_document_title_is_the_value_of_the_declared_title_field(
+    register: Callable[..., None],
+) -> None:
+    create_product(name="Hammer", description="Drives nails.", price="9.90")
+    register(Product, fields=["description", "name"], title_field="name")
+
+    [document] = SyncPipeline().run()
+
+    assert document.title == "Hammer"
+
+
+@pytest.mark.django_db
 def test_document_carries_the_source_of_its_product(
     register: Callable[..., None],
 ) -> None:
