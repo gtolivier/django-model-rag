@@ -92,17 +92,16 @@ class Registry:
 
     def __init__(self) -> None:
         """Start with no registered model."""
-        self._declarations: dict[type[Model], Declaration] = {}
-        self._extractors: dict[type[Model], BaseExtractor[Any]] = {}
-        self._order: list[type[Model]] = []
+        # One dict for both kinds keeps the registration order across them
+        self._registrations: dict[type[Model], Declaration | BaseExtractor[Any]] = {}
 
     def models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
-        return list(self._order)
+        return list(self._registrations)
 
     def _is_registered(self, model: type[Model]) -> bool:
         """Tell whether ``model`` is registered with fields or an extractor."""
-        return model in self._declarations or model in self._extractors
+        return model in self._registrations
 
     def _require_unregistered(self, model: type[Model]) -> None:
         """Fail if ``model`` is already registered with fields or an extractor.
@@ -136,8 +135,7 @@ class Registry:
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
-        self._declarations[model] = Declaration(tuple(fields), title_field)
-        self._order.append(model)
+        self._registrations[model] = Declaration(tuple(fields), title_field)
 
     def register_extractor(
         self, model: type[Model]
@@ -153,19 +151,26 @@ class Registry:
         def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
-            self._extractors[model] = extractor_class()
-            self._order.append(model)
+            self._registrations[model] = extractor_class()
             return extractor_class
 
         return decorator
 
     def extractors(self) -> list[tuple[type[Model], BaseExtractor[Any]]]:
         """List each model with the extractor registered for it."""
-        return list(self._extractors.items())
+        return [
+            (model, registration)
+            for model, registration in self._registrations.items()
+            if isinstance(registration, BaseExtractor)
+        ]
 
     def declarations(self) -> list[tuple[type[Model], Declaration]]:
         """List each registered model with what it declared."""
-        return list(self._declarations.items())
+        return [
+            (model, registration)
+            for model, registration in self._registrations.items()
+            if isinstance(registration, Declaration)
+        ]
 
     def unregister(self, model: type[Model]) -> None:
         """Forget ``model``.
@@ -176,9 +181,7 @@ class Registry:
         if not self._is_registered(model):
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
-        self._declarations.pop(model, None)
-        self._extractors.pop(model, None)
-        self._order.remove(model)
+        del self._registrations[model]
 
 
 rag = Registry()
