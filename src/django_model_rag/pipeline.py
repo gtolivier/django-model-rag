@@ -1,10 +1,12 @@
 """The pipeline that turns registered models into normalized documents."""
 
 from collections.abc import Iterator
+from typing import Any
 
 from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
+from django_model_rag.extractors import BaseExtractor
 from django_model_rag.registry import Declaration, rag
 
 _FIELD_SEPARATOR = "\n\n"
@@ -58,14 +60,27 @@ def _document(instance: Model, declaration: Declaration) -> NormalizedDocument |
     )
 
 
+def _instances(model: type[Model]) -> Iterator[Model]:
+    """Iterate over ``model``'s instances, in primary key order."""
+    return model._default_manager.order_by("pk").iterator()
+
+
 def _model_documents(
     model: type[Model], declaration: Declaration
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances, in primary key order."""
-    for instance in model._default_manager.order_by("pk").iterator():
+    for instance in _instances(model):
         document = _document(instance, declaration)
         if document is not None:
             yield document
+
+
+def _extracted_documents(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> Iterator[NormalizedDocument]:
+    """Build the documents of ``model``'s instances with ``extractor``, in pk order."""
+    for instance in _instances(model):
+        yield extractor.extract(instance)
 
 
 class SyncPipeline:
@@ -79,8 +94,8 @@ class SyncPipeline:
             for document in _model_documents(model, declaration)
         ]
         documents.extend(
-            extractor.extract(instance)
+            document
             for model, extractor in rag.extractors()
-            for instance in model._default_manager.order_by("pk").iterator()
+            for document in _extracted_documents(model, extractor)
         )
         return documents
