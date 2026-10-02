@@ -37,8 +37,9 @@ class Registry:
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: no field is declared, or a field is not
-                one of the model's.
+            ImproperlyConfigured: ``fields`` is a single string instead of
+                a list, no field is declared, or a field is not one of the
+                model's.
         """
         if model in self._fields:
             message = f"{model.__name__} is already registered"
