@@ -172,3 +172,18 @@ def test_extractor_may_yield_its_documents_for_one_instance() -> None:
             title="Returns",
         ),
     ]
+
+
+@pytest.mark.django_db
+def test_extractor_returning_a_string_fails_naming_the_extractor() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class SloppyCategoryExtractor(BaseExtractor[Category]):
+        # A bare string instead of a document is the slip under test: the
+        # type checker rightly rejects it.
+        def extract(self, instance: Category) -> str:  # type: ignore[override]
+            return f"Everything filed under {instance.name}."
+
+    with pytest.raises(TypeError, match="SloppyCategoryExtractor"):
+        SyncPipeline().run()
