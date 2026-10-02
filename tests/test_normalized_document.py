@@ -6,6 +6,17 @@ import pytest
 
 from django_model_rag import NormalizedDocument
 
+MANDATORY_VALUES: dict[str, Any] = {
+    "text": "A desk lamp",
+    "source_app_label": "testapp",
+    "source_model": "product",
+    "source_pk": 1,
+}
+
+
+def make_document(**overrides: Any) -> NormalizedDocument:
+    return NormalizedDocument(**{**MANDATORY_VALUES, **overrides})
+
 
 def test_document_exposes_its_text_and_source() -> None:
     document = NormalizedDocument(
@@ -63,41 +74,21 @@ def test_document_source_pk_cannot_be_none() -> None:
 
 
 def test_document_title_and_url_default_to_empty() -> None:
-    document = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
-    )
+    document = make_document()
 
     assert document.title == ""
     assert document.url == ""
 
 
 def test_document_language_is_unknown_by_default() -> None:
-    document = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
-    )
+    document = make_document()
 
     assert document.language is None
 
 
 def test_document_metadata_defaults_to_its_own_empty_dict() -> None:
-    first = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
-    )
-    second = NormalizedDocument(
-        text="An office chair",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=2,
-    )
+    first = make_document()
+    second = make_document(text="An office chair", source_pk=2)
 
     assert first.metadata == {}
     assert second.metadata == {}
@@ -105,11 +96,7 @@ def test_document_metadata_defaults_to_its_own_empty_dict() -> None:
 
 
 def test_document_exposes_its_title_url_language_and_metadata() -> None:
-    document = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
+    document = make_document(
         title="Desk lamp",
         url="/products/1/",
         language="en",
@@ -124,13 +111,7 @@ def test_document_exposes_its_title_url_language_and_metadata() -> None:
 
 def test_document_keeps_its_own_copy_of_the_metadata_it_is_given() -> None:
     metadata = {"category": "Lighting"}
-    document = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
-        metadata=metadata,
-    )
+    document = make_document(metadata=metadata)
 
     metadata["category"] = "Furniture"
 
@@ -138,13 +119,7 @@ def test_document_keeps_its_own_copy_of_the_metadata_it_is_given() -> None:
 
 
 def test_document_metadata_cannot_be_modified_through_the_document() -> None:
-    document = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
-        metadata={"category": "Lighting"},
-    )
+    document = make_document(metadata={"category": "Lighting"})
 
     # The assignment deliberately writes to a read-only Mapping: the type
     # checker rightly rejects it, and the test checks the runtime rejects it too.
@@ -155,11 +130,8 @@ def test_document_metadata_cannot_be_modified_through_the_document() -> None:
 
 
 def test_document_source_key_identifies_its_source() -> None:
-    document = NormalizedDocument(
-        text="A desk lamp",
-        source_app_label="testapp",
-        source_model="product",
-        source_pk=1,
+    document = make_document(
+        source_app_label="testapp", source_model="product", source_pk=1
     )
 
     assert document.source_key == "testapp.product:1"

@@ -46,12 +46,17 @@ refactoring, not from the prototype.
 
 - [x] **1. `NormalizedDocument`** — its attributes, a stable `source_key`
   (`app_label.model_name:pk`) and a readable `repr`.
-- [ ] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
+- [x] **2. Extract declared fields** — `rag.register(Model, fields=[...])`
   then `SyncPipeline().run()` returns one document per instance of the
-  registered models: the text of the declared fields, a title taken from the
-  first field, the source of the document, and no document for empty
-  content. `rag`, `NormalizedDocument` and `SyncPipeline` are importable
-  from `django_model_rag`.
+  registered models: the text of the declared fields, a title taken from
+  `title_field` (the first declared field when it is not given), the source
+  of the document, and no document for empty content. `rag.unregister`, and
+  `AlreadyRegistered` / `NotRegistered` as in `django.contrib.admin`.
+  `fields` is a list or a tuple; an unknown field, a relation, a field
+  declared twice or an empty list fails at registration, and so does a
+  wrong `title_field`. Values are stripped, a field with choices gives its
+  label. `rag`, `NormalizedDocument`, `SyncPipeline` and the two exceptions
+  are importable from `django_model_rag`.
 - [ ] **3. Custom extractors** — `rag.register_extractor` (a class
   decorator) and `BaseExtractor`, also importable from `django_model_rag`;
   extractors that return one document, several or none; a run over a subset
@@ -63,10 +68,19 @@ refactoring, not from the prototype.
   the instance's string form as the title when there is no field.
 - [ ] **5. Followed relations** — `follow=[...]` adds the text of related
   objects, across foreign keys, reverse relations and many-to-many
-  relations; a missing or empty relation adds nothing.
+  relations; a missing or empty relation adds nothing. Open, to settle
+  when it starts: lookup paths in `fields` (`fields=["name",
+  "category__name"]`, as in `list_display` or `values()`), which pick one
+  field of the related object, in a chosen order, where `follow=` takes all
+  its text. The two could coexist. Until then, a relation in `fields` is an
+  error.
 - [ ] **6. Language, URL and permissions** — from configured fields
   (`language_field`, `url_field`) or guessed (common attribute names,
   `get_absolute_url`), with their fallbacks; permissions passed through.
+  Once this feature settles everything the pipeline reads from an instance,
+  reconsider loading only those columns (`QuerySet.only()`): until then,
+  each attribute read outside the loaded ones would cost a query per
+  instance.
 - [ ] **7. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.

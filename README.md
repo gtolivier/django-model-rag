@@ -15,9 +15,9 @@ does not depend on this one.
 
 ## Status
 
-Pre-alpha. Nothing is implemented yet: the package is being written
-test-first, using an earlier prototype as its behavioral specification. See
-the [roadmap](ROADMAP.md) for the order of the features.
+Pre-alpha, not usable yet. The package is being written test-first, using
+an earlier prototype as its behavioral specification. See the
+[roadmap](ROADMAP.md) for what is done and the order of the features.
 
 ## Requirements
 
