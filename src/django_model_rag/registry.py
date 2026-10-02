@@ -43,6 +43,9 @@ class Registry:
         if model in self._fields:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
+        if isinstance(fields, str):
+            message = f"{model.__name__}: fields must be a list of field names"
+            raise ImproperlyConfigured(message)
         if not fields:
             message = f"{model.__name__} declares no field"
             raise ImproperlyConfigured(message)
