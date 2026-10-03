@@ -1,4 +1,5 @@
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Model
 
 from django_model_rag import SyncPipeline, rag
@@ -128,6 +129,11 @@ def test_excluded_field_is_left_out_of_the_guessed_text_and_title() -> None:
         "Monday to Friday.",
         "Monday to Friday.",
     )
+
+
+def test_excluding_a_field_the_model_does_not_have_names_it_in_the_error() -> None:
+    with pytest.raises(ImproperlyConfigured, match="titel"):
+        rag.register(Note, exclude=["titel"])
 
 
 @pytest.mark.django_db
