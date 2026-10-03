@@ -54,12 +54,12 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
-    """Fail unless ``names`` names, once each, relations of ``model`` with text.
+def _require_models_ready(model: type[Model]) -> None:
+    """Fail unless every model is loaded, as following ``model``'s relations needs.
 
     Raises:
-        ImproperlyConfigured: a name to follow is not a relation accessor, it
-            is given twice, or its related model has no text field.
+        ImproperlyConfigured: models are still loading (``model`` is
+            registered from a models module, say).
     """
     if not apps.models_ready:
         message = (
@@ -67,6 +67,15 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             "register from a rag.py module imported in ready()"
         )
         raise ImproperlyConfigured(message)
+
+
+def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
+    """Fail unless ``names`` names, once each, relations of ``model`` with text.
+
+    Raises:
+        ImproperlyConfigured: a name to follow is not a relation accessor, it
+            is given twice, or its related model has no text field.
+    """
     accessors = {
         field.get_accessor_name() if field.auto_created else field.name: field  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
         for field in model._meta.get_fields()
@@ -261,7 +270,7 @@ class Registry:
                 the model has no text field or ``exclude`` names all of them,
                 or a name in ``follow`` is not one of the model's relation
                 accessors, is given twice, or leads to a model with no text
-                field.
+                field, or relations are followed while models are loading.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
@@ -275,6 +284,7 @@ class Registry:
             _require_content_field(model, title_field)
         _require_field_names(model, follow, "follow")
         if follow:
+            _require_models_ready(model)
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
