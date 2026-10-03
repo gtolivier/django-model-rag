@@ -251,6 +251,21 @@ def test_extractor_returning_a_non_iterable_fails_naming_the_extractor() -> None
         SyncPipeline().run()
 
 
+@pytest.mark.django_db
+def test_extractor_yielding_something_else_than_a_document_fails_naming_it() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class StringListCategoryExtractor(BaseExtractor[Category]):
+        # A list of strings instead of documents is the slip under test: the
+        # type checker rightly rejects it.
+        def extract(self, instance: Category) -> list[str]:  # type: ignore[override]
+            return [f"Everything filed under {instance.name}."]
+
+    with pytest.raises(TypeError, match="StringListCategoryExtractor"):
+        SyncPipeline().run()
+
+
 def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
     class CategoryExtractor(BaseExtractor[Category]):
         def extract(self, instance: Category) -> NormalizedDocument:
