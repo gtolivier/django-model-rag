@@ -46,6 +46,19 @@ def _text_fields(model: type[Model]) -> list[str]:
     return sorted(names, key=_title_rank)  # stable sort
 
 
+def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
+    """List ``model``'s text fields, except those named in ``exclude``.
+
+    Raises:
+        ImproperlyConfigured: ``model`` has no text field.
+    """
+    names = _text_fields(model)
+    if not names:
+        message = f"{model.__name__} has no text field to guess"
+        raise ImproperlyConfigured(message)
+    return [name for name in names if name not in exclude]
+
+
 def _require_content_field(model: type[Model], name: str) -> None:
     """Fail unless ``model`` has a non-relation field called ``name``.
 
@@ -215,19 +228,16 @@ class Registry:
             ImproperlyConfigured: ``fields`` or ``exclude`` is not a list or
                 a tuple, no field is declared, a field is declared or excluded
                 twice, or a field (``title_field`` and ``exclude`` included) is
-                not one of the model's or is a relation, or ``exclude`` is
-                combined with ``fields``.
+                not one of the model's or is a relation, ``exclude`` is
+                combined with ``fields``, or, without ``fields``, the model
+                has no text field.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
         _require_fields_or_exclude(fields, exclude)
         if fields is None:
             _require_excluded_fields(model, exclude)
-            guessed = _text_fields(model)
-            if not guessed:
-                message = f"{model.__name__} has no text field to guess"
-                raise ImproperlyConfigured(message)
-            fields = [name for name in guessed if name not in exclude]
+            fields = _guessed_fields(model, exclude)
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
