@@ -57,7 +57,7 @@ refactoring, not from the prototype.
   wrong `title_field`. Values are stripped, a field with choices gives its
   label. `rag`, `NormalizedDocument`, `SyncPipeline` and the two exceptions
   are importable from `django_model_rag`.
-- [ ] **3. Custom extractors** — `rag.register_extractor` (a class
+- [x] **3. Custom extractors** — `rag.register_extractor` (a class
   decorator) and `BaseExtractor`, also importable from `django_model_rag`;
   extractors that return one document, several or none; a run over a subset
   of the models, a run for a single instance, and the list of registered
@@ -101,7 +101,9 @@ django-minimal-rag all depend on.
 - **The identity of a document.** An instance can produce several
   documents, and they share one `source_key`. Either the key identifies the
   group — the documents of an instance are replaced together — or each
-  document gets its own part.
+  document gets its own part. A custom extractor may also build a document
+  whose source is another instance (a plugin indexed as its page), which
+  nothing forbids yet: decide whether the pipeline should.
 - **Removal on save.** A saved instance that now produces fewer documents,
   or none, must have the old ones removed, not only a deleted instance.
 - **Where the output comes from.** The command and the signals run outside
