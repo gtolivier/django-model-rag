@@ -100,7 +100,7 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
     """
     _require_field_names(model, fields, "fields")
     if not fields:
-        message = f"{model.__name__} declares no field"
+        message = f"{model.__name__} declares no text field"
         raise ImproperlyConfigured(message)
     seen: set[str] = set()
     for name in fields:
