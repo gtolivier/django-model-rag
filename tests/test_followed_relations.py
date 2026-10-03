@@ -481,6 +481,45 @@ def test_followed_many_to_many_appends_the_related_texts_in_pk_order() -> None:
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_many_to_many_is_read_in_one_query_for_all_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three courses with two topics each, some topics shared: one query per
+    # course would show as more than two queries, and the topics are linked in
+    # an order other than their primary keys', so neither the link order nor
+    # the reversed selects can give each course its texts in pk order.
+    joinery = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    turning = Topic.objects.create(
+        summary="Bowls and spindles.", title="Turning", slug="turning"
+    )
+    carving = Topic.objects.create(
+        summary="Spoons and reliefs.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    furniture = Course.objects.create(title="Furniture making")
+    restoration = Course.objects.create(title="Antique restoration")
+    basics.topics.add(turning, joinery)
+    furniture.topics.add(carving, joinery)
+    restoration.topics.add(carving, turning)
+    rag.register(Course, follow=["topics"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Woodworking basics\n\nJoinery\n\nJoints and finishes."
+        "\n\nTurning\n\nBowls and spindles.",
+        "Furniture making\n\nJoinery\n\nJoints and finishes."
+        "\n\nCarving\n\nSpoons and reliefs.",
+        "Antique restoration\n\nTurning\n\nBowls and spindles."
+        "\n\nCarving\n\nSpoons and reliefs.",
+    ]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
 def test_followed_reverse_many_to_many_appends_the_related_texts_in_pk_order() -> None:
     # The courses are linked in an order other than their primary keys', so
     # neither the link order nor the reversed selects can give pk order.
