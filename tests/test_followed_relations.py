@@ -270,6 +270,26 @@ def test_followed_foreign_key_whose_text_fields_are_blank_adds_nothing() -> None
 
 
 @pytest.mark.django_db
+def test_instance_with_blank_own_text_has_a_document_when_a_followed_one_has_text() -> (
+    None
+):
+    # Without follow, a lesson whose only text field is blank has no document:
+    # here the followed topic gives it a text, and the blank title stays the
+    # title, as its own fields give it.
+    topic = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    Lesson.objects.create(title="   ", topic=topic)
+    rag.register(Lesson, follow=["topic"])
+
+    documents = SyncPipeline().run()
+
+    assert [(document.title, document.text) for document in documents] == [
+        ("", "Woodworking\n\nJoints and finishes.")
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_reverse_foreign_key_appends_the_related_text() -> None:
     page = Page.objects.create(title="About us", slug="about-us")
     TextPlugin.objects.create(page=page, body="We build chairs by hand.")
