@@ -24,7 +24,9 @@ def _title_rank(name: str) -> int:
     return len(_TITLE_LIKE_NAMES)
 
 
-def _is_text_field(field: Field[Any, Any]) -> bool:
+# quoted: Django's Field is generic for the type checker only, and before
+# Python 3.14 an annotation is evaluated when the function is defined
+def _is_text_field(field: "Field[Any, Any]") -> bool:
     """Tell whether ``field`` holds text content."""
     # a primary key is an identifier, not content
     if field.primary_key:
