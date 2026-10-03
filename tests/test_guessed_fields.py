@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import AccordionItem, Category, Page, TextPlugin
+from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
 
 
 @pytest.mark.django_db
@@ -37,4 +37,24 @@ def test_model_registered_without_fields_joins_its_text_fields_in_order() -> Non
 
     assert [document.text for document in documents] == [
         "Opening hours\n\nMonday to Friday."
+    ]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_guesses_only_its_text_fields() -> None:
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer",
+        description="Drives nails.",
+        subtitle=None,
+        price="9.90",
+        category=category,
+        condition="used",
+    )
+    rag.register(Product)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Hammer\n\nDrives nails.\n\nSecond-hand"
     ]
