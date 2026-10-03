@@ -6,8 +6,10 @@ from tests.testapp.models import (
     Category,
     Course,
     Lesson,
+    Note,
     Page,
     Product,
+    Remark,
     Review,
     TextPlugin,
     Topic,
@@ -158,6 +160,23 @@ def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> 
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["About us"]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_reverse_foreign_key_without_related_name_uses_its_accessor() -> None:
+    # Remark.note has no related_name: the relation is followed by its default
+    # accessor, the name prefetch_related takes, not by its query name.
+    note = Note.objects.create(title="Workshop rules", body="Wear goggles.")
+    Remark.objects.create(note=note, body="Gloves too.")
+    Remark.objects.create(note=note, body="Sweep the floor after use.")
+    rag.register(Note, follow=["remark_set"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Workshop rules\n\nWear goggles.\n\nGloves too.\n\nSweep the floor after use."
+    ]
 
 
 @pytest.mark.django_db

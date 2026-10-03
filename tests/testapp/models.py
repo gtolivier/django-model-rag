@@ -240,3 +240,14 @@ class Workshop(models.Model):
 class Course(models.Model):
     title = models.CharField(max_length=200)
     topics = models.ManyToManyField(Topic, related_name="courses")
+
+
+# --- A reverse relation without a related_name --------------------------
+# A Remark points to a Note through a foreign key without related_name: the
+# Note reaches its Remarks by the default accessor ``remark_set``, while the
+# query name of the relation is ``remark``.
+
+
+class Remark(models.Model):
+    note = models.ForeignKey(Note, on_delete=models.CASCADE)
+    body = models.TextField()
