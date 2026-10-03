@@ -223,8 +223,8 @@ class Registry:
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields`` or ``exclude`` is not a list or
-                a tuple, no field is declared, a field is declared or excluded
+            ImproperlyConfigured: ``fields``, ``exclude`` or ``follow`` is not
+                a list or a tuple, no field is declared, a field is declared or excluded
                 twice, or a field (``title_field`` and ``exclude`` included) is
                 not one of the model's or is a relation, ``exclude`` is
                 combined with ``fields``, without ``fields``, the model has
@@ -241,6 +241,7 @@ class Registry:
             _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
+        _require_field_names(model, follow, "follow")
         if follow:
             _require_relation_accessors(model, follow)
         declared = tuple(fields)
