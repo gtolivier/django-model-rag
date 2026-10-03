@@ -67,6 +67,27 @@ def test_followed_foreign_key_appends_the_related_text_after_the_declared_fields
 
 
 @pytest.mark.django_db
+def test_exclude_leaves_the_same_named_field_of_the_followed_related_in() -> None:
+    # Product and Category both have a "name" field: excluding it leaves out
+    # the product's own name only, never the followed category's.
+    category = Category.objects.create(name="Furniture")
+    Product.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        price="49.90",
+        category=category,
+        condition="new",
+    )
+    rag.register(Product, exclude=["name"], follow=["category"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Adjustable.\n\nNew\n\nFurniture"
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_appends_each_instance_its_own_related_text() -> None:
     furniture = Category.objects.create(name="Furniture")
     lighting = Category.objects.create(name="Lighting")
