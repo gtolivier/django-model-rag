@@ -2,6 +2,7 @@ import pytest
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
+    AccordionItem,
     Category,
     Lesson,
     Page,
@@ -156,3 +157,21 @@ def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> 
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["About us"]
+
+
+@pytest.mark.django_db
+def test_followed_relations_append_their_texts_in_the_order_follow_names_them() -> None:
+    # TextPlugin is declared before AccordionItem: the order of ``follow``
+    # differs from the declaration order of the related models.
+    page = Page.objects.create(title="About us", slug="about-us")
+    TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    AccordionItem.objects.create(
+        page=page, title="Opening hours", body="Visits on Saturdays."
+    )
+    rag.register(Page, follow=["accordion_items", "text_plugins"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "About us\n\nOpening hours\n\nVisits on Saturdays.\n\nWe build chairs by hand."
+    ]
