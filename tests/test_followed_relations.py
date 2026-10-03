@@ -1,7 +1,16 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Lesson, Product, Review, Topic, Workshop
+from tests.testapp.models import (
+    Category,
+    Lesson,
+    Page,
+    Product,
+    Review,
+    TextPlugin,
+    Topic,
+    Workshop,
+)
 
 
 @pytest.mark.django_db
@@ -107,3 +116,16 @@ def test_followed_foreign_key_whose_text_fields_are_blank_adds_nothing() -> None
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Dovetails"]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_appends_the_related_text() -> None:
+    page = Page.objects.create(title="About us", slug="about-us")
+    TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    rag.register(Page, follow=["text_plugins"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "About us\n\nWe build chairs by hand."
+    ]
