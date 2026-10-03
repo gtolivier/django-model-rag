@@ -13,6 +13,18 @@ from django_model_rag import (
 from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
 
 
+class CategoryExtractor(BaseExtractor[Category]):
+    """Describe each category as "Everything filed under <its name>."."""
+
+    def extract(self, instance: Category) -> NormalizedDocument:
+        return NormalizedDocument(
+            text=f"Everything filed under {instance.name}.",
+            source_app_label="testapp",
+            source_model="category",
+            source_pk=instance.pk,
+        )
+
+
 @pytest.mark.django_db
 def test_registered_extractor_builds_the_document_of_its_model() -> None:
     category = Category.objects.create(name="Tools")
@@ -45,16 +57,7 @@ def test_registered_extractor_builds_one_document_per_instance_in_pk_order() -> 
     tools = Category.objects.create(name="Tools")
     garden = Category.objects.create(name="Garden")
     kitchen = Category.objects.create(name="Kitchen")
-
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
+    rag.register_extractor(Category)(CategoryExtractor)
 
     documents = SyncPipeline().run()
 
@@ -267,15 +270,6 @@ def test_extractor_yielding_something_else_than_a_document_fails_naming_it() -> 
 
 
 def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
-
     # Applying the decorator by hand is what ``@rag.register_extractor(...)``
     # does to the class, and keeps a handle on the undecorated class.
     decorated = rag.register_extractor(Category)(CategoryExtractor)
@@ -314,15 +308,6 @@ def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> 
     Category.objects.create(name="Tools")
     rag.register(Category, fields=["name"])
 
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
-
     with pytest.raises(AlreadyRegistered):
         rag.register_extractor(Category)(CategoryExtractor)
 
@@ -333,16 +318,7 @@ def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> 
 @pytest.mark.django_db
 def test_fields_for_a_model_with_an_extractor_fail_and_keep_the_extractor() -> None:
     Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
+    rag.register_extractor(Category)(CategoryExtractor)
 
     with pytest.raises(AlreadyRegistered):
         rag.register(Category, fields=["name"])
@@ -354,16 +330,7 @@ def test_fields_for_a_model_with_an_extractor_fail_and_keep_the_extractor() -> N
 @pytest.mark.django_db
 def test_second_extractor_for_a_model_fails_and_keeps_the_first() -> None:
     Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
+    rag.register_extractor(Category)(CategoryExtractor)
 
     class OtherCategoryExtractor(BaseExtractor[Category]):
         def extract(self, instance: Category) -> NormalizedDocument:
@@ -384,16 +351,7 @@ def test_second_extractor_for_a_model_fails_and_keeps_the_first() -> None:
 @pytest.mark.django_db
 def test_unregistered_model_with_an_extractor_produces_no_document() -> None:
     Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
+    rag.register_extractor(Category)(CategoryExtractor)
 
     rag.unregister(Category)
 
@@ -416,17 +374,7 @@ def test_documents_come_grouped_in_registration_order_whatever_its_kind() -> Non
     # Fields, then an extractor, then fields again: grouping the models by
     # kind of registration, in either order, would get it wrong.
     rag.register(Product, fields=["name"])
-
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
-
+    rag.register_extractor(Category)(CategoryExtractor)
     rag.register(Page, fields=["title"])
 
     documents = SyncPipeline().run()
