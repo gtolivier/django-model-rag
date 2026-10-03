@@ -88,7 +88,8 @@ class Registry:
         """Start with no registered model."""
         # Declared fields are an extractor too: one dict keeps the
         # registration order across both kinds
-        self._registrations: dict[type[Model], BaseExtractor[Any]] = {}
+        # of factories: each call to extractor() builds a fresh extractor
+        self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -125,7 +126,7 @@ class Registry:
             NotRegistered: ``model`` is not registered.
         """
         self._require_registered(model)
-        return self._registrations[model]
+        return self._registrations[model]()
 
     def register(
         self,
@@ -149,7 +150,10 @@ class Registry:
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
-        self._registrations[model] = DeclaredFieldsExtractor(tuple(fields), title_field)
+        declared = tuple(fields)
+        self._registrations[model] = lambda: DeclaredFieldsExtractor(
+            declared, title_field
+        )
 
     def register_extractor(
         self, model: type[M]
@@ -167,7 +171,7 @@ class Registry:
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
-            self._registrations[model] = extractor_class()
+            self._registrations[model] = extractor_class
             return extractor_class
 
         return decorator
