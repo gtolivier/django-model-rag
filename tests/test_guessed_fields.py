@@ -1,3 +1,8 @@
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Model
@@ -259,3 +264,59 @@ def test_model_registered_without_fields_does_not_guess_a_project_char_subclass(
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Opening hours"]
+
+
+def test_model_registered_without_fields_in_its_models_module_loads(
+    tmp_path: Path,
+) -> None:
+    # The registration must run while Django loads the apps, as it does from
+    # a project's models.py: this process's apps are long loaded, so a fresh
+    # interpreter loads a throwaway app instead.
+    app = tmp_path / "noticeboard"
+    app.mkdir()
+    (app / "__init__.py").write_text("")
+    (app / "models.py").write_text(
+        textwrap.dedent(
+            """\
+            from django.db import models
+
+            from django_model_rag import rag
+
+
+            class Memo(models.Model):
+                body = models.TextField()
+
+
+            rag.register(Memo)
+            """
+        )
+    )
+    script = tmp_path / "load_apps.py"
+    script.write_text(
+        textwrap.dedent(
+            """\
+            import django
+            from django.conf import settings
+
+            settings.configure(
+                INSTALLED_APPS=["noticeboard"],
+                DEFAULT_AUTO_FIELD="django.db.models.AutoField",
+            )
+            django.setup()
+
+            from django_model_rag import rag
+
+            print(*(model.__name__ for model in rag.registered_models()))
+            """
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.stdout == "Memo\n", result.stderr
