@@ -95,10 +95,17 @@ def _extracted_instance_documents(
     elif not isinstance(extracted, Iterable):
         raise _wrong_extraction(extractor, f"a {type(extracted).__name__}")
     else:
-        for item in extracted:
-            if not isinstance(item, NormalizedDocument):
-                raise _wrong_extraction(extractor, f"a {type(item).__name__}")
-            yield item
+        yield from _checked_documents(extracted, extractor)
+
+
+def _checked_documents(
+    extracted: Iterable[object], extractor: BaseExtractor[Any]
+) -> Iterator[NormalizedDocument]:
+    """Yield the items ``extractor`` extracted, failing on the first non-document."""
+    for item in extracted:
+        if not isinstance(item, NormalizedDocument):
+            raise _wrong_extraction(extractor, f"a {type(item).__name__}")
+        yield item
 
 
 def _registrations() -> dict[type[Model], _Registration]:
