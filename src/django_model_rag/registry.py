@@ -55,12 +55,13 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
         _require_content_field(model, name)
 
 
-def _require_extractor_class(extractor_class: type) -> None:
+def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
 
     Raises:
-        ImproperlyConfigured: ``extractor_class`` does not derive from
-            ``BaseExtractor``, or does not implement ``extract``.
+        ImproperlyConfigured: ``extractor_class`` is not a class deriving
+            from ``BaseExtractor`` (a plain function, say), or does not
+            implement ``extract``.
     """
     if not inspect.isclass(extractor_class) or not issubclass(
         extractor_class, BaseExtractor
