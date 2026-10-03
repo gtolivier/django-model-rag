@@ -150,7 +150,7 @@ class Registry:
 
     def register_extractor(
         self, model: type[M]
-    ) -> Callable[[type[BaseExtractor[M]]], Any]:
+    ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
 
         Raises:
