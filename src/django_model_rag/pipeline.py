@@ -70,7 +70,7 @@ def _extractors_to_run(
     """
     if models is None:
         models = rag.registered_models()
-    return [(model, rag.extractor(model)) for model in models]
+    return [(model, rag.new_extractor(model)) for model in models]
 
 
 class SyncPipeline:
@@ -98,5 +98,5 @@ class SyncPipeline:
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
         """
-        extractor = rag.extractor(type(instance))
+        extractor = rag.new_extractor(type(instance))
         return list(_instance_documents(instance, extractor))

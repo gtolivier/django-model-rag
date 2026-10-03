@@ -87,8 +87,8 @@ class Registry:
     def __init__(self) -> None:
         """Start with no registered model."""
         # Declared fields are an extractor too: one dict keeps the
-        # registration order across both kinds
-        # of factories: each call to extractor() builds a fresh extractor
+        # registration order across both kinds. It holds factories, not
+        # extractors, so that no state an extractor keeps leaks between runs.
         self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
 
     def registered_models(self) -> list[type[Model]]:
@@ -119,8 +119,8 @@ class Registry:
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
 
-    def extractor(self, model: type[Model]) -> BaseExtractor[Any]:
-        """Give the extractor ``model`` is registered with.
+    def new_extractor(self, model: type[Model]) -> BaseExtractor[Any]:
+        """Build a fresh instance of the extractor ``model`` is registered with.
 
         Raises:
             NotRegistered: ``model`` is not registered.
