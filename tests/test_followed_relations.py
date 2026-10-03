@@ -1,3 +1,8 @@
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 
@@ -324,3 +329,66 @@ def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
         # A bare string is the slip under test: the type checker rightly
         # rejects it.
         rag.register(Product, follow="category")  # type: ignore[arg-type]
+
+
+def test_following_a_relation_from_a_models_module_fails_and_points_to_ready(
+    tmp_path: Path,
+) -> None:
+    # Following a relation needs every model loaded, which is not the case
+    # while a models.py runs: this process's apps are long loaded, so a fresh
+    # interpreter loads a throwaway app that registers from its models.py.
+    app = tmp_path / "noticeboard"
+    app.mkdir()
+    (app / "__init__.py").write_text("")
+    (app / "models.py").write_text(
+        textwrap.dedent(
+            """\
+            from django.db import models
+
+            from django_model_rag import rag
+
+
+            class Board(models.Model):
+                name = models.CharField(max_length=100)
+
+
+            class Memo(models.Model):
+                body = models.TextField()
+                board = models.ForeignKey(Board, on_delete=models.CASCADE)
+
+
+            rag.register(Memo, follow=["board"])
+            """
+        )
+    )
+    script = tmp_path / "load_apps.py"
+    script.write_text(
+        textwrap.dedent(
+            """\
+            import django
+            from django.conf import settings
+            from django.core.exceptions import ImproperlyConfigured
+
+            settings.configure(
+                INSTALLED_APPS=["noticeboard"],
+                DEFAULT_AUTO_FIELD="django.db.models.AutoField",
+            )
+            try:
+                django.setup()
+            except ImproperlyConfigured as error:
+                print(error)
+            """
+        )
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.stdout, f"no ImproperlyConfigured raised; stderr:\n{result.stderr}"
+    assert "rag.py" in result.stdout, result.stdout
+    assert "ready()" in result.stdout, result.stdout
