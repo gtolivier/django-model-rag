@@ -224,12 +224,13 @@ class Registry:
         Raises:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: ``fields``, ``exclude`` or ``follow`` is not
-                a list or a tuple, no field is declared, a field is declared or excluded
-                twice, or a field (``title_field`` and ``exclude`` included) is
-                not one of the model's or is a relation, ``exclude`` is
-                combined with ``fields``, without ``fields``, the model has
-                no text field or ``exclude`` names all of them, or a name in
-                ``follow`` is not one of the model's relation accessors.
+                a list or a tuple, no field is declared, a field is declared
+                or excluded twice, or a field (``title_field`` and ``exclude``
+                included) is not one of the model's or is a relation,
+                ``exclude`` is combined with ``fields``, without ``fields``,
+                the model has no text field or ``exclude`` names all of them,
+                or a name in ``follow`` is not one of the model's relation
+                accessors.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
