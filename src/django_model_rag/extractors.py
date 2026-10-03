@@ -105,7 +105,7 @@ def _related_text(related: Model | Manager[Model] | None) -> str:
     """Join the texts of the text fields of ``related``, title-like ones first.
 
     ``related`` may be the manager of a reverse relation: its objects follow
-    one another.
+    one another, in primary key order.
     """
     if related is None:
         return ""
