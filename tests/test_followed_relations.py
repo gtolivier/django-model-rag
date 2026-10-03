@@ -302,6 +302,14 @@ def test_following_a_field_that_is_not_a_relation_fails_at_registration() -> Non
         rag.register(Product, follow=["name"])
 
 
+def test_following_a_relation_twice_names_it_in_the_error() -> None:
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=r"\bcategory\b.*\btwice\b|\btwice\b.*\bcategory\b",
+    ):
+        rag.register(Product, follow=["category", "category"])
+
+
 def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
         # A bare string is the slip under test: the type checker rightly
