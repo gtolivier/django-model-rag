@@ -137,3 +137,14 @@ class StockLevel(models.Model):
     product = models.ForeignKey(
         Product, related_name="stock_levels", on_delete=models.CASCADE
     )
+
+
+# --- Only CharField subclasses -----------------------------------------
+# A slug, an e-mail address and a URL, but no plain CharField or TextField:
+# text-ish fields, none of them content.
+
+
+class ContactCard(models.Model):
+    handle = models.SlugField()
+    email = models.EmailField()
+    website = models.URLField()

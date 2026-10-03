@@ -7,6 +7,7 @@ from tests.testapp.models import (
     AccordionItem,
     Article,
     Category,
+    ContactCard,
     EmailHolder,
     Note,
     Page,
@@ -154,6 +155,13 @@ def test_model_without_text_field_registered_without_fields_names_it_in_the_erro
 ):
     with pytest.raises(ImproperlyConfigured, match=r"\bStockLevel\b"):
         rag.register(StockLevel)
+
+
+def test_model_with_only_char_field_subclasses_registered_without_fields_names_it() -> (
+    None
+):
+    with pytest.raises(ImproperlyConfigured, match=r"\bContactCard\b"):
+        rag.register(ContactCard)
 
 
 def test_exclude_cannot_be_combined_with_declared_fields() -> None:
