@@ -136,6 +136,11 @@ def test_excluding_a_field_the_model_does_not_have_names_it_in_the_error() -> No
         rag.register(Note, exclude=["titel"])
 
 
+def test_exclude_cannot_be_combined_with_declared_fields() -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"fields.*exclude|exclude.*fields"):
+        rag.register(Note, fields=["body"], exclude=["title"])
+
+
 @pytest.mark.django_db
 def test_model_registered_without_fields_guesses_only_its_text_fields() -> None:
     category = Category.objects.create(name="Tools")
