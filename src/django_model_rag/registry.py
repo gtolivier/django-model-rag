@@ -38,7 +38,7 @@ def _guessed_fields(
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
     guessed = [name for name in names if name not in exclude]
-    if not guessed:
+    if not guessed and not follow:
         message = f"{model.__name__} has no text field left to extract"
         raise ImproperlyConfigured(message)
     return guessed
