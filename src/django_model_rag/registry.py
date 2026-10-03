@@ -277,7 +277,11 @@ class Registry:
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(model, exclude)
+            fields = (
+                []
+                if follow and not text_fields(model)
+                else _guessed_fields(model, exclude)
+            )
         else:
             _require_content_fields(model, fields)
         if title_field is not None:

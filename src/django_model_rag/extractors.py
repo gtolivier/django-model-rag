@@ -163,7 +163,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         field among them is not read a second time.
         """
         if self.title_field is None:
-            return field_texts[0]
+            return field_texts[0] if field_texts else ""
         if self.title_field in self.fields:
             return field_texts[self.fields.index(self.title_field)]
         return _field_text(instance, self.title_field)
