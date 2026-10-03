@@ -279,3 +279,14 @@ def test_following_a_name_that_is_not_a_relation_accessor_fails_at_registration(
         ImproperlyConfigured, match=rf"\b{name}\b.*\bfollow\b|\bfollow\b.*\b{name}\b"
     ):
         rag.register(Product, follow=[name])
+
+
+def test_following_the_query_name_of_a_reverse_foreign_key_fails_at_registration() -> (
+    None
+):
+    # Remark.note has no related_name: its query name "remark" differs from its
+    # accessor "remark_set", and follow takes accessors, as prefetch_related does.
+    with pytest.raises(
+        ImproperlyConfigured, match=r"\bremark\b.*\bfollow\b|\bfollow\b.*\bremark\b"
+    ):
+        rag.register(Note, follow=["remark"])
