@@ -63,6 +63,20 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _require_field_names(model: type[Model], names: object, argument: str) -> None:
+    """Fail unless ``names``, given as ``argument``, is a list or a tuple.
+
+    Raises:
+        ImproperlyConfigured: ``names`` is not a list or a tuple (a bare
+            string or a set, say).
+    """
+    if not isinstance(names, list | tuple):
+        message = (
+            f"{model.__name__}: {argument} must be a list or a tuple of field names"
+        )
+        raise ImproperlyConfigured(message)
+
+
 def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
     """Fail unless ``fields`` is a non-empty list or tuple of content fields.
 
@@ -71,9 +85,7 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
             string or a set, say), it is empty, a field is declared twice,
             or a field is not one of ``model``'s or is a relation.
     """
-    if not isinstance(fields, list | tuple):
-        message = f"{model.__name__}: fields must be a list or a tuple of field names"
-        raise ImproperlyConfigured(message)
+    _require_field_names(model, fields, "fields")
     if not fields:
         message = f"{model.__name__} declares no field"
         raise ImproperlyConfigured(message)
@@ -186,18 +198,14 @@ class Registry:
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields`` is not a list or a tuple, no
-                field is declared, a field is declared twice, or a field
+            ImproperlyConfigured: ``fields`` or ``exclude`` is not a list or
+                a tuple, no field is declared, a field is declared twice, or a field
                 (``title_field`` and ``exclude`` included) is not one of the
                 model's or is a relation, or ``exclude`` is combined with
                 ``fields``.
         """
         self._require_unregistered(model)
-        if not isinstance(exclude, list | tuple):
-            message = (
-                f"{model.__name__}: exclude must be a list or a tuple of field names"
-            )
-            raise ImproperlyConfigured(message)
+        _require_field_names(model, exclude, "exclude")
         _require_fields_or_exclude(fields, exclude)
         if fields is None:
             for name in exclude:
