@@ -182,6 +182,8 @@ class Registry:
         """
         self._require_unregistered(model)
         if fields is None:
+            for name in exclude:
+                _require_content_field(model, name)
             fields = [name for name in _text_fields(model) if name not in exclude]
         _require_content_fields(model, fields)
         if title_field is not None:
