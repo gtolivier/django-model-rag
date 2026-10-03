@@ -96,3 +96,14 @@ def test_followed_foreign_key_that_is_null_adds_nothing_to_the_own_fields() -> N
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Open bench"]
+
+
+@pytest.mark.django_db
+def test_followed_foreign_key_whose_text_fields_are_blank_adds_nothing() -> None:
+    topic = Topic.objects.create(summary="", title="   ", slug="blank")
+    Lesson.objects.create(title="Dovetails", topic=topic)
+    rag.register(Lesson, follow=["topic"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Dovetails"]
