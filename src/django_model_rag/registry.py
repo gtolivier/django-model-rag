@@ -126,14 +126,16 @@ def _require_excluded_fields(model: type[Model], exclude: FieldNames) -> None:
             raise ImproperlyConfigured(message)
 
 
-def _require_fields_or_exclude(fields: FieldNames | None, exclude: FieldNames) -> None:
+def _require_fields_or_exclude(
+    model: type[Model], fields: FieldNames | None, exclude: FieldNames
+) -> None:
     """Fail if both ``fields`` and ``exclude`` are given.
 
     Raises:
         ImproperlyConfigured: ``exclude`` is combined with declared fields.
     """
     if fields is not None and exclude:
-        message = "exclude cannot be combined with declared fields."
+        message = f"{model.__name__}: exclude cannot be combined with declared fields."
         raise ImproperlyConfigured(message)
 
 
@@ -235,7 +237,7 @@ class Registry:
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
-        _require_fields_or_exclude(fields, exclude)
+        _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
             _require_excluded_fields(model, exclude)
             fields = _guessed_fields(model, exclude)
