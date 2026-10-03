@@ -61,7 +61,7 @@ def _require_distinct_relation_accessors(model: type[Model], names: FieldNames) 
             it is given twice.
     """
     accessors = {
-        field.get_accessor_name() if field.auto_created else field.name  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
+        field.get_accessor_name() if field.auto_created else field.name: field  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
         for field in model._meta.get_fields()
         if field.is_relation
     }
@@ -74,6 +74,13 @@ def _require_distinct_relation_accessors(model: type[Model], names: FieldNames) 
             message = f"{model.__name__}: relation {name!r} is followed twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
+        related = accessors[name].related_model
+        if isinstance(related, type) and not text_fields(related):
+            message = (
+                f"{model.__name__}: cannot follow {name!r}, "
+                f"{related.__name__} has no text field"
+            )
+            raise ImproperlyConfigured(message)
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
