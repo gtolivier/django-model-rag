@@ -62,13 +62,20 @@ refactoring, not from the prototype.
   extractors that return one document, several or none; a run over a subset
   of the models, a run for a single instance, and the list of registered
   models.
-- [ ] **4. Guessed fields** — `rag.register(Model)` without `fields`: which
-  fields hold semantic text (text field types, excluded names, text fields
-  whose name ends in `_id`), an order that puts title-like names first, and
-  the instance's string form as the title when there is no field.
+- [x] **4. Guessed fields** — `rag.register(Model)` without `fields`
+  extracts the model's text fields, guessed once at registration from their
+  type alone: a `CharField` (exactly, not a subclass such as a slug, an
+  e-mail or a URL) or a `TextField` (subclasses included). Title-like names
+  come first (`title`, `name`, `heading`, `label`), then the others in
+  declaration order. `exclude=[...]` leaves guessed fields out; it cannot be
+  combined with `fields`. A model with nothing to guess, or whose `exclude`
+  leaves nothing, fails at registration. No field is left out by its name:
+  a sensitive text field is the project's to exclude.
 - [ ] **5. Followed relations** — `follow=[...]` adds the text of related
   objects, across foreign keys, reverse relations and many-to-many
-  relations; a missing or empty relation adds nothing. Open, to settle
+  relations; a missing or empty relation adds nothing. The instance's
+  string form becomes the title when the model has no field of its own to
+  take it from, which only `follow` makes possible. Open, to settle
   when it starts: lookup paths in `fields` (`fields=["name",
   "category__name"]`, as in `list_display` or `values()`), which pick one
   field of the related object, in a chosen order, where `follow=` takes all
@@ -112,6 +119,10 @@ django-minimal-rag all depend on.
 - **Where the output comes from.** The command and the signals run outside
   project code, so they need a configured destination (a setting, for
   instance).
+- **Project-wide defaults for guessed fields.** The same setting could hold
+  names excluded from every guessed model (`password`, `token`…) and the
+  title-like names and their order, which `exclude=` and the built-in list
+  cover per model today.
 
 ## Synchronization
 
