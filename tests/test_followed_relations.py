@@ -4,6 +4,7 @@ from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     AccordionItem,
     Category,
+    Course,
     Lesson,
     Page,
     Product,
@@ -157,6 +158,32 @@ def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> 
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["About us"]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_many_to_many_appends_the_related_texts_in_pk_order() -> None:
+    # The topics are linked in an order other than their primary keys', so
+    # neither the link order nor the reversed selects can give pk order.
+    joinery = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    turning = Topic.objects.create(
+        summary="Bowls and spindles.", title="Turning", slug="turning"
+    )
+    carving = Topic.objects.create(
+        summary="Spoons and reliefs.", title="Carving", slug="carving"
+    )
+    course = Course.objects.create(title="Woodworking basics")
+    course.topics.add(turning, carving, joinery)
+    rag.register(Course, follow=["topics"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Woodworking basics\n\nJoinery\n\nJoints and finishes."
+        "\n\nTurning\n\nBowls and spindles.\n\nCarving\n\nSpoons and reliefs."
+    ]
 
 
 @pytest.mark.django_db

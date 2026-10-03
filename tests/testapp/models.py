@@ -231,3 +231,12 @@ class Workshop(models.Model):
         null=True,
         blank=True,
     )
+
+
+# --- A many-to-many relation --------------------------------------------
+# A Course covers several Topics, and a Topic may belong to several Courses.
+
+
+class Course(models.Model):
+    title = models.CharField(max_length=200)
+    topics = models.ManyToManyField(Topic, related_name="courses")
