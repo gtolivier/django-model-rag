@@ -236,6 +236,7 @@ class Registry:
         Without ``fields``, the model's text fields are extracted, except
         those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
+        The text of the relations named in ``follow`` comes after the fields.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
