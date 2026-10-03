@@ -53,6 +53,23 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _require_relation_accessors(model: type[Model], names: FieldNames) -> None:
+    """Fail unless each of ``names`` is a relation accessor of ``model``.
+
+    Raises:
+        ImproperlyConfigured: a name to follow is not a relation accessor.
+    """
+    accessors = {
+        field.get_accessor_name() if field.auto_created else field.name  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
+        for field in model._meta.get_fields()
+        if field.is_relation
+    }
+    for name in names:
+        if name not in accessors:
+            message = f"{model.__name__}: cannot follow {name!r}, not a relation"
+            raise ImproperlyConfigured(message)
+
+
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
     """Fail unless ``names``, given as ``argument``, is a list or a tuple.
 
@@ -223,6 +240,8 @@ class Registry:
             _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
+        if follow:
+            _require_relation_accessors(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
