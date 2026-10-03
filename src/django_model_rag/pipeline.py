@@ -47,6 +47,14 @@ def _followed_reverse_foreign_keys(
     ]
 
 
+def _followed_many_to_many(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> list[str]:
+    """List the names of the many-to-many fields of ``model`` ``extractor`` follows."""
+    followed = _followed(extractor)
+    return [field.name for field in model._meta.many_to_many if field.name in followed]
+
+
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
@@ -57,8 +65,12 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     # select_related() without a field is deprecated
     if foreign_keys := _followed_foreign_keys(model, extractor):
         queryset = queryset.select_related(*foreign_keys)
-    if reverse_keys := _followed_reverse_foreign_keys(model, extractor):
-        queryset = queryset.prefetch_related(*reverse_keys)
+    prefetched = [
+        *_followed_reverse_foreign_keys(model, extractor),
+        *_followed_many_to_many(model, extractor),
+    ]
+    if prefetched:
+        queryset = queryset.prefetch_related(*prefetched)
     return queryset.iterator(chunk_size=_CHUNK_SIZE)
 
 
