@@ -210,6 +210,9 @@ class Registry:
         if fields is None:
             for name in exclude:
                 _require_content_field(model, name)
+                if exclude.count(name) > 1:
+                    message = f"{model.__name__}: field {name!r} is excluded twice"
+                    raise ImproperlyConfigured(message)
             fields = [name for name in _text_fields(model) if name not in exclude]
         _require_content_fields(model, fields)
         if title_field is not None:
