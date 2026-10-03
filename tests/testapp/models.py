@@ -67,3 +67,17 @@ class AccordionItem(models.Model):
     )
     title = models.CharField(max_length=200)
     body = models.TextField()
+
+
+# --- Third-party field: a subclass of a Django text field ---------------
+# A rich-text package typically ships its field as a TextField subclass.
+
+
+# type-arg: django-stubs makes the field classes generic, but Django's runtime
+# classes are not subscriptable, so the base cannot take the type arguments.
+class RichTextField(models.TextField):  # type: ignore[type-arg]
+    """Stand in for a third-party rich-text field, without the dependency."""
+
+
+class Article(models.Model):
+    body = RichTextField()

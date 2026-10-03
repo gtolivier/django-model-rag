@@ -1,7 +1,14 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
+from tests.testapp.models import (
+    AccordionItem,
+    Article,
+    Category,
+    Page,
+    Product,
+    TextPlugin,
+)
 
 
 @pytest.mark.django_db
@@ -57,4 +64,16 @@ def test_model_registered_without_fields_guesses_only_its_text_fields() -> None:
 
     assert [document.text for document in documents] == [
         "Hammer\n\nDrives nails.\n\nSecond-hand"
+    ]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_guesses_a_text_field_subclass() -> None:
+    Article.objects.create(body="Rich text, as a third-party field stores it.")
+    rag.register(Article)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Rich text, as a third-party field stores it."
     ]
