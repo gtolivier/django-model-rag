@@ -15,6 +15,7 @@ from tests.testapp.models import (
     CodeHolder,
     ContactCard,
     Country,
+    Digest,
     EmailHolder,
     Note,
     Page,
@@ -280,6 +281,18 @@ def test_model_registered_without_fields_does_not_guess_its_char_primary_key() -
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["France"]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_guesses_its_non_editable_char_field() -> None:
+    Digest.objects.create(title="Weekly news", summary="Three releases shipped.")
+    rag.register(Digest)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Weekly news\n\nThree releases shipped."
+    ]
 
 
 def test_model_registered_without_fields_in_its_models_module_loads(

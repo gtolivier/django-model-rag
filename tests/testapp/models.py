@@ -129,6 +129,16 @@ class Country(models.Model):
     name = models.CharField(max_length=100)
 
 
+# --- A plain CharField the application fills in -------------------------
+# A summary held in a plain CharField with editable=False: the application
+# sets it, not the admin form, yet it is content all the same.
+
+
+class Digest(models.Model):
+    title = models.CharField(max_length=200)
+    summary = models.CharField(max_length=200, editable=False)
+
+
 # --- A title declared last ---------------------------------------------
 # The title-like field comes after the body in declaration order: only its
 # name can put it first.
