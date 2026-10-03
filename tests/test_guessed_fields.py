@@ -7,6 +7,7 @@ from tests.testapp.models import (
     AccordionItem,
     Article,
     Category,
+    CodeHolder,
     ContactCard,
     EmailHolder,
     Note,
@@ -242,6 +243,18 @@ def test_model_registered_without_fields_does_not_guess_a_char_field_subclass(
 ) -> None:
     model(label="Opening hours", extra=value).save()
     rag.register(model)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Opening hours"]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_does_not_guess_a_project_char_subclass() -> (
+    None
+):
+    CodeHolder.objects.create(label="Opening hours", extra="FR")
+    rag.register(CodeHolder)
 
     documents = SyncPipeline().run()
 

@@ -103,6 +103,22 @@ class SlugHolder(models.Model):
     extra = models.SlugField()
 
 
+# --- A project's own CharField subclass ---------------------------------
+# A project or a third-party app may define its own CharField subclass for a
+# code or an identifier, such as a country code.
+
+
+# type-arg: django-stubs makes the field classes generic, but Django's runtime
+# classes are not subscriptable, so the base cannot take the type arguments.
+class CodeField(models.CharField):  # type: ignore[type-arg]
+    """Stand in for a project's code field, such as a country code."""
+
+
+class CodeHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = CodeField(max_length=2)
+
+
 # --- A title declared last ---------------------------------------------
 # The title-like field comes after the body in declaration order: only its
 # name can put it first.
