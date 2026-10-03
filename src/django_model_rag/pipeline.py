@@ -73,26 +73,28 @@ def _declared_instance_documents(
         yield document
 
 
+def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
+    """Build the error for an ``extractor`` whose extract() ``returned`` no document."""
+    return TypeError(
+        f"{type(extractor).__name__}.extract() returned {returned}, "
+        "not a NormalizedDocument"
+    )
+
+
 def _extracted_instance_documents(
     instance: Model, extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``instance`` with ``extractor``."""
     extracted = extractor.extract(instance)
+    if extracted is None:
+        return
     if isinstance(extracted, NormalizedDocument):
         yield extracted
     elif isinstance(extracted, str):
-        message = (
-            f"{type(extractor).__name__}.extract() returned a string, "
-            "not a NormalizedDocument"
-        )
-        raise TypeError(message)
-    elif extracted is not None:
-        if not isinstance(extracted, Iterable):
-            message = (
-                f"{type(extractor).__name__}.extract() returned a "
-                f"{type(extracted).__name__}, not a NormalizedDocument"
-            )
-            raise TypeError(message)
+        raise _wrong_extraction(extractor, "a string")
+    elif not isinstance(extracted, Iterable):
+        raise _wrong_extraction(extractor, f"a {type(extracted).__name__}")
+    else:
         yield from extracted
 
 
