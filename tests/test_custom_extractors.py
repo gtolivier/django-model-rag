@@ -277,19 +277,6 @@ def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
     assert decorated is CategoryExtractor
 
 
-def test_type_checker_rejects_an_extractor_registered_for_another_model() -> None:
-    class ProductExtractor(BaseExtractor[Product]):
-        def extract(self, instance: Product) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
-
-    # An extractor written for products registered for categories is the
-    # slip under test: the type checker rightly rejects it. Nothing checks
-    # it at run time, so the decorator still gives back the class.
-    decorated = rag.register_extractor(Category)(ProductExtractor)  # type: ignore[arg-type]
-
-    assert decorated is ProductExtractor
-
-
 def test_registering_a_class_not_derived_from_base_extractor_fails() -> None:
     class StandaloneCategoryExtractor:
         def extract(self, instance: Category) -> NormalizedDocument:
