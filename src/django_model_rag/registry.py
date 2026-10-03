@@ -5,51 +5,17 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import CharField, Field, Model, TextField
+from django.db.models import Model
 
-from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
+from django_model_rag.extractors import (
+    BaseExtractor,
+    DeclaredFieldsExtractor,
+    M,
+    text_fields,
+)
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
-
-
-_TITLE_LIKE_NAMES = ("title", "name", "heading", "label")
-"""The names of the guessed fields that come first, in this order."""
-
-
-def _title_rank(name: str) -> int:
-    """Rank ``name``: title-like names first, in order, then the others."""
-    if name in _TITLE_LIKE_NAMES:
-        return _TITLE_LIKE_NAMES.index(name)
-    return len(_TITLE_LIKE_NAMES)
-
-
-# quoted: Django's Field is generic for the type checker only, and before
-# Python 3.14 an annotation is evaluated when the function is defined
-def _is_text_field(field: "Field[Any, Any]") -> bool:
-    """Tell whether ``field`` holds text content."""
-    # a primary key is an identifier, not content
-    if field.primary_key:
-        return False
-    # a CharField subclass is a kind of field of its own, such as a code,
-    # an identifier, an address or a link, not content
-    return type(field) is CharField or isinstance(field, TextField)
-
-
-def _text_fields(model: type[Model]) -> list[str]:
-    """List the names of ``model``'s text fields, title-like names first.
-
-    The others follow in declaration order.
-    """
-    names = [
-        field.name
-        # unlike get_fields(), concrete_fields needs no loaded app registry,
-        # so a models.py can register its models while Django loads the apps;
-        # it is not in the documented meta API, but Django itself relies on it
-        for field in model._meta.concrete_fields
-        if _is_text_field(field)
-    ]
-    return sorted(names, key=_title_rank)  # stable sort
 
 
 def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
@@ -59,7 +25,7 @@ def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
         ImproperlyConfigured: ``model`` has no text field, or ``exclude``
             names all of them.
     """
-    names = _text_fields(model)
+    names = text_fields(model)
     if not names:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
