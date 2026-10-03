@@ -13,11 +13,17 @@ from django_model_rag.registry import rag
 _CHUNK_SIZE = 1000
 
 
+def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
+    """Return the names of the relations ``extractor`` follows, if any."""
+    followed: Sequence[str] = getattr(extractor, "follow", ())
+    return followed
+
+
 def _followed_foreign_keys(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
     """List the relations ``extractor`` follows that are foreign keys of ``model``."""
-    followed = getattr(extractor, "follow", ())
+    followed = _followed(extractor)
     # a followed name may be a reverse accessor, which is no field name:
     # look among the concrete fields instead of calling get_field()
     return [
@@ -31,7 +37,7 @@ def _followed_reverse_foreign_keys(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
     """List the accessors of the reverse foreign keys ``extractor`` follows."""
-    followed = getattr(extractor, "follow", ())
+    followed = _followed(extractor)
     return [
         accessor
         for relation in model._meta.related_objects
