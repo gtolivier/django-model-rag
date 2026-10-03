@@ -14,6 +14,7 @@ from tests.testapp.models import (
     Category,
     CodeHolder,
     ContactCard,
+    Country,
     EmailHolder,
     Note,
     Page,
@@ -269,6 +270,16 @@ def test_model_registered_without_fields_does_not_guess_a_project_char_subclass(
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Opening hours"]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_does_not_guess_its_char_primary_key() -> None:
+    Country.objects.create(code="FR", name="France")
+    rag.register(Country)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["France"]
 
 
 def test_model_registered_without_fields_in_its_models_module_loads(

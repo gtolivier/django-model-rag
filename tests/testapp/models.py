@@ -119,6 +119,16 @@ class CodeHolder(models.Model):
     extra = CodeField(max_length=2)
 
 
+# --- A plain CharField as the primary key --------------------------------
+# A code such as "FR" held in a plain CharField that is the primary key: only
+# its being the primary key says it is an identifier, not content.
+
+
+class Country(models.Model):
+    code = models.CharField(max_length=2, primary_key=True)
+    name = models.CharField(max_length=100)
+
+
 # --- A title declared last ---------------------------------------------
 # The title-like field comes after the body in declaration order: only its
 # name can put it first.
