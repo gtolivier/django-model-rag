@@ -229,6 +229,7 @@ class Registry:
         fields: FieldNames | None = None,
         title_field: str | None = None,
         exclude: FieldNames = (),
+        follow: FieldNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -256,8 +257,9 @@ class Registry:
         if title_field is not None:
             _require_content_field(model, title_field)
         declared = tuple(fields)
+        followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field
+            declared, title_field, followed
         )
 
     def register_extractor(

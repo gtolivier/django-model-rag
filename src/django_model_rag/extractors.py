@@ -66,15 +66,25 @@ def _document_text(field_texts: list[str]) -> str:
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
-    def __init__(self, fields: tuple[str, ...], title_field: str | None) -> None:
-        """Read ``fields`` as the text, ``title_field`` (if any) as the title."""
+    def __init__(
+        self,
+        fields: tuple[str, ...],
+        title_field: str | None,
+        follow: tuple[str, ...] = (),
+    ) -> None:
+        """Read ``fields`` as the text, ``title_field`` (if any) as the title.
+
+        The text of the relations in ``follow`` comes after the fields.
+        """
         self.fields = fields
         self.title_field = title_field
+        self.follow = follow
 
     def extract(self, instance: Model) -> NormalizedDocument | None:
         """Build the document of ``instance``, or nothing when its fields are blank."""
         field_texts = [_field_text(instance, name) for name in self.fields]
-        text = _document_text(field_texts)
+        followed_texts = [str(getattr(instance, name)) for name in self.follow]
+        text = _document_text(field_texts + followed_texts)
         if not text:
             return None
         return self.build_document(
