@@ -5,7 +5,14 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import CharField, Model, SlugField, TextField
+from django.db.models import (
+    CharField,
+    EmailField,
+    Model,
+    SlugField,
+    TextField,
+    URLField,
+)
 
 from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
 
@@ -19,7 +26,8 @@ def _text_fields(model: type[Model]) -> list[str]:
         field.name
         for field in model._meta.get_fields()  # Django's public meta API
         if isinstance(field, CharField | TextField)
-        and not isinstance(field, SlugField)  # an identifier, not content
+        # an identifier, an address or a link, not content
+        and not isinstance(field, SlugField | EmailField | URLField)
     ]
 
 
