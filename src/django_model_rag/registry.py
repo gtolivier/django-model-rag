@@ -165,10 +165,12 @@ class Registry:
         *,
         fields: FieldNames | None = None,
         title_field: str | None = None,
+        exclude: FieldNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
 
-        Without ``fields``, the model's text fields are extracted.
+        Without ``fields``, the model's text fields are extracted, except
+        those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
 
         Raises:
@@ -180,7 +182,7 @@ class Registry:
         """
         self._require_unregistered(model)
         if fields is None:
-            fields = _text_fields(model)
+            fields = [name for name in _text_fields(model) if name not in exclude]
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
