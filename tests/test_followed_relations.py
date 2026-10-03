@@ -47,6 +47,25 @@ def test_followed_foreign_key_appends_the_related_text_after_the_own_fields() ->
 
 
 @pytest.mark.django_db
+def test_run_instance_appends_the_followed_related_text_after_the_own_fields() -> None:
+    category = Category.objects.create(name="Furniture")
+    product = Product.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        price="49.90",
+        category=category,
+        condition="new",
+    )
+    rag.register(Product, follow=["category"])
+
+    documents = SyncPipeline().run_instance(product)
+
+    assert [document.text for document in documents] == [
+        "Chair\n\nAdjustable.\n\nNew\n\nFurniture"
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_appends_the_related_text_after_the_declared_fields() -> (
     None
 ):
