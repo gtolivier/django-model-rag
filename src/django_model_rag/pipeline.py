@@ -1,6 +1,6 @@
 """The pipeline that turns registered models into normalized documents."""
 
-from collections.abc import Collection, Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from typing import Any, TypeAlias
 
 from django.db.models import Model
@@ -130,7 +130,7 @@ def _model_documents(
         yield from _instance_documents(instance, registration)
 
 
-def _models_to_run(models: Collection[type[Model]] | None) -> list[type[Model]]:
+def _models_to_run(models: Sequence[type[Model]] | None) -> list[type[Model]]:
     """Select ``models``, in their order, or every registered model.
 
     Raises:
@@ -147,7 +147,7 @@ class SyncPipeline:
     """Turn registered models into normalized documents."""
 
     def run(
-        self, models: Collection[type[Model]] | None = None
+        self, models: Sequence[type[Model]] | None = None
     ) -> list[NormalizedDocument]:
         """Produce the documents of the registered models.
 
