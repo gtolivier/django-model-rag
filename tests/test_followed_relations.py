@@ -44,6 +44,29 @@ def test_followed_foreign_key_appends_the_related_text_after_the_own_fields() ->
 
 
 @pytest.mark.django_db
+def test_followed_foreign_key_appends_the_related_text_after_the_declared_fields() -> (
+    None
+):
+    # The fields are declared in the reverse of their declaration order, and
+    # the condition is left out: only the declared fields come first.
+    category = Category.objects.create(name="Furniture")
+    Product.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        price="49.90",
+        category=category,
+        condition="new",
+    )
+    rag.register(Product, fields=["description", "name"], follow=["category"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Adjustable.\n\nChair\n\nFurniture"
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_appends_each_instance_its_own_related_text() -> None:
     furniture = Category.objects.create(name="Furniture")
     lighting = Category.objects.create(name="Lighting")
