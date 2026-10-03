@@ -70,7 +70,10 @@ refactoring, not from the prototype.
   declaration order. `exclude=[...]` leaves guessed fields out; it cannot be
   combined with `fields`. A model with nothing to guess, or whose `exclude`
   leaves nothing, fails at registration. No field is left out by its name:
-  a sensitive text field is the project's to exclude.
+  a sensitive text field is the project's to exclude. Later, as a Django
+  system check (a warning, not an error): `exclude` naming a field that is
+  not guessed, which excludes nothing — a CharField subclass, say, that the
+  project believes it is leaving out.
 - [ ] **5. Followed relations** — `follow=[...]` adds the text of related
   objects, across foreign keys, reverse relations and many-to-many
   relations; a missing or empty relation adds nothing. The instance's
