@@ -1,13 +1,17 @@
 import pytest
+from django.db.models import Model
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     AccordionItem,
     Article,
     Category,
+    EmailHolder,
     Page,
     Product,
+    SlugHolder,
     TextPlugin,
+    URLHolder,
 )
 
 
@@ -87,3 +91,23 @@ def test_model_registered_without_fields_does_not_guess_its_slug() -> None:
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["About us"]
+
+
+@pytest.mark.parametrize(
+    ("model", "value"),
+    [
+        pytest.param(EmailHolder, "team@example.com", id="EmailField"),
+        pytest.param(URLHolder, "https://example.com/about/", id="URLField"),
+        pytest.param(SlugHolder, "about-us", id="SlugField"),
+    ],
+)
+@pytest.mark.django_db
+def test_model_registered_without_fields_does_not_guess_a_char_field_subclass(
+    model: type[Model], value: str
+) -> None:
+    model(label="Opening hours", extra=value).save()
+    rag.register(model)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Opening hours"]

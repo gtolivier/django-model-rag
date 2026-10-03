@@ -81,3 +81,23 @@ class RichTextField(models.TextField):  # type: ignore[type-arg]
 
 class Article(models.Model):
     body = RichTextField()
+
+
+# --- CharField subclasses held under neutral names ----------------------
+# Each model has a plain CharField and one CharField subclass whose name says
+# nothing about its type: only the type can tell the two fields apart.
+
+
+class EmailHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = models.EmailField()
+
+
+class URLHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = models.URLField()
+
+
+class SlugHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = models.SlugField()
