@@ -53,11 +53,12 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _require_relation_accessors(model: type[Model], names: FieldNames) -> None:
-    """Fail unless each of ``names`` is a relation accessor of ``model``.
+def _require_distinct_relation_accessors(model: type[Model], names: FieldNames) -> None:
+    """Fail unless ``names`` names each of ``model``'s relation accessors once.
 
     Raises:
-        ImproperlyConfigured: a name to follow is not a relation accessor.
+        ImproperlyConfigured: a name to follow is not a relation accessor, or
+            it is given twice.
     """
     accessors = {
         field.get_accessor_name() if field.auto_created else field.name  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
@@ -249,7 +250,7 @@ class Registry:
             _require_content_field(model, title_field)
         _require_field_names(model, follow, "follow")
         if follow:
-            _require_relation_accessors(model, follow)
+            _require_distinct_relation_accessors(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
