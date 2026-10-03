@@ -10,9 +10,30 @@ from django_model_rag.extractors import BaseExtractor
 from django_model_rag.registry import rag
 
 
-def _instances(model: type[Model]) -> Iterator[Model]:
-    """Iterate over ``model``'s instances, in primary key order."""
-    return model._default_manager.order_by("pk").iterator()
+def _followed_foreign_keys(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> list[str]:
+    """List the relations ``extractor`` follows that are foreign keys of ``model``."""
+    followed = getattr(extractor, "follow", ())
+    # a followed name may be a reverse accessor, which is no field name:
+    # look among the concrete fields instead of calling get_field()
+    return [
+        field.name
+        for field in model._meta.concrete_fields
+        if field.many_to_one and field.name in followed
+    ]
+
+
+def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
+    """Iterate over ``model``'s instances, in primary key order.
+
+    The followed foreign keys come with each instance, in the same query.
+    """
+    queryset = model._default_manager.order_by("pk")
+    # select_related() without a field is deprecated
+    if foreign_keys := _followed_foreign_keys(model, extractor):
+        queryset = queryset.select_related(*foreign_keys)
+    return queryset.iterator()
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
@@ -54,7 +75,7 @@ def _model_documents(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances, in primary key order."""
-    for instance in _instances(model):
+    for instance in _instances(model, extractor):
         yield from _instance_documents(instance, extractor)
 
 
