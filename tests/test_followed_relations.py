@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Lesson, Product, Topic
+from tests.testapp.models import Category, Lesson, Product, Review, Topic
 
 
 @pytest.mark.django_db
@@ -63,4 +63,26 @@ def test_followed_foreign_key_brings_the_guessed_text_fields_of_the_related() ->
 
     assert [document.text for document in documents] == [
         "Dovetails\n\nWoodworking\n\nJoints and finishes."
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_foreign_key_brings_the_label_of_a_related_field_with_choices() -> (
+    None
+):
+    category = Category.objects.create(name="Tools")
+    product = Product.objects.create(
+        name="Hammer",
+        description="Drives nails.",
+        price="12.00",
+        category=category,
+        condition="used",
+    )
+    Review.objects.create(title="Still solid", product=product)
+    rag.register(Review, follow=["product"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Still solid\n\nHammer\n\nDrives nails.\n\nSecond-hand"
     ]

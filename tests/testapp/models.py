@@ -204,3 +204,15 @@ class Topic(models.Model):
 class Lesson(models.Model):
     title = models.CharField(max_length=200)
     topic = models.ForeignKey(Topic, related_name="lessons", on_delete=models.CASCADE)
+
+
+# --- A related model with a field with choices --------------------------
+# A Review points to a Product, whose condition is a text field with choices:
+# its stored value and its label differ.
+
+
+class Review(models.Model):
+    title = models.CharField(max_length=200)
+    product = models.ForeignKey(
+        Product, related_name="reviews", on_delete=models.CASCADE
+    )
