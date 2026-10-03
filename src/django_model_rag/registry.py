@@ -24,17 +24,15 @@ def _guessed_fields(
 ) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
-    A model with no text field of its own guesses none when it follows
-    relations: their text is enough to make a document.
+    A model that follows relations may be left with no text field of its
+    own: their text is enough to make a document.
 
     Raises:
-        ImproperlyConfigured: ``model`` has no text field and follows no
-            relation, or ``exclude`` names all of its text fields.
+        ImproperlyConfigured: ``model`` follows no relation and has no text
+            field, or none left once ``exclude`` is applied.
     """
     names = text_fields(model)
-    if not names and follow:
-        return []
-    if not names:
+    if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
     guessed = [name for name in names if name not in exclude]
@@ -274,8 +272,8 @@ class Registry:
                 or excluded twice, or a field (``title_field`` and ``exclude``
                 included) is not one of the model's or is a relation,
                 ``exclude`` is combined with ``fields``, without ``fields``,
-                the model has no text field and follows no relation, or
-                ``exclude`` names all of its text fields,
+                the model follows no relation and has no text field, or
+                none left once ``exclude`` is applied,
                 or a name in ``follow`` is not one of the model's relation
                 accessors, is given twice, or leads to a model with no text
                 field, or relations are followed while models are loading.
