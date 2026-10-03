@@ -6,68 +6,13 @@ from typing import Any
 from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor, document_from_instance
-from django_model_rag.registry import Declaration, Registration, rag
-
-_FIELD_SEPARATOR = "\n\n"
-
-
-def _field_text(instance: Model, name: str) -> str:
-    """Read the field ``name`` of ``instance`` as stripped text.
-
-    A field with choices reads as its label.
-    """
-    value = getattr(instance, name)
-    # Django adds get_<name>_display only to fields that have choices
-    if getattr(instance._meta.get_field(name), "choices", None):
-        value = getattr(instance, f"get_{name}_display")()
-    return "" if value is None else str(value).strip()
-
-
-def _document_text(field_texts: list[str]) -> str:
-    """Join the non-empty ``field_texts``, in order."""
-    return _FIELD_SEPARATOR.join(text for text in field_texts if text)
-
-
-def _document_title(
-    instance: Model, declaration: Declaration, field_texts: list[str]
-) -> str:
-    """Take the text of the declared title field, or the first of ``field_texts``.
-
-    ``field_texts`` are the texts of the declared fields, in order: a title
-    field among them is not read a second time.
-    """
-    title_field = declaration.title_field
-    if title_field is None:
-        return field_texts[0]
-    if title_field in declaration.fields:
-        return field_texts[declaration.fields.index(title_field)]
-    return _field_text(instance, title_field)
-
-
-def _document(instance: Model, declaration: Declaration) -> NormalizedDocument | None:
-    """Build the document of ``instance``, or nothing when its fields are blank."""
-    field_texts = [_field_text(instance, name) for name in declaration.fields]
-    text = _document_text(field_texts)
-    if not text:
-        return None
-    return document_from_instance(
-        instance, text=text, title=_document_title(instance, declaration, field_texts)
-    )
+from django_model_rag.extractors import BaseExtractor
+from django_model_rag.registry import rag
 
 
 def _instances(model: type[Model]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order."""
     return model._default_manager.order_by("pk").iterator()
-
-
-def _declared_instance_documents(
-    instance: Model, declaration: Declaration
-) -> Iterator[NormalizedDocument]:
-    """Build the document of ``instance``, if its declared fields are not blank."""
-    document = _document(instance, declaration)
-    if document is not None:
-        yield document
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
@@ -78,7 +23,7 @@ def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError
     )
 
 
-def _extracted_instance_documents(
+def _instance_documents(
     instance: Model, extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``instance`` with ``extractor``."""
@@ -105,27 +50,18 @@ def _checked_documents(
         yield item
 
 
-def _instance_documents(
-    instance: Model, registration: Registration
-) -> Iterator[NormalizedDocument]:
-    """Build the documents of ``instance`` as its model's ``registration`` says."""
-    if isinstance(registration, Declaration):
-        return _declared_instance_documents(instance, registration)
-    return _extracted_instance_documents(instance, registration)
-
-
 def _model_documents(
-    model: type[Model], registration: Registration
+    model: type[Model], extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances, in primary key order."""
     for instance in _instances(model):
-        yield from _instance_documents(instance, registration)
+        yield from _instance_documents(instance, extractor)
 
 
-def _registrations_to_run(
+def _extractors_to_run(
     models: Sequence[type[Model]] | None,
-) -> list[tuple[type[Model], Registration]]:
-    """Pair each model to run with its registration.
+) -> list[tuple[type[Model], BaseExtractor[Any]]]:
+    """Pair each model to run with its extractor.
 
     The models to run are ``models``, in their order, or every registered model.
 
@@ -134,7 +70,7 @@ def _registrations_to_run(
     """
     if models is None:
         models = rag.registered_models()
-    return [(model, rag.registration(model)) for model in models]
+    return [(model, rag.extractor(model)) for model in models]
 
 
 class SyncPipeline:
@@ -152,8 +88,8 @@ class SyncPipeline:
             NotRegistered: one of ``models`` is not registered.
         """
         documents: list[NormalizedDocument] = []
-        for model, registration in _registrations_to_run(models):
-            documents.extend(_model_documents(model, registration))
+        for model, extractor in _extractors_to_run(models):
+            documents.extend(_model_documents(model, extractor))
         return documents
 
     def run_instance(self, instance: Model) -> list[NormalizedDocument]:
@@ -162,5 +98,5 @@ class SyncPipeline:
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
         """
-        registration = rag.registration(type(instance))
-        return list(_instance_documents(instance, registration))
+        extractor = rag.extractor(type(instance))
+        return list(_instance_documents(instance, extractor))

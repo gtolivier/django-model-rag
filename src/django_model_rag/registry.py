@@ -2,13 +2,12 @@
 
 import inspect
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, TypeAlias, TypeVar
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
-from django_model_rag.extractors import BaseExtractor
+from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor
 
 ExtractorClass = TypeVar("ExtractorClass", bound=BaseExtractor[Any])
 
@@ -79,25 +78,14 @@ class NotRegistered(Exception):  # noqa: N818 - public name mirrors Django admin
     """A model that is not registered is unregistered."""
 
 
-@dataclass(frozen=True)
-class Declaration:
-    """What a model declares when it is registered."""
-
-    fields: tuple[str, ...]
-    title_field: str | None
-
-
-Registration: TypeAlias = Declaration | BaseExtractor[Any]
-"""How a registered model turns into documents: declared fields or an extractor."""
-
-
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
     def __init__(self) -> None:
         """Start with no registered model."""
-        # One dict for both kinds keeps the registration order across them
-        self._registrations: dict[type[Model], Registration] = {}
+        # Declared fields are an extractor too: one dict keeps the
+        # registration order across both kinds
+        self._registrations: dict[type[Model], BaseExtractor[Any]] = {}
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -127,8 +115,8 @@ class Registry:
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
 
-    def registration(self, model: type[Model]) -> Registration:
-        """Give the declaration or the extractor ``model`` is registered with.
+    def extractor(self, model: type[Model]) -> BaseExtractor[Any]:
+        """Give the extractor ``model`` is registered with.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -158,7 +146,7 @@ class Registry:
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
-        self._registrations[model] = Declaration(tuple(fields), title_field)
+        self._registrations[model] = DeclaredFieldsExtractor(tuple(fields), title_field)
 
     def register_extractor(
         self, model: type[Model]
