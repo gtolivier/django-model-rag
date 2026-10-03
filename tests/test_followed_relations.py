@@ -91,6 +91,31 @@ def test_exclude_leaves_the_same_named_field_of_the_followed_related_in() -> Non
 
 
 @pytest.mark.django_db
+def test_exclude_of_every_own_text_field_registers_with_a_followed_relation() -> None:
+    # Without follow, excluding every text field of the model is refused: here
+    # the followed category still gives the document a text, and no own field
+    # is left to give a title, so the title is what str() gives.
+    category = Category.objects.create(name="Furniture")
+    product = Product.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        subtitle="Oak",
+        price="49.90",
+        category=category,
+        condition="new",
+    )
+    rag.register(
+        Product,
+        exclude=["name", "description", "subtitle", "condition"],
+        follow=["category"],
+    )
+
+    [document] = SyncPipeline().run()
+
+    assert (document.title, document.text) == (str(product), "Furniture")
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_appends_each_instance_its_own_related_text() -> None:
     furniture = Category.objects.create(name="Furniture")
     lighting = Category.objects.create(name="Lighting")
