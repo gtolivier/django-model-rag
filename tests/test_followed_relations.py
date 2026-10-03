@@ -300,3 +300,10 @@ def test_following_a_field_that_is_not_a_relation_fails_at_registration() -> Non
         match=r"\bname\b.*\bnot a relation\b|\bnot a relation\b.*\bname\b",
     ):
         rag.register(Product, follow=["name"])
+
+
+def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
+        # A bare string is the slip under test: the type checker rightly
+        # rejects it.
+        rag.register(Product, follow="category")  # type: ignore[arg-type]
