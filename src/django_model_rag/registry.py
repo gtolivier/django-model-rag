@@ -20,12 +20,19 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
-_TITLE_NAME = "title"
-"""The name of the guessed field that comes first."""
+_TITLE_LIKE_NAMES = ("title", "name", "heading", "label")
+"""The names of the guessed fields that come first, in this order."""
+
+
+def _title_rank(name: str) -> int:
+    """Rank ``name``: title-like names first, in order, then the others."""
+    if name in _TITLE_LIKE_NAMES:
+        return _TITLE_LIKE_NAMES.index(name)
+    return len(_TITLE_LIKE_NAMES)
 
 
 def _text_fields(model: type[Model]) -> list[str]:
-    """List the names of ``model``'s text fields, ``title`` first.
+    """List the names of ``model``'s text fields, title-like names first.
 
     The others follow in declaration order.
     """
@@ -36,7 +43,7 @@ def _text_fields(model: type[Model]) -> list[str]:
         # an identifier, an address or a link, not content
         and not isinstance(field, SlugField | EmailField | URLField)
     ]
-    return sorted(names, key=lambda name: name != _TITLE_NAME)  # stable sort
+    return sorted(names, key=_title_rank)  # stable sort
 
 
 def _require_content_field(model: type[Model], name: str) -> None:
