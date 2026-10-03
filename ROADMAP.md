@@ -57,7 +57,7 @@ refactoring, not from the prototype.
   wrong `title_field`. Values are stripped, a field with choices gives its
   label. `rag`, `NormalizedDocument`, `SyncPipeline` and the two exceptions
   are importable from `django_model_rag`.
-- [ ] **3. Custom extractors** — `rag.register_extractor` (a class
+- [x] **3. Custom extractors** — `rag.register_extractor` (a class
   decorator) and `BaseExtractor`, also importable from `django_model_rag`;
   extractors that return one document, several or none; a run over a subset
   of the models, a run for a single instance, and the list of registered
@@ -80,7 +80,10 @@ refactoring, not from the prototype.
   Once this feature settles everything the pipeline reads from an instance,
   reconsider loading only those columns (`QuerySet.only()`): until then,
   each attribute read outside the loaded ones would cost a query per
-  instance.
+  instance. Likewise for custom extractors that read relations: an
+  optional hook to shape their queryset (`select_related`,
+  `prefetch_related`, iterated with `iterator(chunk_size=...)`) would avoid
+  a query per instance.
 - [ ] **7. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.
@@ -101,7 +104,9 @@ django-minimal-rag all depend on.
 - **The identity of a document.** An instance can produce several
   documents, and they share one `source_key`. Either the key identifies the
   group — the documents of an instance are replaced together — or each
-  document gets its own part.
+  document gets its own part. A custom extractor may also build a document
+  whose source is another instance (a plugin indexed as its page), which
+  nothing forbids yet: decide whether the pipeline should.
 - **Removal on save.** A saved instance that now produces fewer documents,
   or none, must have the old ones removed, not only a deleted instance.
 - **Where the output comes from.** The command and the signals run outside
@@ -121,7 +126,10 @@ reference.
   django-minimal-rag's handling of updated and orphaned chunks. Open: text
   that comes from another model — through `follow`, or a parent that a
   custom extractor reads — goes stale when that model changes, unless the
-  dependent instances are found and re-extracted.
+  dependent instances are found and re-extracted. Also open: a proxy model
+  or a multi-table child of a registered model sends its own class as the
+  signal's sender, and `run_instance` looks the exact class up, so such an
+  instance is not registered today.
 
 ## Not planned here
 

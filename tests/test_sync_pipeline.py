@@ -148,6 +148,91 @@ def test_documents_of_several_models_come_grouped_in_registration_order() -> Non
 
 
 @pytest.mark.django_db
+def test_pipeline_given_models_produces_only_the_documents_of_those_models() -> None:
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+
+    documents = SyncPipeline().run(models=[Category])
+
+    assert [(document.source_model, document.source_pk) for document in documents] == [
+        ("category", tools.pk),
+        ("category", garden.pk),
+    ]
+
+
+@pytest.mark.django_db
+def test_pipeline_given_models_follows_their_order_not_registration_order() -> None:
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+
+    documents = SyncPipeline().run(models=[Category, Product])
+
+    assert [(document.source_model, document.source_pk) for document in documents] == [
+        ("category", tools.pk),
+        ("product", hammer.pk),
+    ]
+
+
+@pytest.mark.django_db
+def test_pipeline_given_an_empty_list_of_models_produces_no_document() -> None:
+    Category.objects.create(name="Tools")
+    rag.register(Category, fields=["name"])
+
+    assert SyncPipeline().run(models=[]) == []
+
+
+@pytest.mark.django_db
+def test_pipeline_given_models_is_typed_as_an_ordered_sequence() -> None:
+    tools = Category.objects.create(name="Tools")
+    rag.register(Category, fields=["name"])
+
+    # The run follows the order of the given models, which a set does not
+    # have: the type checker rightly rejects it.
+    documents = SyncPipeline().run(models={Category})  # type: ignore[arg-type]
+
+    assert [document.source_pk for document in documents] == [tools.pk]
+
+
+@pytest.mark.django_db
+def test_pipeline_given_an_unregistered_model_fails_naming_that_model() -> None:
+    rag.register(Category, fields=["name"])
+
+    with pytest.raises(NotRegistered, match=r"\bProduct\b"):
+        SyncPipeline().run(models=[Product])
+
+
+@pytest.mark.django_db
+def test_run_instance_produces_the_documents_of_that_instance_only() -> None:
+    hammer = create_product(name="Hammer", description="Drives nails.", price="9.90")
+    create_product(name="Rake", description="Gathers leaves.", price="14.50")
+    rag.register(Product, fields=["name"])
+
+    documents = SyncPipeline().run_instance(hammer)
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (hammer.pk, "Hammer"),
+    ]
+
+
+@pytest.mark.django_db
+def test_run_instance_of_an_unregistered_model_fails_naming_that_model() -> None:
+    hammer = create_product(name="Hammer", description="Drives nails.", price="9.90")
+    rag.register(Category, fields=["name"])
+
+    with pytest.raises(NotRegistered, match=r"\bProduct\b"):
+        SyncPipeline().run_instance(hammer)
+
+
+@pytest.mark.django_db
 def test_document_title_is_the_value_of_the_first_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])

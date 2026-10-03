@@ -1,10 +1,13 @@
 """The registry of models whose content feeds the pipeline."""
 
-from dataclasses import dataclass
-from typing import TypeAlias
+import inspect
+from collections.abc import Callable
+from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
+
+from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
@@ -50,6 +53,24 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
         _require_content_field(model, name)
 
 
+def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
+    """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
+
+    Raises:
+        ImproperlyConfigured: ``extractor_class`` is not a class deriving
+            from ``BaseExtractor`` (a plain function, say), or does not
+            implement ``extract``.
+    """
+    if not inspect.isclass(extractor_class) or not issubclass(
+        extractor_class, BaseExtractor
+    ):
+        message = f"{extractor_class.__name__} must derive from BaseExtractor"
+        raise ImproperlyConfigured(message)
+    if inspect.isabstract(extractor_class):
+        message = f"{extractor_class.__name__} does not implement extract"
+        raise ImproperlyConfigured(message)
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -58,20 +79,52 @@ class NotRegistered(Exception):  # noqa: N818 - public name mirrors Django admin
     """A model that is not registered is unregistered."""
 
 
-@dataclass(frozen=True)
-class Declaration:
-    """What a model declares when it is registered."""
-
-    fields: tuple[str, ...]
-    title_field: str | None
-
-
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
     def __init__(self) -> None:
         """Start with no registered model."""
-        self._declarations: dict[type[Model], Declaration] = {}
+        # Declared fields are an extractor too: one dict keeps the
+        # registration order across both kinds. It holds factories, not
+        # extractors, so that no state an extractor keeps leaks between runs.
+        self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
+
+    def registered_models(self) -> list[type[Model]]:
+        """List the registered models, in registration order."""
+        return list(self._registrations)
+
+    def _is_registered(self, model: type[Model]) -> bool:
+        """Tell whether ``model`` is registered with fields or an extractor."""
+        return model in self._registrations
+
+    def _require_unregistered(self, model: type[Model]) -> None:
+        """Fail if ``model`` is already registered with fields or an extractor.
+
+        Raises:
+            AlreadyRegistered: ``model`` is already registered.
+        """
+        if self._is_registered(model):
+            message = f"{model.__name__} is already registered"
+            raise AlreadyRegistered(message)
+
+    def _require_registered(self, model: type[Model]) -> None:
+        """Fail unless ``model`` is registered with fields or an extractor.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        if not self._is_registered(model):
+            message = f"{model.__name__} is not registered"
+            raise NotRegistered(message)
+
+    def new_extractor(self, model: type[Model]) -> BaseExtractor[Any]:
+        """Build a fresh instance of the extractor ``model`` is registered with.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        self._require_registered(model)
+        return self._registrations[model]()
 
     def register(
         self,
@@ -91,17 +144,35 @@ class Registry:
                 (``title_field`` included) is not one of the model's or is a
                 relation.
         """
-        if model in self._declarations:
-            message = f"{model.__name__} is already registered"
-            raise AlreadyRegistered(message)
+        self._require_unregistered(model)
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
-        self._declarations[model] = Declaration(tuple(fields), title_field)
+        declared = tuple(fields)
+        self._registrations[model] = lambda: DeclaredFieldsExtractor(
+            declared, title_field
+        )
 
-    def declarations(self) -> list[tuple[type[Model], Declaration]]:
-        """List each registered model with what it declared."""
-        return list(self._declarations.items())
+    def register_extractor(
+        self, model: type[M]
+    ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
+        """Register the decorated extractor class as the one of ``model``.
+
+        Raises:
+            AlreadyRegistered: ``model`` is already registered.
+            ImproperlyConfigured: the decorated class does not derive from
+                ``BaseExtractor``, or does not implement ``extract``.
+        """
+
+        def decorator(
+            extractor_class: type[BaseExtractor[M]],
+        ) -> type[BaseExtractor[M]]:
+            _require_extractor_class(extractor_class)
+            self._require_unregistered(model)
+            self._registrations[model] = extractor_class
+            return extractor_class
+
+        return decorator
 
     def unregister(self, model: type[Model]) -> None:
         """Forget ``model``.
@@ -109,10 +180,8 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model not in self._declarations:
-            message = f"{model.__name__} is not registered"
-            raise NotRegistered(message)
-        del self._declarations[model]
+        self._require_registered(model)
+        del self._registrations[model]
 
 
 rag = Registry()

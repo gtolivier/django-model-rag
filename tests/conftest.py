@@ -2,7 +2,6 @@ from collections.abc import Iterator
 
 import pytest
 from django.db import connection
-from django.db.models import Model
 
 from django_model_rag import rag
 
@@ -21,22 +20,20 @@ def unordered_selects_reversed(db: None) -> Iterator[None]:
         cursor.execute("PRAGMA reverse_unordered_selects = OFF")
 
 
-def registered_models() -> set[type[Model]]:
-    """Return the models currently registered with ``rag``."""
-    return {model for model, _fields in rag.declarations()}
-
-
 @pytest.fixture(autouse=True)
 def restored_registry() -> Iterator[None]:
     """Unregister, when any test ends, every model it left registered with ``rag``.
 
-    Autouse, so that no test leaves a model registered behind it and every
-    test starts with the registry the previous one found.
+    Autouse, so that no test leaves a registration behind it and every test
+    starts with the registry the previous one found.
 
-    Only models still registered are unregistered, so a test may unregister
-    a model itself without making the teardown fail.
+    ``registered_models`` lists the models of every kind of registration
+    (declared fields, custom extractors...), so the teardown undoes them all
+    through the public API. Only models still registered are unregistered,
+    so a test may unregister a model itself without making the teardown fail.
     """
-    registered_before = registered_models()
+    registered_before = set(rag.registered_models())
     yield
-    for model in registered_models() - registered_before:
-        rag.unregister(model)
+    for model in rag.registered_models():
+        if model not in registered_before:
+            rag.unregister(model)
