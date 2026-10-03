@@ -118,6 +118,19 @@ def test_model_registered_without_fields_puts_its_title_like_fields_first() -> N
 
 
 @pytest.mark.django_db
+def test_excluded_field_is_left_out_of_the_guessed_text_and_title() -> None:
+    Note.objects.create(body="Monday to Friday.", title="Opening hours")
+    rag.register(Note, exclude=["title"])
+
+    [document] = SyncPipeline().run()
+
+    assert (document.title, document.text) == (
+        "Monday to Friday.",
+        "Monday to Friday.",
+    )
+
+
+@pytest.mark.django_db
 def test_model_registered_without_fields_guesses_only_its_text_fields() -> None:
     category = Category.objects.create(name="Tools")
     Product.objects.create(
