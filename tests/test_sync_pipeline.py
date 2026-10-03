@@ -191,6 +191,18 @@ def test_pipeline_given_an_empty_list_of_models_produces_no_document() -> None:
 
 
 @pytest.mark.django_db
+def test_pipeline_given_models_is_typed_as_an_ordered_sequence() -> None:
+    tools = Category.objects.create(name="Tools")
+    rag.register(Category, fields=["name"])
+
+    # The run follows the order of the given models, which a set does not
+    # have: the type checker rightly rejects it.
+    documents = SyncPipeline().run(models={Category})  # type: ignore[arg-type]
+
+    assert [document.source_pk for document in documents] == [tools.pk]
+
+
+@pytest.mark.django_db
 def test_pipeline_given_an_unregistered_model_fails_naming_that_model() -> None:
     rag.register(Category, fields=["name"])
 
