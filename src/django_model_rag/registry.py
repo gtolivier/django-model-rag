@@ -111,27 +111,27 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
     if not fields:
         message = f"{model.__name__} declares no field"
         raise ImproperlyConfigured(message)
+    _require_distinct_content_fields(model, fields, "declared")
+
+
+def _require_distinct_content_fields(
+    model: type[Model], names: FieldNames, verb: str
+) -> None:
+    """Fail unless ``names`` names each of ``model``'s content fields once.
+
+    ``verb`` says what the names are for, in the error: declared, excluded.
+
+    Raises:
+        ImproperlyConfigured: a name is not one of ``model``'s fields or is a
+            relation, or it is given twice.
+    """
     seen: set[str] = set()
-    for name in fields:
+    for name in names:
         if name in seen:
-            message = f"{model.__name__}: field {name!r} is declared twice"
+            message = f"{model.__name__}: field {name!r} is {verb} twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
         _require_content_field(model, name)
-
-
-def _require_excluded_fields(model: type[Model], exclude: FieldNames) -> None:
-    """Fail unless ``exclude`` names each of ``model``'s content fields once.
-
-    Raises:
-        ImproperlyConfigured: a field in ``exclude`` is not one of
-            ``model``'s or is a relation, or it is excluded twice.
-    """
-    for name in exclude:
-        _require_content_field(model, name)
-        if exclude.count(name) > 1:
-            message = f"{model.__name__}: field {name!r} is excluded twice"
-            raise ImproperlyConfigured(message)
 
 
 def _require_fields_or_exclude(
@@ -247,7 +247,7 @@ class Registry:
         _require_field_names(model, exclude, "exclude")
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
-            _require_excluded_fields(model, exclude)
+            _require_distinct_content_fields(model, exclude, "excluded")
             fields = _guessed_fields(model, exclude)
         _require_content_fields(model, fields)
         if title_field is not None:
