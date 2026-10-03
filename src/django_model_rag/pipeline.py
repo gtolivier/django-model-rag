@@ -95,7 +95,10 @@ def _extracted_instance_documents(
     elif not isinstance(extracted, Iterable):
         raise _wrong_extraction(extractor, f"a {type(extracted).__name__}")
     else:
-        yield from extracted
+        for item in extracted:
+            if not isinstance(item, NormalizedDocument):
+                raise _wrong_extraction(extractor, f"a {type(item).__name__}")
+            yield item
 
 
 def _registrations() -> dict[type[Model], _Registration]:
