@@ -19,14 +19,21 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
-def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
+def _guessed_fields(
+    model: type[Model], exclude: FieldNames, follow: FieldNames
+) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
+    A model with no text field of its own guesses none when it follows
+    relations: their text is enough to make a document.
+
     Raises:
-        ImproperlyConfigured: ``model`` has no text field, or ``exclude``
-            names all of them.
+        ImproperlyConfigured: ``model`` has no text field and follows no
+            relation, or ``exclude`` names all of its text fields.
     """
     names = text_fields(model)
+    if not names and follow:
+        return []
     if not names:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
@@ -267,7 +274,8 @@ class Registry:
                 or excluded twice, or a field (``title_field`` and ``exclude``
                 included) is not one of the model's or is a relation,
                 ``exclude`` is combined with ``fields``, without ``fields``,
-                the model has no text field or ``exclude`` names all of them,
+                the model has no text field and follows no relation, or
+                ``exclude`` names all of its text fields,
                 or a name in ``follow`` is not one of the model's relation
                 accessors, is given twice, or leads to a model with no text
                 field, or relations are followed while models are loading.
@@ -277,11 +285,7 @@ class Registry:
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = (
-                []
-                if follow and not text_fields(model)
-                else _guessed_fields(model, exclude)
-            )
+            fields = _guessed_fields(model, exclude, follow)
         else:
             _require_content_fields(model, fields)
         if title_field is not None:
