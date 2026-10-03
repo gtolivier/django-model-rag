@@ -136,6 +136,11 @@ def test_excluding_a_field_the_model_does_not_have_names_it_in_the_error() -> No
         rag.register(Note, exclude=["titel"])
 
 
+def test_excluding_a_field_twice_names_it_in_the_error() -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\btitle\b"):
+        rag.register(Note, exclude=["title", "title"])
+
+
 def test_excluding_a_single_field_name_instead_of_a_list_fails() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bexclude\b"):
         # A bare string is the slip under test: the type checker rightly
