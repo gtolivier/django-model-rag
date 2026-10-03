@@ -101,3 +101,13 @@ class URLHolder(models.Model):
 class SlugHolder(models.Model):
     label = models.CharField(max_length=100)
     extra = models.SlugField()
+
+
+# --- A title declared last ---------------------------------------------
+# The title-like field comes after the body in declaration order: only its
+# name can put it first.
+
+
+class Note(models.Model):
+    body = models.TextField()
+    title = models.CharField(max_length=200)

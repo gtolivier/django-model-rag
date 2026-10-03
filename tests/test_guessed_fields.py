@@ -7,6 +7,7 @@ from tests.testapp.models import (
     Article,
     Category,
     EmailHolder,
+    Note,
     Page,
     Product,
     SlugHolder,
@@ -43,6 +44,18 @@ def test_model_registered_without_fields_joins_its_text_fields_in_order() -> Non
         page=page, title="Opening hours", body="Monday to Friday."
     )
     rag.register(AccordionItem)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Opening hours\n\nMonday to Friday."
+    ]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_puts_its_title_first() -> None:
+    Note.objects.create(body="Monday to Friday.", title="Opening hours")
+    rag.register(Note)
 
     documents = SyncPipeline().run()
 
