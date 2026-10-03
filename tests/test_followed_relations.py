@@ -8,6 +8,7 @@ from tests.testapp.models import (
     Lesson,
     Note,
     Page,
+    PageIntro,
     Product,
     Remark,
     Review,
@@ -176,6 +177,23 @@ def test_followed_reverse_foreign_key_without_related_name_uses_its_accessor() -
 
     assert [document.text for document in documents] == [
         "Workshop rules\n\nWear goggles.\n\nGloves too.\n\nSweep the floor after use."
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_one_to_one_without_related_object_adds_nothing() -> None:
+    # Only the second page has an intro: the first one's reverse one-to-one
+    # has no object, where Django's accessor raises instead of giving None.
+    Page.objects.create(title="About us", slug="about-us")
+    contact = Page.objects.create(title="Contact", slug="contact")
+    PageIntro.objects.create(page=contact, body="Write to us.")
+    rag.register(Page, follow=["intro"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "About us",
+        "Contact\n\nWrite to us.",
     ]
 
 

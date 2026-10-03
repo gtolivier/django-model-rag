@@ -251,3 +251,13 @@ class Course(models.Model):
 class Remark(models.Model):
     note = models.ForeignKey(Note, on_delete=models.CASCADE)
     body = models.TextField()
+
+
+# --- A one-to-one relation ----------------------------------------------
+# A Page may have one PageIntro, or none: the Page reaches it by the reverse
+# one-to-one ``intro``, which raises when there is no PageIntro.
+
+
+class PageIntro(models.Model):
+    page = models.OneToOneField(Page, related_name="intro", on_delete=models.CASCADE)
+    body = models.TextField()
