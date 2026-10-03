@@ -146,3 +146,13 @@ def test_followed_reverse_foreign_key_appends_the_related_texts_in_pk_order() ->
         "About us\n\nWe build chairs by hand.\n\nOur workshop is in Lyon."
         "\n\nVisits on Saturdays."
     ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> None:
+    Page.objects.create(title="About us", slug="about-us")
+    rag.register(Page, follow=["text_plugins"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["About us"]
