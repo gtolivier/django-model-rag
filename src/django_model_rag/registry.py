@@ -20,15 +20,23 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
+_TITLE_NAME = "title"
+"""The name of the guessed field that comes first."""
+
+
 def _text_fields(model: type[Model]) -> list[str]:
-    """List the names of ``model``'s text fields, in declaration order."""
-    return [
+    """List the names of ``model``'s text fields, ``title`` first.
+
+    The others follow in declaration order.
+    """
+    names = [
         field.name
         for field in model._meta.get_fields()  # Django's public meta API
         if isinstance(field, CharField | TextField)
         # an identifier, an address or a link, not content
         and not isinstance(field, SlugField | EmailField | URLField)
     ]
+    return sorted(names, key=lambda name: name != _TITLE_NAME)  # stable sort
 
 
 def _require_content_field(model: type[Model], name: str) -> None:
