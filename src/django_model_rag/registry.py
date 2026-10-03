@@ -37,7 +37,9 @@ def _text_fields(model: type[Model]) -> list[str]:
         for field in model._meta.concrete_fields
         # a CharField subclass is a kind of field of its own, such as a code,
         # an identifier, an address or a link, not content
-        if type(field) is CharField or isinstance(field, TextField)
+        if (type(field) is CharField or isinstance(field, TextField))
+        # a primary key is an identifier, not content
+        and not field.primary_key
     ]
     return sorted(names, key=_title_rank)  # stable sort
 
