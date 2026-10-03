@@ -1,6 +1,6 @@
 """The pipeline that turns registered models into normalized documents."""
 
-from collections.abc import Collection, Iterator
+from collections.abc import Collection, Iterable, Iterator
 from typing import Any, TypeAlias
 
 from django.db.models import Model
@@ -87,6 +87,12 @@ def _extracted_instance_documents(
         )
         raise TypeError(message)
     elif extracted is not None:
+        if not isinstance(extracted, Iterable):
+            message = (
+                f"{type(extractor).__name__}.extract() returned a "
+                f"{type(extracted).__name__}, not a NormalizedDocument"
+            )
+            raise TypeError(message)
         yield from extracted
 
 
