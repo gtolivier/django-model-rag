@@ -310,6 +310,15 @@ def test_following_a_relation_twice_names_it_in_the_error() -> None:
         rag.register(Product, follow=["category", "category"])
 
 
+def test_following_a_relation_whose_model_has_no_text_field_fails() -> None:
+    # StockLevel has only a number, a date and a boolean: following it could
+    # never bring any text.
+    with pytest.raises(
+        ImproperlyConfigured, match=r"\bstock_levels\b.*\bno text field\b"
+    ):
+        rag.register(Product, follow=["stock_levels"])
+
+
 def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
         # A bare string is the slip under test: the type checker rightly
