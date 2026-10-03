@@ -77,3 +77,13 @@ def test_model_registered_without_fields_guesses_a_text_field_subclass() -> None
     assert [document.text for document in documents] == [
         "Rich text, as a third-party field stores it."
     ]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_does_not_guess_its_slug() -> None:
+    Page.objects.create(title="About us", slug="about")
+    rag.register(Page)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["About us"]
