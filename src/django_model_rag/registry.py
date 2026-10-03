@@ -249,7 +249,8 @@ class Registry:
         if fields is None:
             _require_distinct_content_fields(model, exclude, "excluded")
             fields = _guessed_fields(model, exclude)
-        _require_content_fields(model, fields)
+        else:
+            _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
         declared = tuple(fields)
