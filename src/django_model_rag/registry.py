@@ -53,12 +53,12 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _require_distinct_relation_accessors(model: type[Model], names: FieldNames) -> None:
-    """Fail unless ``names`` names each of ``model``'s relation accessors once.
+def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
+    """Fail unless ``names`` names, once each, relations of ``model`` with text.
 
     Raises:
-        ImproperlyConfigured: a name to follow is not a relation accessor, or
-            it is given twice.
+        ImproperlyConfigured: a name to follow is not a relation accessor, it
+            is given twice, or its related model has no text field.
     """
     accessors = {
         field.get_accessor_name() if field.auto_created else field.name: field  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
@@ -74,13 +74,23 @@ def _require_distinct_relation_accessors(model: type[Model], names: FieldNames) 
             message = f"{model.__name__}: relation {name!r} is followed twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
-        related = accessors[name].related_model
-        if isinstance(related, type) and not text_fields(related):
-            message = (
-                f"{model.__name__}: cannot follow {name!r}, "
-                f"{related.__name__} has no text field"
-            )
-            raise ImproperlyConfigured(message)
+        _require_related_text(model, name, accessors[name].related_model)
+
+
+def _require_related_text(
+    model: type[Model], name: str, related: type[Model] | None
+) -> None:
+    """Fail if ``related``, followed from ``model`` as ``name``, has no text.
+
+    Raises:
+        ImproperlyConfigured: ``related`` has no text field.
+    """
+    if isinstance(related, type) and not text_fields(related):
+        message = (
+            f"{model.__name__}: cannot follow {name!r}, "
+            f"{related.__name__} has no text field"
+        )
+        raise ImproperlyConfigured(message)
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
@@ -243,7 +253,8 @@ class Registry:
                 ``exclude`` is combined with ``fields``, without ``fields``,
                 the model has no text field or ``exclude`` names all of them,
                 or a name in ``follow`` is not one of the model's relation
-                accessors.
+                accessors, is given twice, or leads to a model with no text
+                field.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
@@ -257,7 +268,7 @@ class Registry:
             _require_content_field(model, title_field)
         _require_field_names(model, follow, "follow")
         if follow:
-            _require_distinct_relation_accessors(model, follow)
+            _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
