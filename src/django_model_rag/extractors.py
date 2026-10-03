@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from typing import Any, Generic, TypeVar
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import CharField, Field, Manager, Model, TextField
 
 from django_model_rag.documents import NormalizedDocument
@@ -116,6 +117,17 @@ def _related_text(related: Model | Manager[Model] | None) -> str:
     )
 
 
+def _followed_text(instance: Model, name: str) -> str:
+    """Read the text of the relation ``name`` of ``instance``.
+
+    A reverse one-to-one without an object raises, where it has no text.
+    """
+    try:
+        return _related_text(getattr(instance, name))
+    except ObjectDoesNotExist:
+        return ""
+
+
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
@@ -136,9 +148,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
     def extract(self, instance: Model) -> NormalizedDocument | None:
         """Build the document of ``instance``, or nothing when its fields are blank."""
         field_texts = [_field_text(instance, name) for name in self.fields]
-        followed_texts = [
-            _related_text(getattr(instance, name)) for name in self.follow
-        ]
+        followed_texts = [_followed_text(instance, name) for name in self.follow]
         text = _document_text(field_texts + followed_texts)
         if not text:
             return None
