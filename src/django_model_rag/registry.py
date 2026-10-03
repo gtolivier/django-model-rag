@@ -64,10 +64,15 @@ def _require_relation_accessors(model: type[Model], names: FieldNames) -> None:
         for field in model._meta.get_fields()
         if field.is_relation
     }
+    seen: set[str] = set()
     for name in names:
         if name not in accessors:
             message = f"{model.__name__}: cannot follow {name!r}, not a relation"
             raise ImproperlyConfigured(message)
+        if name in seen:
+            message = f"{model.__name__}: relation {name!r} is followed twice"
+            raise ImproperlyConfigured(message)
+        seen.add(name)
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
