@@ -381,6 +381,35 @@ def test_followed_reverse_foreign_key_appends_the_related_texts_in_pk_order() ->
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_reverse_foreign_key_is_read_in_one_query_for_all_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three pages with two text plugins each: one query per page would show as
+    # more than two queries, and the reversed selects check that each page's
+    # texts still come in primary key order.
+    about = Page.objects.create(title="About us", slug="about-us")
+    contact = Page.objects.create(title="Contact", slug="contact")
+    visits = Page.objects.create(title="Visits", slug="visits")
+    TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    TextPlugin.objects.create(page=contact, body="Write to us.")
+    TextPlugin.objects.create(page=visits, body="Visits on Saturdays.")
+    TextPlugin.objects.create(page=about, body="Our workshop is in Lyon.")
+    TextPlugin.objects.create(page=contact, body="Or call us.")
+    TextPlugin.objects.create(page=visits, body="Book a week ahead.")
+    rag.register(Page, follow=["text_plugins"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "About us\n\nWe build chairs by hand.\n\nOur workshop is in Lyon.",
+        "Contact\n\nWrite to us.\n\nOr call us.",
+        "Visits\n\nVisits on Saturdays.\n\nBook a week ahead.",
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> None:
     Page.objects.create(title="About us", slug="about-us")
     rag.register(Page, follow=["text_plugins"])
