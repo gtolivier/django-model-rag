@@ -50,7 +50,8 @@ def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
     Raises:
-        ImproperlyConfigured: ``model`` has no text field.
+        ImproperlyConfigured: ``model`` has no text field, or ``exclude``
+            names all of them.
     """
     names = _text_fields(model)
     if not names:
@@ -234,7 +235,7 @@ class Registry:
                 twice, or a field (``title_field`` and ``exclude`` included) is
                 not one of the model's or is a relation, ``exclude`` is
                 combined with ``fields``, or, without ``fields``, the model
-                has no text field.
+                has no text field or ``exclude`` names all of them.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
