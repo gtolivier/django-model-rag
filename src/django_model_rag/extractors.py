@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from typing import Any, Generic, TypeVar
 
-from django.db.models import CharField, Field, Model, TextField
+from django.db.models import CharField, Field, Manager, Model, TextField
 
 from django_model_rag.documents import NormalizedDocument
 
@@ -101,10 +101,16 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
-def _related_text(related: Model | None) -> str:
-    """Join the texts of the text fields of ``related``, title-like ones first."""
+def _related_text(related: Model | Manager[Model] | None) -> str:
+    """Join the texts of the text fields of ``related``, title-like ones first.
+
+    ``related`` may be the manager of a reverse relation: its objects follow
+    one another.
+    """
     if related is None:
         return ""
+    if isinstance(related, Manager):
+        return _document_text([_related_text(item) for item in related.all()])
     return _document_text(
         [_field_text(related, name) for name in text_fields(type(related))]
     )
