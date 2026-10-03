@@ -175,6 +175,22 @@ class StockLevel(models.Model):
     )
 
 
+# --- No text at all, but a string form ----------------------------------
+# Only a number, a date and a relation, like StockLevel, but with a __str__
+# computed from the instance's own values.
+
+
+class Delivery(models.Model):
+    quantity = models.IntegerField()
+    delivered_on = models.DateField()
+    product = models.ForeignKey(
+        Product, related_name="deliveries", on_delete=models.CASCADE
+    )
+
+    def __str__(self) -> str:
+        return f"{self.quantity} delivered on {self.delivered_on.isoformat()}"
+
+
 # --- Only CharField subclasses -----------------------------------------
 # A slug, an e-mail address and a URL, but no plain CharField or TextField:
 # text-ish fields, none of them content.

@@ -12,6 +12,7 @@ from tests.testapp.models import (
     AccordionItem,
     Category,
     Course,
+    Delivery,
     Lesson,
     Note,
     Page,
@@ -198,6 +199,28 @@ def test_model_without_text_field_that_follows_a_relation_takes_str_as_title() -
     documents = SyncPipeline().run()
 
     assert [document.title for document in documents] == [str(stock_level)]
+
+
+@pytest.mark.django_db
+def test_model_without_text_field_that_follows_a_relation_takes_its_str_as_title() -> (
+    None
+):
+    # Delivery has no own text field, but defines a __str__ built from its
+    # quantity and date: the title is what that __str__ gives.
+    category = Category.objects.create(name="Furniture")
+    product = Product.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        price="49.90",
+        category=category,
+        condition="new",
+    )
+    Delivery.objects.create(quantity=12, delivered_on=date(2026, 3, 1), product=product)
+    rag.register(Delivery, follow=["product"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.title for document in documents] == ["12 delivered on 2026-03-01"]
 
 
 @pytest.mark.django_db
