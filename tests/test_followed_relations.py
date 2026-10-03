@@ -290,3 +290,13 @@ def test_following_the_query_name_of_a_reverse_foreign_key_fails_at_registration
         ImproperlyConfigured, match=r"\bremark\b.*\bfollow\b|\bfollow\b.*\bremark\b"
     ):
         rag.register(Note, follow=["remark"])
+
+
+def test_following_a_field_that_is_not_a_relation_fails_at_registration() -> None:
+    # Product.name exists but is a CharField: the message must say why an
+    # existing field is refused, not only that it cannot be followed.
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=r"\bname\b.*\bnot a relation\b|\bnot a relation\b.*\bname\b",
+    ):
+        rag.register(Product, follow=["name"])
