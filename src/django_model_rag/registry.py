@@ -9,7 +9,7 @@ from django.db.models import Model
 
 from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor
 
-ExtractorClass = TypeVar("ExtractorClass", bound=BaseExtractor[Any])
+M = TypeVar("M", bound=Model)
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
@@ -149,8 +149,8 @@ class Registry:
         self._registrations[model] = DeclaredFieldsExtractor(tuple(fields), title_field)
 
     def register_extractor(
-        self, model: type[Model]
-    ) -> Callable[[type[ExtractorClass]], type[ExtractorClass]]:
+        self, model: type[M]
+    ) -> Callable[[type[BaseExtractor[M]]], Any]:
         """Register the decorated extractor class as the one of ``model``.
 
         Raises:
@@ -159,7 +159,9 @@ class Registry:
                 ``BaseExtractor``, or does not implement ``extract``.
         """
 
-        def decorator(extractor_class: type[ExtractorClass]) -> type[ExtractorClass]:
+        def decorator(
+            extractor_class: type[BaseExtractor[M]],
+        ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
             self._registrations[model] = extractor_class()
