@@ -87,13 +87,17 @@ class Declaration:
     title_field: str | None
 
 
+Registration: TypeAlias = Declaration | BaseExtractor[Any]
+"""How a registered model turns into documents: declared fields or an extractor."""
+
+
 class Registry:
     """Hold the models whose content feeds the pipeline."""
 
     def __init__(self) -> None:
         """Start with no registered model."""
         # One dict for both kinds keeps the registration order across them
-        self._registrations: dict[type[Model], Declaration | BaseExtractor[Any]] = {}
+        self._registrations: dict[type[Model], Registration] = {}
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -113,7 +117,7 @@ class Registry:
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
 
-    def require_registered(self, model: type[Model]) -> None:
+    def _require_registered(self, model: type[Model]) -> None:
         """Fail unless ``model`` is registered with fields or an extractor.
 
         Raises:
@@ -122,6 +126,15 @@ class Registry:
         if not self._is_registered(model):
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
+
+    def registration(self, model: type[Model]) -> Registration:
+        """Give the declaration or the extractor ``model`` is registered with.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        self._require_registered(model)
+        return self._registrations[model]
 
     def register(
         self,
@@ -166,29 +179,13 @@ class Registry:
 
         return decorator
 
-    def extractors(self) -> list[tuple[type[Model], BaseExtractor[Any]]]:
-        """List each model with the extractor registered for it."""
-        return [
-            (model, registration)
-            for model, registration in self._registrations.items()
-            if isinstance(registration, BaseExtractor)
-        ]
-
-    def declarations(self) -> list[tuple[type[Model], Declaration]]:
-        """List each registered model with what it declared."""
-        return [
-            (model, registration)
-            for model, registration in self._registrations.items()
-            if isinstance(registration, Declaration)
-        ]
-
     def unregister(self, model: type[Model]) -> None:
         """Forget ``model``.
 
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        self.require_registered(model)
+        self._require_registered(model)
         del self._registrations[model]
 
 

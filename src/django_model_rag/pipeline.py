@@ -1,18 +1,15 @@
 """The pipeline that turns registered models into normalized documents."""
 
 from collections.abc import Iterable, Iterator, Sequence
-from typing import Any, TypeAlias
+from typing import Any
 
 from django.db.models import Model
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor, document_from_instance
-from django_model_rag.registry import Declaration, rag
+from django_model_rag.registry import Declaration, Registration, rag
 
 _FIELD_SEPARATOR = "\n\n"
-
-_Registration: TypeAlias = Declaration | BaseExtractor[Any]
-"""How a registered model turns into documents: declared fields or an extractor."""
 
 
 def _field_text(instance: Model, name: str) -> str:
@@ -108,13 +105,8 @@ def _checked_documents(
         yield item
 
 
-def _registrations() -> dict[type[Model], _Registration]:
-    """Map each registered model to its declaration or its extractor."""
-    return {**dict(rag.declarations()), **dict(rag.extractors())}
-
-
 def _instance_documents(
-    instance: Model, registration: _Registration
+    instance: Model, registration: Registration
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``instance`` as its model's ``registration`` says."""
     if isinstance(registration, Declaration):
@@ -123,24 +115,26 @@ def _instance_documents(
 
 
 def _model_documents(
-    model: type[Model], registration: _Registration
+    model: type[Model], registration: Registration
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances, in primary key order."""
     for instance in _instances(model):
         yield from _instance_documents(instance, registration)
 
 
-def _models_to_run(models: Sequence[type[Model]] | None) -> list[type[Model]]:
-    """Select ``models``, in their order, or every registered model.
+def _registrations_to_run(
+    models: Sequence[type[Model]] | None,
+) -> list[tuple[type[Model], Registration]]:
+    """Pair each model to run with its registration.
+
+    The models to run are ``models``, in their order, or every registered model.
 
     Raises:
         NotRegistered: one of ``models`` is not registered.
     """
     if models is None:
-        return rag.registered_models()
-    for model in models:
-        rag.require_registered(model)
-    return list(models)
+        models = rag.registered_models()
+    return [(model, rag.registration(model)) for model in models]
 
 
 class SyncPipeline:
@@ -157,10 +151,9 @@ class SyncPipeline:
         Raises:
             NotRegistered: one of ``models`` is not registered.
         """
-        registrations = _registrations()
         documents: list[NormalizedDocument] = []
-        for model in _models_to_run(models):
-            documents.extend(_model_documents(model, registrations[model]))
+        for model, registration in _registrations_to_run(models):
+            documents.extend(_model_documents(model, registration))
         return documents
 
     def run_instance(self, instance: Model) -> list[NormalizedDocument]:
@@ -169,6 +162,5 @@ class SyncPipeline:
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
         """
-        rag.require_registered(type(instance))
-        registration = _registrations()[type(instance)]
+        registration = rag.registration(type(instance))
         return list(_instance_documents(instance, registration))
