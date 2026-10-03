@@ -129,3 +129,20 @@ def test_followed_reverse_foreign_key_appends_the_related_text() -> None:
     assert [document.text for document in documents] == [
         "About us\n\nWe build chairs by hand."
     ]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_reverse_foreign_key_appends_the_related_texts_in_pk_order() -> None:
+    page = Page.objects.create(title="About us", slug="about-us")
+    TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    TextPlugin.objects.create(page=page, body="Our workshop is in Lyon.")
+    TextPlugin.objects.create(page=page, body="Visits on Saturdays.")
+    rag.register(Page, follow=["text_plugins"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "About us\n\nWe build chairs by hand.\n\nOur workshop is in Lyon."
+        "\n\nVisits on Saturdays."
+    ]
