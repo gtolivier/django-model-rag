@@ -76,6 +76,19 @@ def test_model_registered_without_fields_takes_its_title_as_document_title() -> 
 
 
 @pytest.mark.django_db
+def test_title_field_without_fields_gives_the_title_not_the_guessed_text() -> None:
+    Note.objects.create(body="Monday to Friday.", title="Opening hours")
+    rag.register(Note, title_field="body")
+
+    [document] = SyncPipeline().run()
+
+    assert (document.title, document.text) == (
+        "Monday to Friday.",
+        "Opening hours\n\nMonday to Friday.",
+    )
+
+
+@pytest.mark.django_db
 def test_model_registered_without_fields_puts_its_title_like_fields_first() -> None:
     Panel.objects.create(
         body="Monday to Friday.",
