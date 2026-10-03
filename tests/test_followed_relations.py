@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Lesson, Product, Review, Topic
+from tests.testapp.models import Category, Lesson, Product, Review, Topic, Workshop
 
 
 @pytest.mark.django_db
@@ -86,3 +86,13 @@ def test_followed_foreign_key_brings_the_label_of_a_related_field_with_choices()
     assert [document.text for document in documents] == [
         "Still solid\n\nHammer\n\nDrives nails.\n\nSecond-hand"
     ]
+
+
+@pytest.mark.django_db
+def test_followed_foreign_key_that_is_null_adds_nothing_to_the_own_fields() -> None:
+    Workshop.objects.create(title="Open bench", topic=None)
+    rag.register(Workshop, follow=["topic"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Open bench"]

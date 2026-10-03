@@ -216,3 +216,18 @@ class Review(models.Model):
     product = models.ForeignKey(
         Product, related_name="reviews", on_delete=models.CASCADE
     )
+
+
+# --- An optional relation -----------------------------------------------
+# A Workshop may point to a Topic, or to nothing: its foreign key is nullable.
+
+
+class Workshop(models.Model):
+    title = models.CharField(max_length=200)
+    topic = models.ForeignKey(
+        Topic,
+        related_name="workshops",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
