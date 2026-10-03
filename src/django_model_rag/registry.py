@@ -32,8 +32,9 @@ def _text_fields(model: type[Model]) -> list[str]:
     names = [
         field.name
         # unlike get_fields(), concrete_fields needs no loaded app registry,
-        # so a models.py can register its models while Django loads the apps
-        for field in model._meta.concrete_fields  # Django's public meta API
+        # so a models.py can register its models while Django loads the apps;
+        # it is not in the documented meta API, but Django itself relies on it
+        for field in model._meta.concrete_fields
         # a CharField subclass is a kind of field of its own, such as a code,
         # an identifier, an address or a link, not content
         if type(field) is CharField or isinstance(field, TextField)
