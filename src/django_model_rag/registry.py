@@ -181,6 +181,9 @@ class Registry:
                 model's or is a relation.
         """
         self._require_unregistered(model)
+        if fields is not None and exclude:
+            msg = "exclude cannot be combined with declared fields."
+            raise ImproperlyConfigured(msg)
         if fields is None:
             for name in exclude:
                 _require_content_field(model, name)
