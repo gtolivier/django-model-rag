@@ -111,7 +111,9 @@ def _related_text(related: Model | Manager[Model] | None) -> str:
     if related is None:
         return ""
     if isinstance(related, Manager):
-        return _document_text([_related_text(item) for item in related.order_by("pk")])
+        # sorted in Python, not order_by(): a prefetched relation stays prefetched
+        items = sorted(related.all(), key=lambda item: item.pk)
+        return _document_text([_related_text(item) for item in items])
     return _document_text(
         [_field_text(related, name) for name in text_fields(type(related))]
     )

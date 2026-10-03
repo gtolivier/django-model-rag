@@ -9,6 +9,9 @@ from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
 from django_model_rag.registry import rag
 
+# iterator() prefetches per chunk: this many instances share one query
+_CHUNK_SIZE = 1000
+
 
 def _followed_foreign_keys(
     model: type[Model], extractor: BaseExtractor[Any]
@@ -24,16 +27,33 @@ def _followed_foreign_keys(
     ]
 
 
+def _followed_reverse_foreign_keys(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> list[str]:
+    """List the accessors of the reverse foreign keys ``extractor`` follows."""
+    followed = getattr(extractor, "follow", ())
+    return [
+        accessor
+        for relation in model._meta.related_objects
+        if relation.one_to_many
+        and (accessor := relation.get_accessor_name()) in followed
+        and accessor is not None
+    ]
+
+
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    The followed foreign keys come with each instance, in the same query.
+    The followed foreign keys come with each instance, in the same query, and
+    the followed reverse foreign keys in one more query for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
     # select_related() without a field is deprecated
     if foreign_keys := _followed_foreign_keys(model, extractor):
         queryset = queryset.select_related(*foreign_keys)
-    return queryset.iterator()
+    if reverse_keys := _followed_reverse_foreign_keys(model, extractor):
+        queryset = queryset.prefetch_related(*reverse_keys)
+    return queryset.iterator(chunk_size=_CHUNK_SIZE)
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
