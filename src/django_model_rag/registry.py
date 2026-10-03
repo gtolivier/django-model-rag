@@ -4,6 +4,7 @@ import inspect
 from collections.abc import Callable
 from typing import Any, TypeAlias
 
+from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
@@ -60,6 +61,12 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
         ImproperlyConfigured: a name to follow is not a relation accessor, it
             is given twice, or its related model has no text field.
     """
+    if not apps.models_ready:
+        message = (
+            f"{model.__name__}: cannot follow relations while models are loading; "
+            "register from a rag.py module imported in ready()"
+        )
+        raise ImproperlyConfigured(message)
     accessors = {
         field.get_accessor_name() if field.auto_created else field.name: field  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
         for field in model._meta.get_fields()
