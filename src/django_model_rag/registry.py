@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Model
+from django.db.models import CharField, Model, TextField
 
 from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
 
@@ -130,11 +130,12 @@ class Registry:
         self,
         model: type[Model],
         *,
-        fields: FieldNames,
+        fields: FieldNames | None = None,
         title_field: str | None = None,
     ) -> None:
         """Register ``model`` with the fields to extract.
 
+        Without ``fields``, the model's text fields are extracted.
         ``title_field`` names the field whose value is the document title.
 
         Raises:
@@ -145,6 +146,12 @@ class Registry:
                 relation.
         """
         self._require_unregistered(model)
+        if fields is None:
+            fields = [
+                field.name
+                for field in model._meta.get_fields()  # Django's public meta API
+                if isinstance(field, CharField | TextField)
+            ]
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
