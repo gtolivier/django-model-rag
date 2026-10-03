@@ -56,7 +56,11 @@ def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
     if not names:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
-    return [name for name in names if name not in exclude]
+    guessed = [name for name in names if name not in exclude]
+    if not guessed:
+        message = f"{model.__name__} has no text field left to extract"
+        raise ImproperlyConfigured(message)
+    return guessed
 
 
 def _require_content_field(model: type[Model], name: str) -> None:
@@ -100,7 +104,7 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
     """
     _require_field_names(model, fields, "fields")
     if not fields:
-        message = f"{model.__name__} declares no text field"
+        message = f"{model.__name__} declares no field"
         raise ImproperlyConfigured(message)
     seen: set[str] = set()
     for name in fields:
