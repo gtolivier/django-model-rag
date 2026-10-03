@@ -177,8 +177,8 @@ class Registry:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: ``fields`` is not a list or a tuple, no
                 field is declared, a field is declared twice, or a field
-                (``title_field`` included) is not one of the model's or is a
-                relation.
+                (``title_field`` and ``exclude`` included) is not one of the
+                model's or is a relation.
         """
         self._require_unregistered(model)
         if fields is None:
