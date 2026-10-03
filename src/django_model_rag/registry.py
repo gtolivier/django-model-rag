@@ -13,6 +13,15 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
+def _text_fields(model: type[Model]) -> list[str]:
+    """List the names of ``model``'s text fields, in declaration order."""
+    return [
+        field.name
+        for field in model._meta.get_fields()  # Django's public meta API
+        if isinstance(field, CharField | TextField)
+    ]
+
+
 def _require_content_field(model: type[Model], name: str) -> None:
     """Fail unless ``model`` has a non-relation field called ``name``.
 
@@ -147,11 +156,7 @@ class Registry:
         """
         self._require_unregistered(model)
         if fields is None:
-            fields = [
-                field.name
-                for field in model._meta.get_fields()  # Django's public meta API
-                if isinstance(field, CharField | TextField)
-            ]
+            fields = _text_fields(model)
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
