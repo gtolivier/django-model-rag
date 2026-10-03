@@ -101,6 +101,13 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
+def _related_text(related: Model) -> str:
+    """Join the texts of the text fields of ``related``, title-like ones first."""
+    return _document_text(
+        [_field_text(related, name) for name in text_fields(type(related))]
+    )
+
+
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
@@ -122,10 +129,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         """Build the document of ``instance``, or nothing when its fields are blank."""
         field_texts = [_field_text(instance, name) for name in self.fields]
         followed_texts = [
-            _document_text(
-                [_field_text(related, field) for field in text_fields(type(related))]
-            )
-            for related in (getattr(instance, name) for name in self.follow)
+            _related_text(getattr(instance, name)) for name in self.follow
         ]
         text = _document_text(field_texts + followed_texts)
         if not text:
