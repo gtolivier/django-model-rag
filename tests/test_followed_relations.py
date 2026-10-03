@@ -187,6 +187,28 @@ def test_followed_many_to_many_appends_the_related_texts_in_pk_order() -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_reverse_many_to_many_appends_the_related_texts_in_pk_order() -> None:
+    # The courses are linked in an order other than their primary keys', so
+    # neither the link order nor the reversed selects can give pk order.
+    topic = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    furniture = Course.objects.create(title="Furniture making")
+    restoration = Course.objects.create(title="Antique restoration")
+    topic.courses.add(furniture, restoration, basics)
+    rag.register(Topic, follow=["courses"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Joinery\n\nJoints and finishes.\n\nWoodworking basics"
+        "\n\nFurniture making\n\nAntique restoration"
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_relations_append_their_texts_in_the_order_follow_names_them() -> None:
     # TextPlugin is declared before AccordionItem: the order of ``follow``
     # differs from the declaration order of the related models.
