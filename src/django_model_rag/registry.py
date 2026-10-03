@@ -193,6 +193,11 @@ class Registry:
                 ``fields``.
         """
         self._require_unregistered(model)
+        if not isinstance(exclude, list | tuple):
+            message = (
+                f"{model.__name__}: exclude must be a list or a tuple of field names"
+            )
+            raise ImproperlyConfigured(message)
         _require_fields_or_exclude(fields, exclude)
         if fields is None:
             for name in exclude:
