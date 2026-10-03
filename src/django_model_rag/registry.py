@@ -62,7 +62,9 @@ def _require_extractor_class(extractor_class: type) -> None:
         ImproperlyConfigured: ``extractor_class`` does not derive from
             ``BaseExtractor``, or does not implement ``extract``.
     """
-    if not issubclass(extractor_class, BaseExtractor):
+    if not inspect.isclass(extractor_class) or not issubclass(
+        extractor_class, BaseExtractor
+    ):
         message = f"{extractor_class.__name__} must derive from BaseExtractor"
         raise ImproperlyConfigured(message)
     if inspect.isabstract(extractor_class):
