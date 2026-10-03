@@ -124,3 +124,16 @@ class Panel(models.Model):
     heading = models.CharField(max_length=100)
     name = models.CharField(max_length=100)
     title = models.CharField(max_length=200)
+
+
+# --- No text at all -----------------------------------------------------
+# Only a number, a date, a boolean and a relation: nothing to guess as text.
+
+
+class StockLevel(models.Model):
+    quantity = models.IntegerField()
+    counted_on = models.DateField()
+    in_stock = models.BooleanField(default=True)
+    product = models.ForeignKey(
+        Product, related_name="stock_levels", on_delete=models.CASCADE
+    )

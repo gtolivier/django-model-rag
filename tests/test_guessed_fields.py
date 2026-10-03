@@ -13,6 +13,7 @@ from tests.testapp.models import (
     Panel,
     Product,
     SlugHolder,
+    StockLevel,
     TextPlugin,
     URLHolder,
 )
@@ -146,6 +147,13 @@ def test_excluding_a_single_field_name_instead_of_a_list_fails() -> None:
         # A bare string is the slip under test: the type checker rightly
         # rejects it.
         rag.register(Note, exclude="title")  # type: ignore[arg-type]
+
+
+def test_model_without_text_field_registered_without_fields_names_it_in_the_error() -> (
+    None
+):
+    with pytest.raises(ImproperlyConfigured, match=r"\bStockLevel\b"):
+        rag.register(StockLevel)
 
 
 def test_exclude_cannot_be_combined_with_declared_fields() -> None:
