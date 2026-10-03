@@ -305,6 +305,21 @@ def test_registering_a_class_not_derived_from_base_extractor_fails() -> None:
         rag.register_extractor(Category)(StandaloneCategoryExtractor)  # type: ignore[arg-type]
 
 
+def test_registering_a_function_instead_of_a_class_fails_naming_it() -> None:
+    def extract_category(instance: Category) -> NormalizedDocument:
+        return NormalizedDocument(
+            text=f"Everything filed under {instance.name}.",
+            source_app_label="testapp",
+            source_model="category",
+            source_pk=instance.pk,
+        )
+
+    with pytest.raises(ImproperlyConfigured, match="extract_category"):
+        # A plain function instead of an extractor class is the slip under
+        # test: the type checker rightly rejects it.
+        rag.register_extractor(Category)(extract_category)  # type: ignore[arg-type]
+
+
 def test_registering_an_extractor_without_extract_fails() -> None:
     class UnfinishedCategoryExtractor(BaseExtractor[Category]):
         pass
