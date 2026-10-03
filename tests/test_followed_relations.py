@@ -1,4 +1,5 @@
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
@@ -261,3 +262,20 @@ def test_followed_relations_append_their_texts_in_the_order_follow_names_them() 
     assert [document.text for document in documents] == [
         "About us\n\nOpening hours\n\nVisits on Saturdays.\n\nWe build chairs by hand."
     ]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param("categroy", id="unknown-name"),
+        # Only one level is followed: a lookup path is not a relation accessor.
+        pytest.param("category__name", id="lookup-path"),
+    ],
+)
+def test_following_a_name_that_is_not_a_relation_accessor_fails_at_registration(
+    name: str,
+) -> None:
+    with pytest.raises(
+        ImproperlyConfigured, match=rf"\b{name}\b.*\bfollow\b|\bfollow\b.*\b{name}\b"
+    ):
+        rag.register(Product, follow=[name])
