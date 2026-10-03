@@ -135,7 +135,7 @@ def _require_fields_or_exclude(
         ImproperlyConfigured: ``exclude`` is combined with declared fields.
     """
     if fields is not None and exclude:
-        message = f"{model.__name__}: exclude cannot be combined with declared fields."
+        message = f"{model.__name__}: exclude cannot be combined with declared fields"
         raise ImproperlyConfigured(message)
 
 
