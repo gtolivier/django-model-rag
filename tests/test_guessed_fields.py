@@ -164,6 +164,11 @@ def test_model_with_only_char_field_subclasses_registered_without_fields_names_i
         rag.register(ContactCard)
 
 
+def test_excluding_every_guessed_field_names_the_model_in_the_error() -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bNote\b"):
+        rag.register(Note, exclude=["body", "title"])
+
+
 def test_exclude_cannot_be_combined_with_declared_fields() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"fields.*exclude|exclude.*fields"):
         rag.register(Note, fields=["body"], exclude=["title"])
