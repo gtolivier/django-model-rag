@@ -223,7 +223,11 @@ class Registry:
         _require_fields_or_exclude(fields, exclude)
         if fields is None:
             _require_excluded_fields(model, exclude)
-            fields = [name for name in _text_fields(model) if name not in exclude]
+            guessed = _text_fields(model)
+            if not guessed:
+                message = f"{model.__name__} has no text field to guess"
+                raise ImproperlyConfigured(message)
+            fields = [name for name in guessed if name not in exclude]
         _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
