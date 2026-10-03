@@ -98,6 +98,20 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
         _require_content_field(model, name)
 
 
+def _require_excluded_fields(model: type[Model], exclude: FieldNames) -> None:
+    """Fail unless ``exclude`` names each of ``model``'s content fields once.
+
+    Raises:
+        ImproperlyConfigured: a field in ``exclude`` is not one of
+            ``model``'s or is a relation, or it is excluded twice.
+    """
+    for name in exclude:
+        _require_content_field(model, name)
+        if exclude.count(name) > 1:
+            message = f"{model.__name__}: field {name!r} is excluded twice"
+            raise ImproperlyConfigured(message)
+
+
 def _require_fields_or_exclude(fields: FieldNames | None, exclude: FieldNames) -> None:
     """Fail if both ``fields`` and ``exclude`` are given.
 
@@ -199,20 +213,16 @@ class Registry:
         Raises:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: ``fields`` or ``exclude`` is not a list or
-                a tuple, no field is declared, a field is declared twice, or a field
-                (``title_field`` and ``exclude`` included) is not one of the
-                model's or is a relation, or ``exclude`` is combined with
-                ``fields``.
+                a tuple, no field is declared, a field is declared or excluded
+                twice, or a field (``title_field`` and ``exclude`` included) is
+                not one of the model's or is a relation, or ``exclude`` is
+                combined with ``fields``.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
         _require_fields_or_exclude(fields, exclude)
         if fields is None:
-            for name in exclude:
-                _require_content_field(model, name)
-                if exclude.count(name) > 1:
-                    message = f"{model.__name__}: field {name!r} is excluded twice"
-                    raise ImproperlyConfigured(message)
+            _require_excluded_fields(model, exclude)
             fields = [name for name in _text_fields(model) if name not in exclude]
         _require_content_fields(model, fields)
         if title_field is not None:
