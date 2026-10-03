@@ -59,7 +59,8 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     """Iterate over ``model``'s instances, in primary key order.
 
     The followed foreign keys come with each instance, in the same query, and
-    the followed reverse foreign keys in one more query for all the instances.
+    the followed reverse foreign keys and many-to-many fields in one more query
+    each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
     # select_related() without a field is deprecated
