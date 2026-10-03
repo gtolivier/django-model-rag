@@ -2,14 +2,12 @@
 
 import inspect
 from collections.abc import Callable
-from typing import Any, TypeAlias, TypeVar
+from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 
-from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor
-
-M = TypeVar("M", bound=Model)
+from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
