@@ -86,6 +86,17 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
         _require_content_field(model, name)
 
 
+def _require_fields_or_exclude(fields: FieldNames | None, exclude: FieldNames) -> None:
+    """Fail if both ``fields`` and ``exclude`` are given.
+
+    Raises:
+        ImproperlyConfigured: ``exclude`` is combined with declared fields.
+    """
+    if fields is not None and exclude:
+        message = "exclude cannot be combined with declared fields."
+        raise ImproperlyConfigured(message)
+
+
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
 
@@ -178,12 +189,11 @@ class Registry:
             ImproperlyConfigured: ``fields`` is not a list or a tuple, no
                 field is declared, a field is declared twice, or a field
                 (``title_field`` and ``exclude`` included) is not one of the
-                model's or is a relation.
+                model's or is a relation, or ``exclude`` is combined with
+                ``fields``.
         """
         self._require_unregistered(model)
-        if fields is not None and exclude:
-            msg = "exclude cannot be combined with declared fields."
-            raise ImproperlyConfigured(msg)
+        _require_fields_or_exclude(fields, exclude)
         if fields is None:
             for name in exclude:
                 _require_content_field(model, name)
