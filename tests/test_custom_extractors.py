@@ -236,6 +236,21 @@ def test_extractor_returning_a_string_fails_naming_the_extractor() -> None:
         SyncPipeline().run()
 
 
+@pytest.mark.django_db
+def test_extractor_returning_a_non_iterable_fails_naming_the_extractor() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class CountingCategoryExtractor(BaseExtractor[Category]):
+        # A number instead of a document is the slip under test: the type
+        # checker rightly rejects it.
+        def extract(self, instance: Category) -> int:  # type: ignore[override]
+            return instance.pk
+
+    with pytest.raises(TypeError, match="CountingCategoryExtractor"):
+        SyncPipeline().run()
+
+
 def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
     class CategoryExtractor(BaseExtractor[Category]):
         def extract(self, instance: Category) -> NormalizedDocument:
