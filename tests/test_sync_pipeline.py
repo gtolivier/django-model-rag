@@ -413,6 +413,15 @@ def test_registering_a_model_without_any_declared_field_fails() -> None:
         rag.register(Product, fields=[])
 
 
+def test_registering_no_declared_field_names_the_model_not_text_fields() -> None:
+    # Any non-relation field can be declared, not only a text field: the
+    # "no text field" wording belongs to the guessing error.
+    with pytest.raises(ImproperlyConfigured, match=r"\bProduct\b") as error:
+        rag.register(Product, fields=[])
+
+    assert "text field" not in str(error.value)
+
+
 def test_registering_a_field_declared_twice_names_it_in_the_error() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bname\b"):
         rag.register(Product, fields=["name", "description", "name"])

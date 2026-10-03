@@ -5,12 +5,69 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Model
+from django.db.models import CharField, Field, Model, TextField
 
 from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
+
+
+_TITLE_LIKE_NAMES = ("title", "name", "heading", "label")
+"""The names of the guessed fields that come first, in this order."""
+
+
+def _title_rank(name: str) -> int:
+    """Rank ``name``: title-like names first, in order, then the others."""
+    if name in _TITLE_LIKE_NAMES:
+        return _TITLE_LIKE_NAMES.index(name)
+    return len(_TITLE_LIKE_NAMES)
+
+
+# quoted: Django's Field is generic for the type checker only, and before
+# Python 3.14 an annotation is evaluated when the function is defined
+def _is_text_field(field: "Field[Any, Any]") -> bool:
+    """Tell whether ``field`` holds text content."""
+    # a primary key is an identifier, not content
+    if field.primary_key:
+        return False
+    # a CharField subclass is a kind of field of its own, such as a code,
+    # an identifier, an address or a link, not content
+    return type(field) is CharField or isinstance(field, TextField)
+
+
+def _text_fields(model: type[Model]) -> list[str]:
+    """List the names of ``model``'s text fields, title-like names first.
+
+    The others follow in declaration order.
+    """
+    names = [
+        field.name
+        # unlike get_fields(), concrete_fields needs no loaded app registry,
+        # so a models.py can register its models while Django loads the apps;
+        # it is not in the documented meta API, but Django itself relies on it
+        for field in model._meta.concrete_fields
+        if _is_text_field(field)
+    ]
+    return sorted(names, key=_title_rank)  # stable sort
+
+
+def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
+    """List ``model``'s text fields, except those named in ``exclude``.
+
+    Raises:
+        ImproperlyConfigured: ``model`` has no text field, or ``exclude``
+            names all of them.
+    """
+    names = _text_fields(model)
+    if not names:
+        message = f"{model.__name__} has no text field to guess"
+        raise ImproperlyConfigured(message)
+    guessed = [name for name in names if name not in exclude]
+    if not guessed:
+        message = f"{model.__name__} has no text field left to extract"
+        raise ImproperlyConfigured(message)
+    return guessed
 
 
 def _require_content_field(model: type[Model], name: str) -> None:
@@ -30,6 +87,20 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _require_field_names(model: type[Model], names: object, argument: str) -> None:
+    """Fail unless ``names``, given as ``argument``, is a list or a tuple.
+
+    Raises:
+        ImproperlyConfigured: ``names`` is not a list or a tuple (a bare
+            string or a set, say).
+    """
+    if not isinstance(names, list | tuple):
+        message = (
+            f"{model.__name__}: {argument} must be a list or a tuple of field names"
+        )
+        raise ImproperlyConfigured(message)
+
+
 def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
     """Fail unless ``fields`` is a non-empty list or tuple of content fields.
 
@@ -38,19 +109,44 @@ def _require_content_fields(model: type[Model], fields: FieldNames) -> None:
             string or a set, say), it is empty, a field is declared twice,
             or a field is not one of ``model``'s or is a relation.
     """
-    if not isinstance(fields, list | tuple):
-        message = f"{model.__name__}: fields must be a list or a tuple of field names"
-        raise ImproperlyConfigured(message)
+    _require_field_names(model, fields, "fields")
     if not fields:
         message = f"{model.__name__} declares no field"
         raise ImproperlyConfigured(message)
+    _require_distinct_content_fields(model, fields, "declared")
+
+
+def _require_distinct_content_fields(
+    model: type[Model], names: FieldNames, verb: str
+) -> None:
+    """Fail unless ``names`` names each of ``model``'s content fields once.
+
+    ``verb`` says what the names are for, in the error: declared, excluded.
+
+    Raises:
+        ImproperlyConfigured: a name is not one of ``model``'s fields or is a
+            relation, or it is given twice.
+    """
     seen: set[str] = set()
-    for name in fields:
+    for name in names:
         if name in seen:
-            message = f"{model.__name__}: field {name!r} is declared twice"
+            message = f"{model.__name__}: field {name!r} is {verb} twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
         _require_content_field(model, name)
+
+
+def _require_fields_or_exclude(
+    model: type[Model], fields: FieldNames | None, exclude: FieldNames
+) -> None:
+    """Fail if both ``fields`` and ``exclude`` are given.
+
+    Raises:
+        ImproperlyConfigured: ``exclude`` is combined with declared fields.
+    """
+    if fields is not None and exclude:
+        message = f"{model.__name__}: exclude cannot be combined with declared fields"
+        raise ImproperlyConfigured(message)
 
 
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
@@ -130,22 +226,33 @@ class Registry:
         self,
         model: type[Model],
         *,
-        fields: FieldNames,
+        fields: FieldNames | None = None,
         title_field: str | None = None,
+        exclude: FieldNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
 
+        Without ``fields``, the model's text fields are extracted, except
+        those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields`` is not a list or a tuple, no
-                field is declared, a field is declared twice, or a field
-                (``title_field`` included) is not one of the model's or is a
-                relation.
+            ImproperlyConfigured: ``fields`` or ``exclude`` is not a list or
+                a tuple, no field is declared, a field is declared or excluded
+                twice, or a field (``title_field`` and ``exclude`` included) is
+                not one of the model's or is a relation, ``exclude`` is
+                combined with ``fields``, or, without ``fields``, the model
+                has no text field or ``exclude`` names all of them.
         """
         self._require_unregistered(model)
-        _require_content_fields(model, fields)
+        _require_field_names(model, exclude, "exclude")
+        _require_fields_or_exclude(model, fields, exclude)
+        if fields is None:
+            _require_distinct_content_fields(model, exclude, "excluded")
+            fields = _guessed_fields(model, exclude)
+        else:
+            _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
         declared = tuple(fields)

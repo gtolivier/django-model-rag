@@ -67,3 +67,120 @@ class AccordionItem(models.Model):
     )
     title = models.CharField(max_length=200)
     body = models.TextField()
+
+
+# --- Third-party field: a subclass of a Django text field ---------------
+# A rich-text package typically ships its field as a TextField subclass.
+
+
+# type-arg: django-stubs makes the field classes generic, but Django's runtime
+# classes are not subscriptable, so the base cannot take the type arguments.
+class RichTextField(models.TextField):  # type: ignore[type-arg]
+    """Stand in for a third-party rich-text field, without the dependency."""
+
+
+class Article(models.Model):
+    body = RichTextField()
+
+
+# --- CharField subclasses held under neutral names ----------------------
+# Each model has a plain CharField and one CharField subclass whose name says
+# nothing about its type: only the type can tell the two fields apart.
+
+
+class EmailHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = models.EmailField()
+
+
+class URLHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = models.URLField()
+
+
+class SlugHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = models.SlugField()
+
+
+# --- A project's own CharField subclass ---------------------------------
+# A project or a third-party app may define its own CharField subclass for a
+# code or an identifier, such as a country code.
+
+
+# type-arg: django-stubs makes the field classes generic, but Django's runtime
+# classes are not subscriptable, so the base cannot take the type arguments.
+class CodeField(models.CharField):  # type: ignore[type-arg]
+    """Stand in for a project's code field, such as a country code."""
+
+
+class CodeHolder(models.Model):
+    label = models.CharField(max_length=100)
+    extra = CodeField(max_length=2)
+
+
+# --- A plain CharField as the primary key --------------------------------
+# A code such as "FR" held in a plain CharField that is the primary key: only
+# its being the primary key says it is an identifier, not content.
+
+
+class Country(models.Model):
+    code = models.CharField(max_length=2, primary_key=True)
+    name = models.CharField(max_length=100)
+
+
+# --- A plain CharField the application fills in -------------------------
+# A summary held in a plain CharField with editable=False: the application
+# sets it, not the admin form, yet it is content all the same.
+
+
+class Digest(models.Model):
+    title = models.CharField(max_length=200)
+    summary = models.CharField(max_length=200, editable=False)
+
+
+# --- A title declared last ---------------------------------------------
+# The title-like field comes after the body in declaration order: only its
+# name can put it first.
+
+
+class Note(models.Model):
+    body = models.TextField()
+    title = models.CharField(max_length=200)
+
+
+# --- Title-like fields declared in reverse ------------------------------
+# Every title-like name, declared after the body and in the reverse of the
+# order they should come in: only a fixed order of names can sort them.
+
+
+class Panel(models.Model):
+    body = models.TextField()
+    label = models.CharField(max_length=100)
+    heading = models.CharField(max_length=100)
+    name = models.CharField(max_length=100)
+    title = models.CharField(max_length=200)
+
+
+# --- No text at all -----------------------------------------------------
+# Only a number, a date, a boolean and a relation: nothing to guess as text.
+
+
+class StockLevel(models.Model):
+    quantity = models.IntegerField()
+    counted_on = models.DateField()
+    in_stock = models.BooleanField(default=True)
+    product = models.ForeignKey(
+        Product, related_name="stock_levels", on_delete=models.CASCADE
+    )
+
+
+# --- Only CharField subclasses -----------------------------------------
+# A slug, an e-mail address and a URL, but no plain CharField or TextField:
+# text-ish fields, none of them content.
+
+
+class ContactCard(models.Model):
+    handle = models.SlugField()
+    email = models.EmailField()
+    website = models.URLField()
