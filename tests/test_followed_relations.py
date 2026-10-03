@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Product
+from tests.testapp.models import Category, Lesson, Product, Topic
 
 
 @pytest.mark.django_db
@@ -48,4 +48,19 @@ def test_followed_foreign_key_appends_each_instance_its_own_related_text() -> No
     assert [document.text for document in documents] == [
         "Chair\n\nAdjustable.\n\nNew\n\nFurniture",
         "Lamp\n\nDimmable.\n\nNew\n\nLighting",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_foreign_key_brings_the_guessed_text_fields_of_the_related() -> None:
+    topic = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    Lesson.objects.create(title="Dovetails", topic=topic)
+    rag.register(Lesson, follow=["topic"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Dovetails\n\nWoodworking\n\nJoints and finishes."
     ]

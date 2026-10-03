@@ -184,3 +184,23 @@ class ContactCard(models.Model):
     handle = models.SlugField()
     email = models.EmailField()
     website = models.URLField()
+
+
+# --- A related model with several text fields ---------------------------
+# A Lesson points to a Topic whose title comes after its summary in
+# declaration order, next to a slug; the Topic's string form is its slug,
+# not its text.
+
+
+class Topic(models.Model):
+    summary = models.TextField()
+    title = models.CharField(max_length=200)
+    slug = models.SlugField()
+
+    def __str__(self) -> str:
+        return self.slug
+
+
+class Lesson(models.Model):
+    title = models.CharField(max_length=200)
+    topic = models.ForeignKey(Topic, related_name="lessons", on_delete=models.CASCADE)
