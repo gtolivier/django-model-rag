@@ -111,3 +111,16 @@ class SlugHolder(models.Model):
 class Note(models.Model):
     body = models.TextField()
     title = models.CharField(max_length=200)
+
+
+# --- Title-like fields declared in reverse ------------------------------
+# Every title-like name, declared after the body and in the reverse of the
+# order they should come in: only a fixed order of names can sort them.
+
+
+class Panel(models.Model):
+    body = models.TextField()
+    label = models.CharField(max_length=100)
+    heading = models.CharField(max_length=100)
+    name = models.CharField(max_length=100)
+    title = models.CharField(max_length=200)

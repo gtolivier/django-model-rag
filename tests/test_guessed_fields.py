@@ -9,6 +9,7 @@ from tests.testapp.models import (
     EmailHolder,
     Note,
     Page,
+    Panel,
     Product,
     SlugHolder,
     TextPlugin,
@@ -61,6 +62,25 @@ def test_model_registered_without_fields_puts_its_title_first() -> None:
 
     assert [document.text for document in documents] == [
         "Opening hours\n\nMonday to Friday."
+    ]
+
+
+@pytest.mark.django_db
+def test_model_registered_without_fields_puts_its_title_like_fields_first() -> None:
+    Panel.objects.create(
+        body="Monday to Friday.",
+        label="Hours",
+        heading="When we are open",
+        name="opening-hours",
+        title="Opening hours",
+    )
+    rag.register(Panel)
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Opening hours\n\nopening-hours\n\nWhen we are open\n\nHours"
+        "\n\nMonday to Friday."
     ]
 
 
