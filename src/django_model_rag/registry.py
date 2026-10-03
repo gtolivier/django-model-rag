@@ -5,14 +5,7 @@ from collections.abc import Callable
 from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import (
-    CharField,
-    EmailField,
-    Model,
-    SlugField,
-    TextField,
-    URLField,
-)
+from django.db.models import CharField, Model, TextField
 
 from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
 
@@ -39,9 +32,9 @@ def _text_fields(model: type[Model]) -> list[str]:
     names = [
         field.name
         for field in model._meta.get_fields()  # Django's public meta API
-        if isinstance(field, CharField | TextField)
+        # a CharField subclass is a kind of field of its own, such as a code,
         # an identifier, an address or a link, not content
-        and not isinstance(field, SlugField | EmailField | URLField)
+        if type(field) is CharField or isinstance(field, TextField)
     ]
     return sorted(names, key=_title_rank)  # stable sort
 
