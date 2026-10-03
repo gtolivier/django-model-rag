@@ -80,7 +80,10 @@ refactoring, not from the prototype.
   Once this feature settles everything the pipeline reads from an instance,
   reconsider loading only those columns (`QuerySet.only()`): until then,
   each attribute read outside the loaded ones would cost a query per
-  instance.
+  instance. Likewise for custom extractors that read relations: an
+  optional hook to shape their queryset (`select_related`,
+  `prefetch_related`, iterated with `iterator(chunk_size=...)`) would avoid
+  a query per instance.
 - [ ] **7. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.
@@ -123,7 +126,10 @@ reference.
   django-minimal-rag's handling of updated and orphaned chunks. Open: text
   that comes from another model — through `follow`, or a parent that a
   custom extractor reads — goes stale when that model changes, unless the
-  dependent instances are found and re-extracted.
+  dependent instances are found and re-extracted. Also open: a proxy model
+  or a multi-table child of a registered model sends its own class as the
+  signal's sender, and `run_instance` looks the exact class up, so such an
+  instance is not registered today.
 
 ## Not planned here
 
