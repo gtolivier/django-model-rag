@@ -1,6 +1,7 @@
 import subprocess
 import sys
 import textwrap
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from tests.testapp.models import (
     Product,
     Remark,
     Review,
+    StockLevel,
     TextPlugin,
     Topic,
     Workshop,
@@ -150,6 +152,30 @@ def test_followed_foreign_key_brings_the_label_of_a_related_field_with_choices()
     assert [document.text for document in documents] == [
         "Still solid\n\nHammer\n\nDrives nails.\n\nSecond-hand"
     ]
+
+
+@pytest.mark.django_db
+def test_model_without_text_field_registers_when_a_followed_relation_brings_text() -> (
+    None
+):
+    # StockLevel has only a number, a date and a boolean: registered alone it
+    # is refused, but the followed product gives its document a text.
+    category = Category.objects.create(name="Furniture")
+    product = Product.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        price="49.90",
+        category=category,
+        condition="new",
+    )
+    StockLevel.objects.create(
+        quantity=12, counted_on=date(2026, 3, 1), in_stock=True, product=product
+    )
+    rag.register(StockLevel, follow=["product"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Chair\n\nAdjustable.\n\nNew"]
 
 
 @pytest.mark.django_db
