@@ -69,6 +69,31 @@ def test_registered_extractor_builds_one_document_per_instance_in_pk_order() -> 
 
 
 @pytest.mark.django_db
+def test_each_run_starts_with_a_fresh_extractor() -> None:
+    Category.objects.create(name="Tools")
+    Category.objects.create(name="Garden")
+
+    @rag.register_extractor(Category)
+    class NumberingCategoryExtractor(BaseExtractor[Category]):
+        # State kept on self during a run is what is under test: an extractor
+        # shared across runs would keep counting from the first run's total.
+        def __init__(self) -> None:
+            self.built = 0
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            self.built += 1
+            return self.build_document(
+                instance, text=f"Category {self.built}: {instance.name}."
+            )
+
+    first_run = [document.text for document in SyncPipeline().run()]
+    second_run = [document.text for document in SyncPipeline().run()]
+
+    assert first_run == ["Category 1: Tools.", "Category 2: Garden."]
+    assert second_run == first_run
+
+
+@pytest.mark.django_db
 def test_instance_the_extractor_returns_none_for_produces_no_document() -> None:
     tools = Category.objects.create(name="Tools")
     Category.objects.create(name="   ")
