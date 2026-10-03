@@ -159,6 +159,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
     def _title(self, instance: Model, field_texts: list[str]) -> str:
         """Take the text of the title field, or the first of ``field_texts``.
 
+        Without either, ``str(instance)`` gives the title: a model that only
+        follows relations has no own text to take it from.
+
         ``field_texts`` are the texts of the declared fields, in order: a title
         field among them is not read a second time.
         """
