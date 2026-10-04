@@ -80,7 +80,7 @@ def _require_content_field(model: type[Model], path: str) -> None:
     """
     *steps, field_name = path.split(LOOKUP_SEP)
     if steps:
-        _require_models_ready(model)
+        _require_models_ready(model, f"resolve the lookup path {path!r}")
     target = model
     try:
         for step in steps:
@@ -97,8 +97,8 @@ def _require_content_field(model: type[Model], path: str) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _require_models_ready(model: type[Model]) -> None:
-    """Fail unless every model is loaded, as following ``model``'s relations needs.
+def _require_models_ready(model: type[Model], action: str) -> None:
+    """Fail unless every model is loaded, as ``action`` on ``model`` needs.
 
     Raises:
         ImproperlyConfigured: models are still loading (``model`` is
@@ -106,7 +106,7 @@ def _require_models_ready(model: type[Model]) -> None:
     """
     if not apps.models_ready:
         message = (
-            f"{model.__name__}: cannot follow relations while models are loading; "
+            f"{model.__name__}: cannot {action} while models are loading; "
             "register from a rag.py module imported in AppConfig.ready()"
         )
         raise ImproperlyConfigured(message)
@@ -366,7 +366,7 @@ class Registry:
         if title_field is not None:
             _require_content_field(model, title_field)
         if follow:
-            _require_models_ready(model)
+            _require_models_ready(model, "follow relations")
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
