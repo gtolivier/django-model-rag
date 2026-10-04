@@ -239,7 +239,10 @@ reference.
   model's run ends with a `prune`, which removes what the signals missed: an
   instance deleted by raw SQL, with the signals off, or before the package
   was installed. Open: the documents of a model that is no longer
-  registered are pruned by no run. Open, to settle by this feature at the
+  registered are pruned by no run. Open: a default manager that returns
+  subclass instances (django-polymorphic, `InheritanceManager`) keys their
+  documents under the subclass's label, while the model is pruned under its
+  own, so they are pruned by no run. Open, to settle by this feature at the
   latest: does the package become a Django app that autodiscovers each
   app's `rag.py`, as `django.contrib.admin` does with `admin.py`? The
   command only sees the models registered by the time it runs; until then,
@@ -254,7 +257,13 @@ reference.
   dependent instances are found and re-extracted. Also open: a proxy model
   or a multi-table child of a registered model sends its own class as the
   signal's sender, and `run_instance` looks the exact class up, so such an
-  instance is not registered today.
+  instance is not registered today. Open: a signal that fires while the
+  command runs — the run's final `prune` deletes an instance created
+  since the run read the table, and a chunk read before an update puts the
+  old text back. Open: `run_instance` does not go through
+  `get_queryset()`, so a save of an instance that hook filters out (a
+  draft, say) puts its documents in the output until the next run prunes
+  them.
 
 ## Not planned here
 
