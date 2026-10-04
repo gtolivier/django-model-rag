@@ -118,40 +118,43 @@ def _sorted_relations(
     return selected, prefetched
 
 
-def _prefetch(model: type[Model], accessor: str) -> "str | Prefetch[Any]":
-    """Return what to give prefetch_related() for the relation ``accessor``.
+def _link_back_fields(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> list[str] | None:
+    """Return the fields of the related model that link it back through ``relation``.
 
-    A reverse foreign key loads only its text columns and its link back.
+    These are the foreign key of a reverse foreign key, and the object_id and
+    content_type of a generic relation; None for any other relation.
     """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported from models modules
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
-    relation = relations_by_accessor(model).get(accessor)
     if isinstance(relation, ForeignObjectRel) and relation.one_to_many:
-        related = relation.related_model
-        # for the type checker only: a reverse relation leads to a model
-        if isinstance(related, type):
-            return Prefetch(
-                accessor,
-                queryset=related._default_manager.only(
-                    "pk", *text_fields(related), relation.field.name
-                ),
-            )
+        return [relation.field.name]
     if isinstance(relation, GenericRelation):
-        related = relation.related_model
-        # for the type checker only: a generic relation leads to a model
-        if isinstance(related, type):
-            return Prefetch(
-                accessor,
-                queryset=related._default_manager.only(
-                    "pk",
-                    *text_fields(related),
-                    relation.object_id_field_name,
-                    relation.content_type_field_name,
-                ),
-            )
-    return accessor
+        return [relation.object_id_field_name, relation.content_type_field_name]
+    return None
+
+
+def _prefetch(model: type[Model], accessor: str) -> "str | Prefetch[Any]":
+    """Return what to give prefetch_related() for the relation ``accessor``.
+
+    A reverse foreign key or a generic relation loads only its text columns and
+    the fields that link it back.
+    """
+    relation = relations_by_accessor(model).get(accessor)
+    if relation is None:
+        return accessor
+    link_back = _link_back_fields(relation)
+    related = relation.related_model
+    # for the type checker only: a relation that links back leads to a model
+    if link_back is None or not isinstance(related, type):
+        return accessor
+    return Prefetch(
+        accessor,
+        queryset=related._default_manager.only("pk", *text_fields(related), *link_back),
+    )
 
 
 def _selected_run(model: type[Model], path: str) -> list[PathLink]:
