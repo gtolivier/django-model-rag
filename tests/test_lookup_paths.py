@@ -1,7 +1,14 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Product, Review, Workshop
+from tests.testapp.models import (
+    Category,
+    Product,
+    Review,
+    Supplier,
+    SupplierProfile,
+    Workshop,
+)
 
 
 def _create_product(*, name: str, category_name: str) -> Product:
@@ -88,3 +95,16 @@ def test_lookup_path_through_a_null_foreign_key_adds_nothing() -> None:
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Pottery"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_crossing_a_reverse_one_to_one_by_its_query_name() -> None:
+    supplier = Supplier.objects.create(name="Acme")
+    SupplierProfile.objects.create(supplier=supplier, body="Fine tools since 1920")
+    rag.register(Supplier, fields=["name", "supplier_profile__body"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Acme\n\nFine tools since 1920"
+    ]
