@@ -2,8 +2,9 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection, Iterable, Iterator, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import CharField, Field, Model, TextField
@@ -84,7 +85,8 @@ class BaseExtractor(ABC, Generic[M]):
             url=url,
             language=language,
             metadata=metadata or {},
-            permissions=permissions,
+            # The document accepts any collection and stores a frozenset.
+            permissions=cast("AbstractSet[str]", permissions),
         )
 
 

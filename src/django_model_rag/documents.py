@@ -1,6 +1,7 @@
 """The normalized document: a piece of text and the model instance it comes from."""
 
 from collections.abc import Collection, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -37,7 +38,7 @@ class NormalizedDocument:
     url: str = ""
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    permissions: Collection[str] = frozenset()
+    permissions: AbstractSet[str] = frozenset()
 
     # Compare by value, but keep documents out of sets and dict keys: a frozen
     # dataclass would otherwise generate a hash. ClassVar[None] lets mypy see
