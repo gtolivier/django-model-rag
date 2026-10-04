@@ -301,6 +301,16 @@ def test_lookup_path_with_an_unknown_link_fails_at_registration_naming_the_path(
         rag.register(Product, fields=["name", path])
 
 
+def test_lookup_path_with_an_unknown_last_link_names_the_registered_model() -> None:
+    # category leads to Category, which has no field nmae: the error is about
+    # the model being registered and its whole path, not about Category.
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=re.escape("Product has no field 'category__nmae'"),
+    ):
+        rag.register(Product, fields=["name", "category__nmae"])
+
+
 def test_lookup_path_through_a_non_relation_fails_at_registration() -> None:
     # description is a text field of Product: it leads to no related model.
     with pytest.raises(ImproperlyConfigured) as excinfo:
