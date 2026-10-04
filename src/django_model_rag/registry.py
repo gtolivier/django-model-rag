@@ -6,7 +6,7 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Field, ForeignObjectRel, Model
+from django.db.models import Model
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.extractors import (
@@ -14,9 +14,9 @@ from django_model_rag.extractors import (
     DeclaredFieldsExtractor,
     M,
     PathLink,
-    accessor_name,
     guessed_language_field,
     path_links,
+    relations_by_accessor,
     text_fields,
 )
 
@@ -132,23 +132,6 @@ def _require_models_ready(model: type[Model], action: str) -> None:
             "register from a rag.py module imported in AppConfig.ready()"
         )
         raise ImproperlyConfigured(message)
-
-
-# quoted: Django's Field is generic for the type checker only, and before
-# Python 3.14 an annotation is evaluated when the function is defined
-def relations_by_accessor(
-    model: type[Model],
-) -> "dict[str, Field[Any, Any] | ForeignObjectRel]":
-    """Map each of ``model``'s relations, forward or reverse, by its accessor.
-
-    A forward relation is its field, under its name; a reverse one is its
-    relation object, under the accessor ``related_name`` may set.
-    """
-    relations: dict[str, Field[Any, Any] | ForeignObjectRel] = {}
-    for field in model._meta.get_fields():
-        if field.is_relation and (accessor := accessor_name(field)) is not None:
-            relations[accessor] = field
-    return relations
 
 
 def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
@@ -445,6 +428,7 @@ class Registry:
         _require_text_language(language)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
+        _require_permission_names(permissions)
         _require_fields_or_exclude(model, fields, exclude)
         read_language_field = _language_field(model, language_field, language)
         if fields is None:
@@ -454,25 +438,27 @@ class Registry:
             fields = _guessed_fields(model, exclude, follow, metadata_fields)
         else:
             _require_content_fields(model, fields)
-        for single_field in (title_field, language_field, url_field):
-            if single_field is not None:
-                _require_content_field(model, single_field)
+        declared = tuple(fields)
+        followed = tuple(follow)
+        granted = tuple(permissions)
+
+        def build_extractor() -> DeclaredFieldsExtractor:
+            return DeclaredFieldsExtractor(
+                declared,
+                title_field,
+                followed,
+                read_language_field,
+                language,
+                url_field,
+                granted,
+            )
+
+        for single_field in build_extractor().single_fields:
+            _require_content_field(model, single_field)
         if follow:
             _require_models_ready(model, "follow relations")
             _require_followable_relations(model, follow)
-        declared = tuple(fields)
-        followed = tuple(follow)
-        _require_permission_names(permissions)
-        granted = tuple(permissions)
-        self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared,
-            title_field,
-            followed,
-            read_language_field,
-            language,
-            url_field,
-            granted,
-        )
+        self._registrations[model] = build_extractor
 
     def register_extractor(
         self, model: type[M]
