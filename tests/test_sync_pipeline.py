@@ -3,7 +3,15 @@ from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
-from tests.testapp.models import Bulletin, Category, Digest, Notice, Panel, Product
+from tests.testapp.models import (
+    Bookmark,
+    Bulletin,
+    Category,
+    Digest,
+    Notice,
+    Panel,
+    Product,
+)
 
 
 def create_product(*, name: str, description: str, price: str) -> Product:
@@ -618,6 +626,27 @@ def test_guessed_language_field_is_loaded_with_the_instances(
     ] == [
         (french.pk, "Bonjour", "fr"),
         (english.pk, "Hello", "en"),
+    ]
+
+
+@pytest.mark.django_db
+def test_own_url_field_is_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two bookmarks: a link column left out of the select but read anyway
+    # would show as one more query per bookmark.
+    docs = Bookmark.objects.create(title="Docs", link="/docs/a/")
+    example = Bookmark.objects.create(title="Example", link="https://example.com/b")
+    rag.register(Bookmark, fields=["title"], url_field="link")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.url) for document in documents
+    ] == [
+        (docs.pk, "Docs", "/docs/a/"),
+        (example.pk, "Example", "https://example.com/b"),
     ]
 
 
