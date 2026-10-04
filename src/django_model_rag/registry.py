@@ -7,6 +7,7 @@ from typing import Any, TypeAlias
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Field, ForeignObjectRel, Model
+from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.extractors import (
     BaseExtractor,
@@ -45,11 +46,14 @@ def _guessed_fields(
 def _require_content_field(model: type[Model], name: str) -> None:
     """Fail unless ``model`` has a non-relation field called ``name``.
 
+    ``name`` may be a lookup path, such as ``category__name``: the field is
+    then looked up on the related model it leads to.
+
     Raises:
         ImproperlyConfigured: ``model`` has no such field, or it is a
             relation.
     """
-    *path, name = name.split("__")
+    *path, name = name.split(LOOKUP_SEP)
     for step in path:
         model = model._meta.get_field(step).related_model  # type: ignore[assignment]  # related_model is typed as optional
     try:

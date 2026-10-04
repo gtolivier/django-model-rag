@@ -6,6 +6,7 @@ from typing import Any, Generic, TypeVar
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import CharField, Field, Model, TextField
+from django.db.models.constants import LOOKUP_SEP
 from django.db.models.manager import BaseManager
 
 from django_model_rag.documents import NormalizedDocument
@@ -89,9 +90,10 @@ _FIELD_SEPARATOR = "\n\n"
 def _field_text(instance: Model, name: str) -> str:
     """Read the field ``name`` of ``instance`` as stripped text.
 
-    A field with choices reads as its label.
+    ``name`` may be a lookup path, such as ``category__name``, to read a
+    field of a related instance. A field with choices reads as its label.
     """
-    *path, name = name.split("__")
+    *path, name = name.split(LOOKUP_SEP)
     for step in path:
         instance = getattr(instance, step)
     value = getattr(instance, name)
