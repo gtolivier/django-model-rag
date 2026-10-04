@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
@@ -19,6 +20,7 @@ from tests.testapp.models import (
     Note,
     Page,
     PageIntro,
+    Photo,
     Product,
     Recipe,
     Remark,
@@ -27,6 +29,7 @@ from tests.testapp.models import (
     StockLevel,
     Supplier,
     SupplierProfile,
+    Tag,
     TextPlugin,
     Topic,
     Workshop,
@@ -647,6 +650,41 @@ def test_followed_reverse_many_to_many_is_read_in_one_query_for_all_instances(
         "Joinery\n\nJoints and finishes.\n\nWoodworking basics\n\nFurniture making",
         "Turning\n\nBowls and spindles.\n\nWoodworking basics\n\nAntique restoration",
         "Carving\n\nSpoons and reliefs.\n\nFurniture making\n\nAntique restoration",
+    ]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_generic_relation_is_read_in_one_query_for_all_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three photos with two tags each: one query per photo would show as more
+    # than two queries, and the reversed selects check that each photo's
+    # texts still come in primary key order.
+    workbench = Photo.objects.create(title="Workbench")
+    lathe = Photo.objects.create(title="Lathe")
+    chisels = Photo.objects.create(title="Chisels")
+    Tag.objects.create(content_object=workbench, label="Oak")
+    Tag.objects.create(content_object=lathe, label="Turning")
+    Tag.objects.create(content_object=chisels, label="Carving")
+    Tag.objects.create(content_object=workbench, label="Joinery")
+    Tag.objects.create(content_object=lathe, label="Bowls")
+    Tag.objects.create(content_object=chisels, label="Sharpening")
+    rag.register(Photo, follow=["tags"])
+    # Django caches content types per process: whether Photo's is already
+    # cached depends on the tests run before, and a cold cache would add a
+    # query to the count. Clearing then warming it makes the count the same
+    # whatever the test order.
+    ContentType.objects.clear_cache()
+    ContentType.objects.get_for_model(Photo)
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Workbench\n\nOak\n\nJoinery",
+        "Lathe\n\nTurning\n\nBowls",
+        "Chisels\n\nCarving\n\nSharpening",
     ]
 
 

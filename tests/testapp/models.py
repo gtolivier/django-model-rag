@@ -5,6 +5,8 @@ they were, not re-derived test-first. Some deliberately have no ``__str__``,
 as in the prototype.
 """
 
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models.manager import BaseManager
 
@@ -329,3 +331,21 @@ class Step(models.Model):
     body = models.TextField()
 
     objects = BaseManager.from_queryset(StepQuerySet)()
+
+
+# --- A generic relation -------------------------------------------------
+# A Tag may be attached to an instance of any model, through a generic foreign
+# key built from a content type and an object id. A Photo reaches its Tags by
+# the generic relation ``tags``.
+
+
+class Tag(models.Model):
+    label = models.CharField(max_length=100)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey("content_type", "object_id")
+
+
+class Photo(models.Model):
+    title = models.CharField(max_length=200)
+    tags = GenericRelation(Tag)
