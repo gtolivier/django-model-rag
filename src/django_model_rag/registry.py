@@ -313,11 +313,11 @@ def _require_permission_names(permissions: object) -> None:
 
 
 def _require_permission_name(permission: object) -> None:
-    """Fail unless ``permission`` is of the form ``app_label.codename``.
+    """Fail unless ``permission`` is a string of the form ``app_label.codename``.
 
     Raises:
-        ImproperlyConfigured: the dot, the app label or the codename is
-            missing.
+        ImproperlyConfigured: ``permission`` is not a string, or its dot,
+            app label or codename is missing.
     """
     if not isinstance(permission, str):
         message = f"permissions must be strings, not {permission!r}"
