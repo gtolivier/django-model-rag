@@ -759,6 +759,36 @@ def test_followed_generic_relation_is_read_in_one_query_for_all_instances(
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_generic_relation_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two photos with two tags each: the tag's weight is not text, so it is
+    # never read, and a text column or a column of the link back left out of
+    # the prefetch but read anyway would show as one more query per tag.
+    workbench = Photo.objects.create(title="Workbench")
+    lathe = Photo.objects.create(title="Lathe")
+    Tag.objects.create(content_object=workbench, label="Oak", weight=3)
+    Tag.objects.create(content_object=lathe, label="Turning", weight=5)
+    Tag.objects.create(content_object=workbench, label="Joinery", weight=1)
+    Tag.objects.create(content_object=lathe, label="Bowls", weight=2)
+    rag.register(Photo, follow=["tags"])
+    # Django caches content types per process: clearing then warming the
+    # cache keeps a cold one from adding a query to the count.
+    ContentType.objects.clear_cache()
+    ContentType.objects.get_for_model(Photo)
+
+    with django_assert_num_queries(2) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Workbench\n\nOak\n\nJoinery",
+        "Lathe\n\nTurning\n\nBowls",
+    ]
+    assert '"testapp_tag"."weight"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
 def test_followed_relations_append_their_texts_in_the_order_follow_names_them() -> None:
     # TextPlugin is declared before AccordionItem: the order of ``follow``
     # differs from the declaration order of the related models.

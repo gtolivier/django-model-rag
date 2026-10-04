@@ -350,7 +350,7 @@ class Step(models.Model):
 # --- A generic relation -------------------------------------------------
 # A Tag may be attached to an instance of any model, through a generic foreign
 # key built from a content type and an object id. A Photo reaches its Tags by
-# the generic relation ``tags``.
+# the generic relation ``tags``. A Tag's weight is a number, not text.
 
 
 class Tag(models.Model):
@@ -358,6 +358,9 @@ class Tag(models.Model):
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")
+    # Not text, and not part of the link back: a followed generic relation
+    # need never load it. Its default leaves tags created without it valid.
+    weight = models.PositiveIntegerField(default=0)
 
 
 class Photo(models.Model):
