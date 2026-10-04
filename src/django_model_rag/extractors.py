@@ -509,7 +509,10 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         model = queryset.model
         read_fields = [*self.fields, *self.single_fields]
         if self._reads_only_named_columns(model):
-            queryset = queryset.defer(*_unread_columns(model, read_fields, self.follow))
+            # a foreign key the queryset already joins cannot be deferred
+            joined = queryset.query.select_related
+            kept = [*read_fields, *(joined if isinstance(joined, dict) else ())]
+            queryset = queryset.defer(*_unread_columns(model, kept, self.follow))
         selected, prefetched = _sorted_relations(model, self.follow)
         paths = _lookup_paths(read_fields)
         selected.extend(_selected_path_prefixes(model, paths))
