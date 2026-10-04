@@ -1,8 +1,9 @@
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
-from tests.testapp.models import Category, Product
+from tests.testapp.models import Category, Digest, Product
 
 
 def create_product(*, name: str, description: str, price: str) -> Product:
@@ -480,6 +481,32 @@ def test_changing_the_declared_fields_list_after_registering_has_no_effect() -> 
 
     [document] = SyncPipeline().run()
     assert document.text == "Hammer"
+
+
+@pytest.mark.django_db
+def test_declared_own_fields_load_only_their_columns(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two digests: a summary column left out of the select but read anyway
+    # would show as one more query per digest.
+    weekly = Digest.objects.create(
+        title="Weekly news", summary="Three releases shipped."
+    )
+    monthly = Digest.objects.create(
+        title="Monthly news", summary="Twelve releases shipped."
+    )
+    rag.register(Digest, fields=["title"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.title) for document in documents
+    ] == [
+        (weekly.pk, "Weekly news", "Weekly news"),
+        (monthly.pk, "Monthly news", "Monthly news"),
+    ]
+    assert "summary" not in queries.captured_queries[0]["sql"]
 
 
 def test_unregistering_a_model_that_is_not_registered_fails() -> None:
