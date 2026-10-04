@@ -5,7 +5,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Generic, TypeVar
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import CharField, Field, Manager, Model, TextField
+from django.db.models import CharField, Field, Model, TextField
+from django.db.models.manager import BaseManager
 
 from django_model_rag.documents import NormalizedDocument
 
@@ -102,7 +103,7 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
-def _related_text(related: Model | Manager[Model] | None) -> str:
+def _related_text(related: Model | BaseManager[Model] | None) -> str:
     """Join the texts of the text fields of ``related``, title-like ones first.
 
     ``related`` may be the manager of a reverse relation: its objects follow
@@ -110,7 +111,7 @@ def _related_text(related: Model | Manager[Model] | None) -> str:
     """
     if related is None:
         return ""
-    if isinstance(related, Manager):
+    if isinstance(related, BaseManager):
         # sorted in Python, not order_by(): a prefetched relation stays prefetched
         items = sorted(related.all(), key=lambda item: item.pk)
         return _document_text([_related_text(item) for item in items])
