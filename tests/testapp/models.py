@@ -670,3 +670,27 @@ class Exhibit(models.Model):
     )
 
     objects = ExhibitManager()
+
+
+# --- A many-to-many through a foreign key to a unique column ------------
+# A Guild reaches its Craftsmen by the many-to-many ``members``, through a
+# Membership model of its own whose foreign key points to the Guild by the
+# Guild's unique code, a slug, not by its primary key: the join table matches
+# each membership to its Guild by that code.
+
+
+class Craftsman(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class Guild(models.Model):
+    name = models.CharField(max_length=200)
+    code = models.SlugField(unique=True)
+    members = models.ManyToManyField(
+        Craftsman, through="Membership", related_name="guilds"
+    )
+
+
+class Membership(models.Model):
+    guild = models.ForeignKey(Guild, to_field="code", on_delete=models.CASCADE)
+    craftsman = models.ForeignKey(Craftsman, on_delete=models.CASCADE)

@@ -14,9 +14,11 @@ from tests.testapp.models import (
     AccordionItem,
     Category,
     Course,
+    Craftsman,
     Delivery,
     Exhibit,
     FeaturedProduct,
+    Guild,
     Lesson,
     Note,
     Page,
@@ -775,6 +777,32 @@ def test_followed_many_to_many_loads_only_the_text_columns_of_the_related(
         "\n\nCarving\n\nSpoons and reliefs.",
     ]
     assert '"testapp_topic"."slug"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
+def test_followed_many_to_many_through_a_key_to_a_unique_column_keeps_it_loaded(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two guilds with two members each: Membership.guild points to the guild's
+    # code, not its primary key, so the prefetch matches the members to their
+    # guild by that code. It is not declared, yet left out of the select it
+    # would show as one more query per guild.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    smith = Craftsman.objects.create(name="Smith")
+    weaver = Craftsman.objects.create(name="Weaver")
+    north = Guild.objects.create(name="North guild", code="north")
+    south = Guild.objects.create(name="South guild", code="south")
+    north.members.add(carpenter, weaver)
+    south.members.add(smith, weaver)
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "North guild\n\nCarpenter\n\nWeaver",
+        "South guild\n\nSmith\n\nWeaver",
+    ]
 
 
 @pytest.mark.django_db
