@@ -123,8 +123,9 @@ def _link_back_fields(
 ) -> list[str] | None:
     """Return the fields of the related model that link it back through ``relation``.
 
-    These are the foreign key of a reverse foreign key, and the object_id and
-    content_type of a generic relation; None for any other relation.
+    These are the foreign key of a reverse foreign key, the object_id and
+    content_type of a generic relation, and none for a many-to-many; None for
+    any other relation.
     """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported from models modules
@@ -143,8 +144,8 @@ def _link_back_fields(
 def _prefetch(model: type[Model], accessor: str) -> "str | Prefetch[Any]":
     """Return what to give prefetch_related() for the relation ``accessor``.
 
-    A reverse foreign key or a generic relation loads only its text columns and
-    the fields that link it back.
+    A reverse foreign key, a generic relation or a many-to-many loads only its
+    text columns and the fields that link it back.
     """
     relation = relations_by_accessor(model).get(accessor)
     if relation is None:
