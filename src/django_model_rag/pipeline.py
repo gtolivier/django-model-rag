@@ -12,7 +12,8 @@ from django_model_rag.extractors import BaseExtractor
 from django_model_rag.output import DocumentOutput
 from django_model_rag.registry import rag
 
-# iterator() prefetches per chunk: this many instances share one query
+# iterator() prefetches per chunk: this many instances share one query, and
+# their documents one replace() call
 _CHUNK_SIZE = 1000
 # the order of a model's documents, whatever its extractor's get_queryset() asks
 _DOCUMENT_ORDER = "pk"
@@ -111,23 +112,24 @@ def _extractors_to_run(
 
 
 def _groups(
-    instance: Model, extractor: BaseExtractor[Any]
+    instances: Iterable[Model], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
-    """Group the documents of ``instance`` by source key."""
+    """Group the documents of ``instances`` by source key."""
     groups: dict[str, list[NormalizedDocument]] = {}
-    for document in _instance_documents(instance, extractor):
-        groups.setdefault(document.source_key, []).append(document)
+    for instance in instances:
+        for document in _instance_documents(instance, extractor):
+            groups.setdefault(document.source_key, []).append(document)
     return groups
 
 
 def _hand_over(
-    instance: Model, extractor: BaseExtractor[Any], output: DocumentOutput
+    instances: Iterable[Model], extractor: BaseExtractor[Any], output: DocumentOutput
 ) -> set[str]:
-    """Hand the documents of ``instance`` to ``output``, grouped by source key.
+    """Hand the documents of ``instances`` to ``output`` at once, grouped by source key.
 
     Returns the source keys handed over.
     """
-    groups = _groups(instance, extractor)
+    groups = _groups(instances, extractor)
     if groups:
         output.replace(groups)
     return set(groups)
@@ -153,13 +155,7 @@ class SyncPipeline:
             kept_keys: set[str] = set()
             instances = _instances(model, extractor)
             while chunk := list(islice(instances, _CHUNK_SIZE)):
-                groups: dict[str, list[NormalizedDocument]] = {}
-                for instance in chunk:
-                    for key, documents in _groups(instance, extractor).items():
-                        groups.setdefault(key, []).extend(documents)
-                if groups:
-                    self._output.replace(groups)
-                kept_keys |= set(groups)
+                kept_keys |= _hand_over(chunk, extractor, self._output)
             self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
@@ -169,4 +165,4 @@ class SyncPipeline:
             NotRegistered: the model of ``instance`` is not registered.
         """
         extractor = rag.new_extractor(type(instance))
-        _hand_over(instance, extractor, self._output)
+        _hand_over([instance], extractor, self._output)
