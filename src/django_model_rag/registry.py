@@ -367,6 +367,9 @@ class Registry:
                 path; or relations are followed while models are loading.
         """
         self._require_unregistered(model)
+        if language is not None and language_field is not None:
+            message = "language and language_field cannot be combined."
+            raise ImproperlyConfigured(message)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
