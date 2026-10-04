@@ -1,4 +1,5 @@
 import pytest
+from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
@@ -172,4 +173,25 @@ def test_language_field_lookup_path_reads_the_language_of_the_related_object() -
         "Bonjour": "fr",
         "Hello": "en",
         "Orphan": None,
+    }
+
+
+@pytest.mark.django_db
+def test_language_field_lookup_path_is_read_with_its_instances_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three excerpts, each of its own notice: one query per excerpt would show
+    # as more than one query.
+    for title, language in [("Bonjour", "fr"), ("Hello", "en"), ("Hallo", "de")]:
+        notice = Notice.objects.create(title=title, language=language)
+        Excerpt.objects.create(title=title, notice=notice)
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour": "fr",
+        "Hello": "en",
+        "Hallo": "de",
     }
