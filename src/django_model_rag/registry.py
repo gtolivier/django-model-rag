@@ -23,6 +23,9 @@ from django_model_rag.extractors import (
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
+PermissionNames: TypeAlias = list[str] | tuple[str, ...]
+"""The ``app_label.codename`` permissions a model's documents require."""
+
 
 def _metadata_fields(
     model: type[Model],
@@ -378,11 +381,9 @@ class Registry:
         language_field: str | None = None,
         language: str | None = None,
         url_field: str | None = None,
-        permissions: FieldNames = (),
+        permissions: PermissionNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
-
-        ``permissions`` are given to every document of the model.
 
         Without ``fields``, the model's text fields are extracted, except
         those named in ``exclude``.
@@ -393,6 +394,7 @@ class Registry:
         ``language`` gives every document of the model that language.
         ``url_field`` names the field whose stripped value is the document
         url: an own field, or a lookup path such as ``bookmark__link``.
+        ``permissions`` are given to every document of the model.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.

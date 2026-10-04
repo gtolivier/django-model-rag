@@ -226,13 +226,13 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         ``bookmark__link``.
         ``permissions`` are given to every document.
         """
-        self.permissions = permissions
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
         self.language_field = language_field
         self.language = language
         self.url_field = url_field
+        self.permissions = permissions
         # guessed once per related model, and resolved once per lookup path;
         # the registry builds a fresh extractor for each run, so a redefined
         # model is never served stale
