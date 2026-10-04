@@ -15,6 +15,16 @@ def _short_repr(value: str) -> str:
     return repr(value)
 
 
+def _check_permissions(permissions: Collection[str]) -> None:
+    """Raise TypeError unless ``permissions`` is a collection of strings."""
+    if isinstance(permissions, str):
+        msg = "permissions must be a collection of strings, not a bare string"
+        raise TypeError(msg)
+    if not all(isinstance(item, str) for item in permissions):
+        msg = "permissions must be a collection of strings"
+        raise TypeError(msg)
+
+
 @dataclass(frozen=True, kw_only=True, repr=False)
 class NormalizedDocument:
     """A piece of text together with the model instance it comes from."""
@@ -39,12 +49,7 @@ class NormalizedDocument:
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
-        if isinstance(self.permissions, str):
-            msg = "permissions must be a collection of strings, not a bare string"
-            raise TypeError(msg)
-        if not all(isinstance(item, str) for item in self.permissions):
-            msg = "permissions must be a collection of strings"
-            raise TypeError(msg)
+        _check_permissions(self.permissions)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
         object.__setattr__(self, "permissions", frozenset(self.permissions))
 
