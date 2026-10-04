@@ -13,14 +13,19 @@ class RecordingOutput:
     def __init__(self) -> None:
         self.replaced: list[Mapping[str, Sequence[NormalizedDocument]]] = []
         self.pruned: list[tuple[str, set[str]]] = []
+        # The name of each method called, in call order: replaced and pruned
+        # alone cannot tell whether a prune came before or after a replace.
+        self.calls: list[str] = []
 
     def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
         # Copied, so that a pipeline reusing its mapping between calls cannot
         # rewrite what was already recorded.
         self.replaced.append({key: list(group) for key, group in groups.items()})
+        self.calls.append("replace")
 
     def prune(self, model_label: str, kept_keys: set[str]) -> None:
         self.pruned.append((model_label, set(kept_keys)))
+        self.calls.append("prune")
 
     def documents(self) -> list[NormalizedDocument]:
         """Every document received, flattened in the order received.
