@@ -95,9 +95,10 @@ def _selected_run(model: type[Model], path: str) -> list[str]:
     """Return the query names of the single-object relations ``path`` starts with."""
     current_model = model
     relation_names: list[str] = []
-    for accessor in path.split(LOOKUP_SEP)[:-1]:
-        relation = relations_by_accessor(current_model).get(accessor)
-        if relation is None or not _is_selected(relation):
+    for step in path.split(LOOKUP_SEP)[:-1]:
+        # a lookup path names a reverse relation by its query name
+        relation = current_model._meta.get_field(step)
+        if not relation.is_relation or not _is_selected(relation):
             break
         relation_names.append(relation.name)
         current_model = relation.related_model  # type: ignore[assignment]  # a selected relation leads to a model
