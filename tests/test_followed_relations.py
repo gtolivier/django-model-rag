@@ -12,11 +12,16 @@ from pytest_django import DjangoAssertNumQueries
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     AccordionItem,
+    Band,
     Category,
     Course,
+    Craftsman,
     Delivery,
+    Exhibit,
     FeaturedProduct,
+    Guild,
     Lesson,
+    Musician,
     Note,
     Page,
     PageIntro,
@@ -25,6 +30,8 @@ from tests.testapp.models import (
     Recipe,
     Remark,
     Review,
+    Shelf,
+    Showroom,
     Step,
     StockLevel,
     Supplier,
@@ -32,6 +39,7 @@ from tests.testapp.models import (
     Tag,
     TextPlugin,
     Topic,
+    Warehouse,
     Workshop,
 )
 
@@ -225,6 +233,33 @@ def test_followed_foreign_key_brings_the_guessed_text_fields_of_the_related() ->
 
 
 @pytest.mark.django_db
+def test_followed_foreign_key_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two lessons, each with its own topic: the topic's slug is not text, so
+    # it is never read, and a text column left out of the select but read
+    # anyway would show as one more query per lesson.
+    joinery = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    turning = Topic.objects.create(
+        summary="Bowls and spindles.", title="Turning", slug="turning"
+    )
+    Lesson.objects.create(title="Dovetails", topic=joinery)
+    Lesson.objects.create(title="Spindles", topic=turning)
+    rag.register(Lesson, follow=["topic"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Dovetails\n\nJoinery\n\nJoints and finishes.",
+        "Spindles\n\nTurning\n\nBowls and spindles.",
+    ]
+    assert '"testapp_topic"."slug"' not in queries.captured_queries[0]["sql"]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_brings_the_label_of_a_related_field_with_choices() -> (
     None
 ):
@@ -294,6 +329,28 @@ def test_model_without_text_field_that_follows_a_relation_takes_its_str_as_title
     documents = SyncPipeline().run()
 
     assert [document.title for document in documents] == ["12 delivered on 2026-03-01"]
+
+
+@pytest.mark.django_db
+def test_title_from_str_loads_the_own_columns_str_reads_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two deliveries, each with a __str__ built from its quantity and date: a
+    # column __str__ reads left out of the select would show as one more query
+    # per delivery.
+    category = Category.objects.create(name="Furniture")
+    product = _create_chair(category)
+    Delivery.objects.create(quantity=12, delivered_on=date(2026, 3, 1), product=product)
+    Delivery.objects.create(quantity=5, delivered_on=date(2026, 4, 2), product=product)
+    rag.register(Delivery, follow=["product"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.title for document in documents] == [
+        "12 delivered on 2026-03-01",
+        "5 delivered on 2026-04-02",
+    ]
 
 
 @pytest.mark.django_db
@@ -393,6 +450,100 @@ def test_followed_reverse_foreign_key_is_read_in_one_query_for_all_instances(
         "About us\n\nWe build chairs by hand.\n\nOur workshop is in Lyon.",
         "Contact\n\nWrite to us.\n\nOr call us.",
         "Visits\n\nVisits on Saturdays.\n\nBook a week ahead.",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two categories with two products each: the product's price is not text,
+    # so it is never read, and a text column left out of the prefetch but read
+    # anyway would show as one more query per product.
+    furniture = Category.objects.create(name="Furniture")
+    lighting = Category.objects.create(name="Lighting")
+    _create_chair(furniture)
+    Product.objects.create(
+        name="Lamp",
+        description="Dimmable.",
+        price="19.90",
+        category=lighting,
+        condition="new",
+    )
+    Product.objects.create(
+        name="Table",
+        description="Extendable.",
+        price="199.00",
+        category=furniture,
+        condition="new",
+    )
+    Product.objects.create(
+        name="Bulb",
+        description="Warm white.",
+        price="4.50",
+        category=lighting,
+        condition="used",
+    )
+    rag.register(Category, follow=["products"])
+
+    with django_assert_num_queries(2) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Furniture\n\nChair\n\nAdjustable.\n\nNew\n\nTable\n\nExtendable.\n\nNew",
+        "Lighting\n\nLamp\n\nDimmable.\n\nNew\n\nBulb\n\nWarm white.\n\nSecond-hand",
+    ]
+    assert '"testapp_product"."price"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_to_a_unique_column_keeps_that_column_loaded(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two warehouses with two shelves each: Shelf.warehouse points to the
+    # warehouse's code, not its primary key, so the prefetch matches the
+    # shelves to their warehouse by that code. It is not declared, yet left
+    # out of the select it would show as one more query per warehouse.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(label="Timber", warehouse=north)
+    Shelf.objects.create(label="Glue", warehouse=south)
+    Shelf.objects.create(label="Screws", warehouse=north)
+    Shelf.objects.create(label="Varnish", warehouse=south)
+    rag.register(Warehouse, fields=["name"], follow=["shelves"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "North depot\n\nTimber\n\nScrews",
+        "South depot\n\nGlue\n\nVarnish",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_whose_manager_joins_another_foreign_key(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Exhibit's default manager joins its category with select_related(), and
+    # the prefetch of the exhibits is built from it: deferring that foreign
+    # key, though it is not text, would make Django refuse the query, and a
+    # column the documents read left out would show as more than two queries.
+    tools = Category.objects.create(name="Tools")
+    north = Showroom.objects.create(name="North hall")
+    south = Showroom.objects.create(name="South hall")
+    Exhibit.objects.create(showroom=north, label="Hammer", category=tools)
+    Exhibit.objects.create(showroom=south, label="Rake", category=tools)
+    Exhibit.objects.create(showroom=north, label="Saw", category=tools)
+    Exhibit.objects.create(showroom=south, label="Spade", category=tools)
+    rag.register(Showroom, follow=["exhibits"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "North hall\n\nHammer\n\nSaw",
+        "South hall\n\nRake\n\nSpade",
     ]
 
 
@@ -605,6 +756,85 @@ def test_followed_many_to_many_is_read_in_one_query_for_all_instances(
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_many_to_many_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two courses with two topics each: the topic's slug is not text, so it is
+    # never read, and a text column left out of the prefetch but read anyway
+    # would show as one more query per topic.
+    joinery, turning, carving = _create_woodworking_topics()
+    basics = Course.objects.create(title="Woodworking basics")
+    furniture = Course.objects.create(title="Furniture making")
+    basics.topics.add(turning, joinery)
+    furniture.topics.add(carving, joinery)
+    rag.register(Course, follow=["topics"])
+
+    with django_assert_num_queries(2) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Woodworking basics\n\nJoinery\n\nJoints and finishes."
+        "\n\nTurning\n\nBowls and spindles.",
+        "Furniture making\n\nJoinery\n\nJoints and finishes."
+        "\n\nCarving\n\nSpoons and reliefs.",
+    ]
+    assert '"testapp_topic"."slug"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
+def test_followed_many_to_many_through_a_key_to_a_unique_column_keeps_it_loaded(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two guilds with two members each: Membership.guild points to the guild's
+    # code, not its primary key, so the prefetch matches the members to their
+    # guild by that code. It is not declared, yet left out of the select it
+    # would show as one more query per guild.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    smith = Craftsman.objects.create(name="Smith")
+    weaver = Craftsman.objects.create(name="Weaver")
+    north = Guild.objects.create(name="North guild", code="north")
+    south = Guild.objects.create(name="South guild", code="south")
+    north.members.add(carpenter, weaver)
+    south.members.add(smith, weaver)
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "North guild\n\nCarpenter\n\nWeaver",
+        "South guild\n\nSmith\n\nWeaver",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_many_to_many_through_a_key_to_a_unique_column_keeps_it(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two musicians in two bands each: Engagement.musician points to the
+    # musician's handle, not its primary key, so the prefetch matches the bands
+    # to their musician by that handle. It is not declared, yet left out of the
+    # select it would show as one more query per musician.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    duo = Band.objects.create(name="Duo")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    ada.bands.add(quartet, duo)
+    ben.bands.add(trio, duo)
+    rag.register(Musician, fields=["name"], follow=["bands"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Ada\n\nQuartet\n\nDuo",
+        "Ben\n\nTrio\n\nDuo",
+    ]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
 def test_followed_reverse_many_to_many_appends_the_related_texts_in_pk_order() -> None:
     # The courses are linked in an order other than their primary keys', so
     # neither the link order nor the reversed selects can give pk order.
@@ -686,6 +916,36 @@ def test_followed_generic_relation_is_read_in_one_query_for_all_instances(
         "Lathe\n\nTurning\n\nBowls",
         "Chisels\n\nCarving\n\nSharpening",
     ]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_generic_relation_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two photos with two tags each: the tag's weight is not text, so it is
+    # never read, and a text column or a column of the link back left out of
+    # the prefetch but read anyway would show as one more query per tag.
+    workbench = Photo.objects.create(title="Workbench")
+    lathe = Photo.objects.create(title="Lathe")
+    Tag.objects.create(content_object=workbench, label="Oak", weight=3)
+    Tag.objects.create(content_object=lathe, label="Turning", weight=5)
+    Tag.objects.create(content_object=workbench, label="Joinery", weight=1)
+    Tag.objects.create(content_object=lathe, label="Bowls", weight=2)
+    rag.register(Photo, follow=["tags"])
+    # Django caches content types per process: clearing then warming the
+    # cache keeps a cold one from adding a query to the count.
+    ContentType.objects.clear_cache()
+    ContentType.objects.get_for_model(Photo)
+
+    with django_assert_num_queries(2) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Workbench\n\nOak\n\nJoinery",
+        "Lathe\n\nTurning\n\nBowls",
+    ]
+    assert '"testapp_tag"."weight"' not in queries.captured_queries[1]["sql"]
 
 
 @pytest.mark.django_db

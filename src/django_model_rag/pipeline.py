@@ -1,136 +1,61 @@
 """The pipeline that turns registered models into normalized documents."""
 
 from collections.abc import Iterable, Iterator, Sequence
-from contextlib import suppress
 from typing import Any
 
-from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Field, ForeignObjectRel, Model
-from django.db.models.constants import LOOKUP_SEP
+from django.db.models import Model, QuerySet
+from django.db.models.query import ModelIterable
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor, path_links
-from django_model_rag.registry import rag, relations_by_accessor
+from django_model_rag.extractors import BaseExtractor
+from django_model_rag.registry import rag
 
 # iterator() prefetches per chunk: this many instances share one query
 _CHUNK_SIZE = 1000
-
-# the extractor options that each name one field, possibly a lookup path
-_SINGLE_FIELD_OPTIONS = ("title_field", "language_field", "url_field")
-
-
-def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
-    """Return the names of the relations ``extractor`` follows, if any."""
-    followed: Sequence[str] = getattr(extractor, "follow", ())
-    return followed
-
-
-def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
-    """Return the fields ``extractor`` declares, lookup paths included, if any."""
-    fields: Sequence[str] = getattr(extractor, "fields", ())
-    return fields
-
-
-def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
-    """Return, once each, the lookup paths among the fields ``extractor`` reads.
-
-    The fields read are those it declares, its title field, its language field
-    and its URL field, if any.
-    """
-    named: list[str | None] = [
-        getattr(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS
-    ]
-    read = [*_declared_fields(extractor), *(name for name in named if name)]
-    return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
-
-
-# quoted: Django's Field is generic for the type checker only, and before
-# Python 3.14 an annotation is evaluated when the function is defined
-def _is_selected(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
-    """Tell whether ``relation`` leads to a single object, read in the same query.
-
-    These are the foreign keys and the one-to-one relations, forward or reverse.
-    """
-    if isinstance(relation, ForeignObjectRel):
-        return bool(relation.one_to_one)
-    # a generic foreign key leads to a single object too, but has no column
-    # select_related() could join on
-    return bool(relation.concrete and (relation.many_to_one or relation.one_to_one))
-
-
-def _is_prefetched(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
-    """Tell whether ``relation`` leads to many objects, read in one more query.
-
-    These are the reverse foreign keys, the many-to-many relations, forward or
-    reverse, and the generic relations.
-    """
-    return bool(relation.one_to_many or relation.many_to_many)
-
-
-def _sorted_relations(
-    model: type[Model], followed: Sequence[str]
-) -> tuple[list[str], list[str]]:
-    """Sort the relations ``followed`` from ``model`` by how they are read.
-
-    Returns:
-        The names to give select_related(), then those to give
-        prefetch_related().
-    """
-    relations = relations_by_accessor(model)
-    selected: list[str] = []
-    prefetched: list[str] = []
-    for accessor in followed:
-        relation = relations.get(accessor)
-        if relation is None:
-            continue
-        if _is_selected(relation):
-            # select_related() names a reverse relation by its query name,
-            # which related_query_name may set apart from its accessor
-            selected.append(relation.name)
-        elif _is_prefetched(relation):
-            prefetched.append(accessor)
-    return selected, prefetched
-
-
-def _selected_run(model: type[Model], path: str) -> list[str]:
-    """Return the query names of the single-object relations ``path`` starts with."""
-    query_names: list[str] = []
-    # a ``fields`` attribute of a custom extractor need not be paths
-    with suppress(FieldDoesNotExist):
-        for link in path_links(model, path):
-            if not _is_selected(link.relation):
-                break
-            query_names.append(link.query_name)
-    return query_names
-
-
-def _selected_path_prefixes(
-    model: type[Model], extractor: BaseExtractor[Any]
-) -> list[str]:
-    """Return the run of single-object relations each lookup path starts with."""
-    runs = (_selected_run(model, path) for path in _lookup_paths(extractor))
-    return [LOOKUP_SEP.join(run) for run in runs if run]
+# the order of a model's documents, whatever its extractor's get_queryset() asks
+_DOCUMENT_ORDER = "pk"
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    The followed foreign keys and one-to-one relations, and the run of them
-    each lookup path starts with, come with each instance, in the same query.
-    The followed reverse foreign keys, many-to-many relations, forward or
-    reverse, and generic relations come in one more query each for all the
-    instances.
+    ``extractor``'s get_queryset() shapes how they are loaded.
     """
-    queryset = model._default_manager.order_by("pk")
-    selected, prefetched = _sorted_relations(model, _followed(extractor))
-    selected.extend(_selected_path_prefixes(model, extractor))
-    # never select_related() without a field: it would follow every non-null
-    # foreign key, followed or not
-    if selected:
-        queryset = queryset.select_related(*selected)
-    if prefetched:
-        queryset = queryset.prefetch_related(*prefetched)
-    return queryset.iterator(chunk_size=_CHUNK_SIZE)
+    queryset = model._default_manager.order_by(_DOCUMENT_ORDER)
+    hooked = _checked_queryset(extractor.get_queryset(queryset), extractor, model)
+    return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+
+
+def _checked_queryset(
+    hooked: object, extractor: BaseExtractor[Any], model: type[Model]
+) -> QuerySet[Model]:
+    """Return what ``extractor``'s get_queryset() hooked.
+
+    Raises:
+        TypeError: it is not a QuerySet of ``model``'s instances.
+    """
+    if not isinstance(hooked, QuerySet):
+        raise _wrong_queryset(extractor, "a QuerySet", f"a {type(hooked).__name__}")
+    # No public API tells a values() queryset from one of instances.
+    if not issubclass(hooked._iterable_class, ModelIterable):
+        raise _wrong_queryset(extractor, "a QuerySet of model instances", "of values")
+    if hooked.model is not model:
+        raise _wrong_queryset(
+            extractor,
+            f"a QuerySet of {model.__name__}",
+            f"of {hooked.model.__name__}",
+        )
+    return hooked
+
+
+def _wrong_queryset(
+    extractor: BaseExtractor[Any], expected: str, returned: str
+) -> TypeError:
+    """Build the error for an ``extractor``'s get_queryset() not ``expected``."""
+    return TypeError(
+        f"{type(extractor).__name__}.get_queryset() must return {expected}, "
+        f"not {returned}"
+    )
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:

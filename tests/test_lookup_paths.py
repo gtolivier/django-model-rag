@@ -108,6 +108,34 @@ def test_one_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
 
 
 @pytest.mark.django_db
+def test_lookup_path_loads_only_the_related_column_it_reads(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two lessons, each with its own topic: a related column left out of the
+    # select but read anyway would show as one more query per lesson.
+    basics = Topic.objects.create(
+        title="Basics", summary="The very start", slug="basics"
+    )
+    advanced = Topic.objects.create(
+        title="Advanced", summary="Going further", slug="advanced"
+    )
+    Lesson.objects.create(title="Intro", topic=basics)
+    Lesson.objects.create(title="Deep dive", topic=advanced)
+    rag.register(Lesson, fields=["title", "topic__title"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Intro\n\nBasics",
+        "Deep dive\n\nAdvanced",
+    ]
+    sql = queries.captured_queries[0]["sql"]
+    unread_columns = ('"testapp_topic"."summary"', '"testapp_topic"."slug"')
+    assert [column for column in unread_columns if column in sql] == []
+
+
+@pytest.mark.django_db
 def test_run_instance_adds_the_related_field_text_of_a_lookup_path() -> None:
     product = _create_product(name="Chair", category_name="Furniture")
     rag.register(Product, fields=["name", "category__name"])

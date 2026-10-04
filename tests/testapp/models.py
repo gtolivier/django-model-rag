@@ -350,7 +350,7 @@ class Step(models.Model):
 # --- A generic relation -------------------------------------------------
 # A Tag may be attached to an instance of any model, through a generic foreign
 # key built from a content type and an object id. A Photo reaches its Tags by
-# the generic relation ``tags``.
+# the generic relation ``tags``. A Tag's weight is a number, not text.
 
 
 class Tag(models.Model):
@@ -358,6 +358,9 @@ class Tag(models.Model):
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
     content_object = GenericForeignKey("content_type", "object_id")
+    # Not text, and not part of the link back: a followed generic relation
+    # need never load it. Its default leaves tags created without it valid.
+    weight = models.PositiveIntegerField(default=0)
 
 
 class Photo(models.Model):
@@ -575,3 +578,144 @@ class Shortcut(models.Model):
         max_length=200,
         choices=[("/docs/", "Documentation"), ("/faq/", "FAQ")],
     )
+
+
+# --- A foreign key to a unique column other than the primary key --------
+# A Shelf points to a Warehouse by the Warehouse's unique code, a slug, not by
+# its primary key: the Warehouse reaches its Shelves by the reverse foreign key
+# ``shelves``, matched to it by that code.
+
+
+class Warehouse(models.Model):
+    name = models.CharField(max_length=200)
+    code = models.SlugField(unique=True)
+
+
+class Shelf(models.Model):
+    label = models.CharField(max_length=100)
+    warehouse = models.ForeignKey(
+        Warehouse,
+        to_field="code",
+        related_name="shelves",
+        on_delete=models.CASCADE,
+    )
+
+
+# --- A default manager that already follows a foreign key --------------
+# A Listing's default manager follows its foreign key ``category`` with
+# select_related(), as a project may do so that every listing it shows comes
+# with its category: whatever loads Listings through it joins the category.
+# Its URL is stored in its own CharField named ``link``.
+
+
+class ListingManager(models.Manager["Listing"]):
+    def get_queryset(self) -> models.QuerySet["Listing"]:
+        return super().get_queryset().select_related("category")
+
+
+class Listing(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(max_length=200)
+    category = models.ForeignKey(
+        Category, related_name="listings", on_delete=models.CASCADE
+    )
+
+    objects = ListingManager()
+
+
+# --- A default manager that follows a foreign key two links deep -------
+# An Offer's default manager follows its foreign key ``product``, then the
+# Product's own foreign key ``category``, with select_related(), as a project
+# may do so that every offer it shows comes with its product and the product's
+# category: whatever loads Offers through it joins both.
+
+
+class OfferManager(models.Manager["Offer"]):
+    def get_queryset(self) -> models.QuerySet["Offer"]:
+        return super().get_queryset().select_related("product__category")
+
+
+class Offer(models.Model):
+    title = models.CharField(max_length=200)
+    product = models.ForeignKey(
+        Product, related_name="offers", on_delete=models.CASCADE
+    )
+
+    objects = OfferManager()
+
+
+# --- A related model whose default manager follows a foreign key --------
+# A Showroom reaches its Exhibits by the reverse foreign key ``exhibits``. An
+# Exhibit's default manager follows its other foreign key, ``category``, with
+# select_related(), as a project may do so that every exhibit it shows comes
+# with its category: whatever loads Exhibits through it joins the category.
+
+
+class Showroom(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class ExhibitManager(models.Manager["Exhibit"]):
+    def get_queryset(self) -> models.QuerySet["Exhibit"]:
+        return super().get_queryset().select_related("category")
+
+
+class Exhibit(models.Model):
+    showroom = models.ForeignKey(
+        Showroom, related_name="exhibits", on_delete=models.CASCADE
+    )
+    label = models.CharField(max_length=200)
+    category = models.ForeignKey(
+        Category, related_name="exhibits", on_delete=models.CASCADE
+    )
+
+    objects = ExhibitManager()
+
+
+# --- A many-to-many through a foreign key to a unique column ------------
+# A Guild reaches its Craftsmen by the many-to-many ``members``, through a
+# Membership model of its own whose foreign key points to the Guild by the
+# Guild's unique code, a slug, not by its primary key: the join table matches
+# each membership to its Guild by that code.
+
+
+class Craftsman(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class Guild(models.Model):
+    name = models.CharField(max_length=200)
+    code = models.SlugField(unique=True)
+    members = models.ManyToManyField(
+        Craftsman, through="Membership", related_name="guilds"
+    )
+
+
+class Membership(models.Model):
+    guild = models.ForeignKey(Guild, to_field="code", on_delete=models.CASCADE)
+    craftsman = models.ForeignKey(Craftsman, on_delete=models.CASCADE)
+
+
+# --- A reverse many-to-many through a foreign key to a unique column ----
+# A Musician reaches its Bands by the reverse many-to-many ``bands``: the Band
+# declares the many-to-many ``musicians``, through an Engagement model of its
+# own whose foreign key points to the Musician by the Musician's unique handle,
+# a slug, not by its primary key: the join table matches each engagement to its
+# Musician by that handle.
+
+
+class Musician(models.Model):
+    name = models.CharField(max_length=200)
+    handle = models.SlugField(unique=True)
+
+
+class Band(models.Model):
+    name = models.CharField(max_length=200)
+    musicians = models.ManyToManyField(
+        Musician, through="Engagement", related_name="bands"
+    )
+
+
+class Engagement(models.Model):
+    band = models.ForeignKey(Band, on_delete=models.CASCADE)
+    musician = models.ForeignKey(Musician, to_field="handle", on_delete=models.CASCADE)

@@ -1,7 +1,9 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import QuerySet
+from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import (
     AlreadyRegistered,
@@ -210,6 +212,139 @@ def test_extractor_may_yield_its_documents_for_one_instance() -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_extractor_get_queryset_shapes_the_queryset_its_instances_are_read_from(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three pages with two text plugins each: without the prefetch, one query
+    # per page would show as more than two queries, and the reversed selects
+    # check that the pages still come in primary key order.
+    about = Page.objects.create(title="About us", slug="about-us")
+    contact = Page.objects.create(title="Contact", slug="contact")
+    visits = Page.objects.create(title="Visits", slug="visits")
+    TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    TextPlugin.objects.create(page=contact, body="Write to us.")
+    TextPlugin.objects.create(page=visits, body="Visits on Saturdays.")
+    TextPlugin.objects.create(page=about, body="Our workshop is in Lyon.")
+    TextPlugin.objects.create(page=contact, body="Or call us.")
+    TextPlugin.objects.create(page=visits, body="Book a week ahead.")
+
+    @rag.register_extractor(Page)
+    class PageExtractor(BaseExtractor[Page]):
+        def get_queryset(self, queryset: QuerySet[Page]) -> QuerySet[Page]:
+            return queryset.prefetch_related("text_plugins")
+
+        def extract(self, instance: Page) -> NormalizedDocument:
+            # sorted in Python, not order_by(): the plugins stay prefetched
+            plugins = sorted(instance.text_plugins.all(), key=lambda plugin: plugin.pk)
+            return self.build_document(
+                instance, text=" ".join(plugin.body for plugin in plugins)
+            )
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (about.pk, "We build chairs by hand. Our workshop is in Lyon."),
+        (contact.pk, "Write to us. Or call us."),
+        (visits.pk, "Visits on Saturdays. Book a week ahead."),
+    ]
+
+
+@pytest.mark.django_db
+def test_extractor_get_queryset_may_select_the_related_objects_extract_reads(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three products in two categories: without the join, reading each
+    # product's category would show as more than one query.
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rake = Product.objects.create(
+        name="Rake", description="Gathers leaves.", price="14.50", category=garden
+    )
+    saw = Product.objects.create(
+        name="Saw", description="Cuts planks.", price="19.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def get_queryset(self, queryset: QuerySet[Product]) -> QuerySet[Product]:
+            return queryset.select_related("category")
+
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.name}, filed under {instance.category.name}."
+            )
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (hammer.pk, "Hammer, filed under Tools."),
+        (rake.pk, "Rake, filed under Garden."),
+        (saw.pk, "Saw, filed under Tools."),
+    ]
+
+
+@pytest.mark.django_db
+def test_extractor_get_queryset_ordering_otherwise_keeps_documents_in_pk_order() -> (
+    None
+):
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    kitchen = Category.objects.create(name="Kitchen")
+
+    @rag.register_extractor(Category)
+    class NewestFirstCategoryExtractor(BaseExtractor[Category]):
+        # An ordering of the extractor's own is the slip under test:
+        # get_queryset() shapes how the instances load, not their order.
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.order_by("-pk")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (tools.pk, "Tools"),
+        (garden.pk, "Garden"),
+        (kitchen.pk, "Kitchen"),
+    ]
+
+
+@pytest.mark.django_db
+def test_extractor_attribute_named_like_a_registration_option_shapes_nothing(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        # An attribute of the extractor's own that happens to be called
+        # ``follow``: only get_queryset() may shape the queryset, and extract()
+        # reads nothing of the category it names.
+        follow = ("category",)
+
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (hammer.pk, "Hammer")
+    ]
+    assert Category._meta.db_table not in queries.captured_queries[0]["sql"]
+
+
+@pytest.mark.django_db
 def test_run_instance_produces_the_extracted_documents_of_that_instance_only() -> None:
     faq = Page.objects.create(title="FAQ", slug="faq")
     AccordionItem.objects.create(
@@ -324,6 +459,71 @@ def test_extractor_yielding_something_else_than_a_document_fails_naming_it() -> 
             return [f"Everything filed under {instance.name}."]
 
     with pytest.raises(TypeError, match="StringListCategoryExtractor"):
+        SyncPipeline().run()
+
+
+@pytest.mark.django_db
+def test_extractor_get_queryset_returning_a_list_fails_naming_the_extractor() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class ListingCategoryExtractor(BaseExtractor[Category]):
+        # A list of the instances instead of a queryset is the slip under
+        # test: the type checker rightly rejects it.
+        def get_queryset(  # type: ignore[override]
+            self, queryset: QuerySet[Category]
+        ) -> list[Category]:
+            return list(queryset)
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with pytest.raises(
+        TypeError, match=r"ListingCategoryExtractor\.get_queryset\(\).*QuerySet"
+    ):
+        SyncPipeline().run()
+
+
+@pytest.mark.django_db
+def test_extractor_get_queryset_returning_values_fails_naming_the_extractor() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class ValuesCategoryExtractor(BaseExtractor[Category]):
+        # A values() queryset, which loads dictionaries instead of instances,
+        # is the slip under test: the type checker rightly rejects it.
+        def get_queryset(  # type: ignore[override]
+            self, queryset: QuerySet[Category]
+        ) -> QuerySet[Category, Mapping[str, object]]:
+            return queryset.values("pk", "name")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text="A category.")
+
+    with pytest.raises(TypeError, match=r"ValuesCategoryExtractor\.get_queryset\(\)"):
+        SyncPipeline().run()
+
+
+@pytest.mark.django_db
+def test_extractor_get_queryset_returning_another_model_fails_naming_both() -> None:
+    tools = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Category)
+    class StrayExtractor(BaseExtractor[Category]):
+        # A queryset of products for a category extractor is the slip under
+        # test: the type checker rightly rejects it.
+        def get_queryset(  # type: ignore[override]
+            self, queryset: QuerySet[Category]
+        ) -> QuerySet[Product]:
+            return Product.objects.all()
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with pytest.raises(TypeError, match=r"StrayExtractor\.get_queryset\(\).*Category"):
         SyncPipeline().run()
 
 

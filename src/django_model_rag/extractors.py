@@ -1,15 +1,24 @@
 """The extractors: the base class of custom ones, and the one of declared fields."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Collection, Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, TypeAlias, TypeGuard, TypeVar, cast
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import CharField, Field, Model, TextField
+from django.db.models import (
+    CharField,
+    Field,
+    ForeignKey,
+    ManyToManyField,
+    Model,
+    Prefetch,
+    QuerySet,
+    TextField,
+)
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.fields.reverse_related import ForeignObjectRel
+from django.db.models.fields.reverse_related import ForeignObjectRel, ManyToManyRel
 from django.db.models.manager import BaseManager
 
 from django_model_rag.documents import NormalizedDocument
@@ -64,6 +73,13 @@ class BaseExtractor(ABC, Generic[M]):
     ) -> NormalizedDocument | Iterable[NormalizedDocument] | None:
         """Build the document(s) of ``instance``, or nothing to skip it."""
 
+    def get_queryset(self, queryset: QuerySet[M]) -> QuerySet[M]:
+        """Shape how ``queryset`` loads the instances to extract, not which it holds.
+
+        A run of a single instance, already loaded, does not go through it.
+        """
+        return queryset
+
     def build_document(  # noqa: PLR0913  # one keyword per document field
         self,
         instance: M,
@@ -104,6 +120,28 @@ def accessor_name(relation: "Field[Any, Any] | ForeignObjectRel") -> str | None:
     return relation.name
 
 
+def query_name(relation: "Field[Any, Any] | ForeignObjectRel") -> str:
+    """Name ``relation`` as select_related() does."""
+    # select_related() names a reverse relation by its query name, which
+    # related_query_name may set apart from its accessor
+    return relation.name
+
+
+def relations_by_accessor(
+    model: type[Model],
+) -> "dict[str, Field[Any, Any] | ForeignObjectRel]":
+    """Map each of ``model``'s relations, forward or reverse, by its accessor.
+
+    A forward relation is its field, under its name; a reverse one is its
+    relation object, under the accessor ``related_name`` may set.
+    """
+    relations: dict[str, Field[Any, Any] | ForeignObjectRel] = {}
+    for field in model._meta.get_fields():
+        if field.is_relation and (accessor := accessor_name(field)) is not None:
+            relations[accessor] = field
+    return relations
+
+
 @dataclass(frozen=True)
 class PathLink:
     """A relation a lookup path crosses, as the path names it."""
@@ -126,9 +164,7 @@ class PathLink:
     @property
     def query_name(self) -> str:
         """Name the link as select_related() does."""
-        # select_related() names a reverse relation by its query name, which
-        # related_query_name may set apart from its accessor
-        return self.relation.name
+        return query_name(self.relation)
 
 
 def path_links(model: type[Model], path: str) -> Iterator[PathLink]:
@@ -200,6 +236,295 @@ def guessed_language_field(model: type[Model]) -> str | None:
     return next((name for name in _GUESSED_LANGUAGE_FIELDS if name in own_fields), None)
 
 
+# a select_related() lookup, mapped to the related model and its fields read
+_ReadByPrefix: TypeAlias = dict[str, tuple[type[Model], set[str]]]
+
+# quoted: Django's Field is generic for the type checker only
+_RelationsByAccessor: TypeAlias = dict[str, "Field[Any, Any] | ForeignObjectRel"]
+"""Relations, forward or reverse, mapped by their accessor."""
+
+# a lookup path, mapped to the run of single-object relations it starts with
+_SelectedRuns: TypeAlias = dict[str, list[PathLink]]
+
+
+def _lookup_paths(read_fields: Iterable[str]) -> list[str]:
+    """Return, once each, the lookup paths among the ``read_fields``."""
+    return [name for name in dict.fromkeys(read_fields) if LOOKUP_SEP in name]
+
+
+def _is_selected(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
+    """Tell whether ``relation`` leads to a single object, read in the same query.
+
+    These are the foreign keys and the one-to-one relations, forward or reverse.
+    """
+    if isinstance(relation, ForeignObjectRel):
+        return bool(relation.one_to_one)
+    # a generic foreign key leads to a single object too, but has no column
+    # select_related() could join on
+    return bool(relation.concrete and (relation.many_to_one or relation.one_to_one))
+
+
+def _is_prefetched(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
+    """Tell whether ``relation`` leads to many objects, read in one more query.
+
+    These are the reverse foreign keys, the many-to-many relations, forward or
+    reverse, and the generic relations.
+    """
+    return bool(relation.one_to_many or relation.many_to_many)
+
+
+def _is_reverse_foreign_key(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> TypeGuard[ForeignObjectRel]:
+    """Tell whether ``relation`` is a reverse foreign key, to the related objects."""
+    return isinstance(relation, ForeignObjectRel) and bool(relation.one_to_many)
+
+
+def _followed_relations(
+    model: type[Model], followed: Sequence[str]
+) -> _RelationsByAccessor:
+    """Map each relation ``followed`` from ``model`` by its accessor, in order."""
+    relations = relations_by_accessor(model)
+    return {
+        accessor: relations[accessor] for accessor in followed if accessor in relations
+    }
+
+
+def _sorted_relations(
+    followed: _RelationsByAccessor,
+) -> "tuple[list[str], list[str | Prefetch[Any]]]":
+    """Sort the ``followed`` relations by how they are read.
+
+    Returns:
+        The names to give select_related(), then the lookups to give
+        prefetch_related().
+    """
+    selected: list[str] = []
+    prefetched: list[str | Prefetch[Any]] = []
+    for accessor, relation in followed.items():
+        if _is_selected(relation):
+            selected.append(query_name(relation))
+        elif _is_prefetched(relation):
+            prefetched.append(_prefetch(accessor, relation))
+    return selected, prefetched
+
+
+def _link_back_fields(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> list[str] | None:
+    """Return the fields of the related model that link it back through ``relation``.
+
+    These are the foreign key of a reverse foreign key, the object_id and
+    content_type of a generic relation, and none for a many-to-many; None for
+    any other relation.
+    """
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported from models modules
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
+    if _is_reverse_foreign_key(relation):
+        return [relation.field.name]
+    if isinstance(relation, GenericRelation):
+        return [relation.object_id_field_name, relation.content_type_field_name]
+    if relation.many_to_many:
+        # the join table links it back, not a column of the related model
+        return []
+    return None
+
+
+def _prefetch(
+    accessor: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> "str | Prefetch[Any]":
+    """Return what to give prefetch_related() for ``relation``, as ``accessor``.
+
+    A reverse foreign key, a generic relation or a many-to-many loads only its
+    text columns and the fields that link it back.
+    """
+    link_back = _link_back_fields(relation)
+    related = relation.related_model
+    # for the type checker only: a relation that links back leads to a model
+    if link_back is None or not isinstance(related, type):
+        return accessor
+    manager_queryset = related._default_manager.all()
+    # a foreign key the manager already joins cannot be deferred
+    joined = _joined_relations(manager_queryset)
+    return Prefetch(
+        accessor,
+        queryset=manager_queryset.only(
+            "pk", *text_fields(related), *link_back, *joined
+        ),
+    )
+
+
+def _selected_run(model: type[Model], path: str) -> list[PathLink]:
+    """Return the single-object relations ``path`` starts with."""
+    run: list[PathLink] = []
+    for link in path_links(model, path):
+        if not _is_selected(link.relation):
+            break
+        run.append(link)
+    return run
+
+
+def _query_path(run: Sequence[PathLink]) -> str:
+    """Join the links of ``run`` into the lookup select_related() names it by."""
+    return LOOKUP_SEP.join(link.query_name for link in run)
+
+
+def _selected_runs(model: type[Model], paths: Iterable[str]) -> _SelectedRuns:
+    """Map each lookup path from ``model`` to the run it starts with, if any."""
+    return {path: run for path in paths if (run := _selected_run(model, path))}
+
+
+def _followed_read(followed: _RelationsByAccessor) -> _ReadByPrefix:
+    """Map each ``followed`` selected relation to its model and its text fields."""
+    read: _ReadByPrefix = {}
+    for relation in followed.values():
+        if not _is_selected(relation):
+            continue
+        owner = relation.related_model
+        # for the type checker only: a selected relation leads to a model
+        if owner is not None:
+            read[query_name(relation)] = (owner, set(text_fields(owner)))
+    return read
+
+
+def _read_by_prefix(
+    runs: _SelectedRuns, followed: _RelationsByAccessor
+) -> _ReadByPrefix:
+    """Map each selected relation followed or prefixing a lookup path to its reads.
+
+    The value is the related model, and the names of its fields read: its text
+    fields for a followed relation, those the paths name for a prefix.
+    """
+    read = _followed_read(followed)
+    for path, run in runs.items():
+        names = path.split(LOOKUP_SEP)
+        for depth, link in enumerate(run, start=1):
+            owner = link.relation.related_model
+            # for the type checker only: a selected relation leads to a model
+            if owner is None:
+                break
+            prefix = _query_path(run[:depth])
+            read.setdefault(prefix, (owner, set()))[1].add(names[depth])
+    return read
+
+
+def _unread_related_columns(
+    runs: _SelectedRuns, followed: _RelationsByAccessor
+) -> list[str]:
+    """Return the lookup names of the selected related columns never read."""
+    return [
+        f"{prefix}{LOOKUP_SEP}{name}"
+        for prefix, (owner, read) in _read_by_prefix(runs, followed).items()
+        for name in _unread_field_names(owner, read)
+    ]
+
+
+def _unread_field_names(model: type[Model], read: set[str]) -> list[str]:
+    """Return the names of ``model``'s columns that ``read`` does not name.
+
+    The primary key is always read. A foreign key may be named by its field
+    or by its column.
+    """
+    return [
+        field.name
+        for field in model._meta.concrete_fields
+        if not field.primary_key and not {field.name, field.attname} & read
+    ]
+
+
+def _unread_columns(
+    model: type[Model], read_fields: Iterable[str], followed: _RelationsByAccessor
+) -> list[str]:
+    """Return the names of ``model``'s own columns never read.
+
+    The first link of each lookup path among the ``read_fields``, and each
+    relation ``followed``, are read: they stay, with the own fields named and
+    the columns the followed relations' prefetches match by.
+    """
+    read = {name.split(LOOKUP_SEP)[0] for name in (*read_fields, *followed)}
+    read |= _prefetch_match_columns(followed)
+    return _unread_field_names(model, read)
+
+
+def _joined_relations(queryset: QuerySet[Model]) -> list[str]:
+    """Return the relations ``queryset`` already select_related() by name.
+
+    A select_related() without a field names none.
+    """
+    joined = queryset.query.select_related
+    return list(joined) if isinstance(joined, dict) else []
+
+
+def _joined_paths(joined: object, prefix: str = "") -> set[str]:
+    """Return every lookup path a select_related() mapping joins, nested too."""
+    if not isinstance(joined, dict):
+        return set()
+    paths: set[str] = set()
+    for name, deeper in joined.items():
+        path = f"{prefix}{name}"
+        paths.add(path)
+        paths |= _joined_paths(deeper, f"{path}{LOOKUP_SEP}")
+    return paths
+
+
+def _deferrable_related_columns(
+    queryset: QuerySet[Model], runs: _SelectedRuns, followed: _RelationsByAccessor
+) -> list[str]:
+    """Return the selected related columns never read that ``queryset`` can defer.
+
+    A relation the queryset joins deeper cannot be deferred.
+    """
+    joined = _joined_paths(queryset.query.select_related)
+    unread = _unread_related_columns(runs, followed)
+    return [name for name in unread if name not in joined]
+
+
+def _prefetch_match_columns(followed: _RelationsByAccessor) -> set[str]:
+    """Return the names of the columns the ``followed`` prefetches match by."""
+    return {
+        column
+        for relation in followed.values()
+        if (column := _prefetch_match_column(relation)) is not None
+    }
+
+
+def _prefetch_match_column(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> str | None:
+    """Return the name of the parent's column a prefetch of ``relation`` matches by.
+
+    None when ``relation`` is not a reverse foreign key or a many-to-many.
+    """
+    # the prefetch matches the related objects to their parent by the column
+    # the foreign key to the parent targets, which may not be the primary key:
+    # the reverse foreign key itself, or the through model's for a many-to-many
+    if _is_reverse_foreign_key(relation):
+        return relation.field.target_field.name
+    key = _through_key_to_parent(relation)
+    return key.target_field.name if isinstance(key, ForeignKey) else None
+
+
+def _through_key_to_parent(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> "Field[Any, Any] | ForeignObjectRel | None":
+    """Return the field of ``relation``'s through model that links to the parent.
+
+    None when ``relation`` is not a many-to-many, from either side.
+    """
+    if isinstance(relation, ManyToManyRel):
+        # reached from the other side: the through model's key to the parent is
+        # the declaring field's reverse one
+        field, key_name = relation.field, relation.field.m2m_reverse_field_name()
+    elif isinstance(relation, ManyToManyField):
+        field, key_name = relation, relation.m2m_field_name()
+    else:
+        return None
+    through = field.remote_field.through
+    return through._meta.get_field(key_name) if through else None
+
+
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
@@ -256,6 +581,51 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
             url=self._url(instance),
             language=self._language(instance),
             permissions=self.permissions,
+        )
+
+    def get_queryset(self, queryset: QuerySet[Model]) -> QuerySet[Model]:
+        """Load only the columns and relations its fields and relations read.
+
+        The followed foreign keys and one-to-one relations, and the run of them
+        each lookup path starts with, come with each instance, in the same query.
+        The followed reverse foreign keys, many-to-many relations, forward or
+        reverse, and generic relations come in one more query each for all the
+        instances.
+        """
+        model = queryset.model
+        read_fields = [*self.fields, *self.single_fields]
+        followed = _followed_relations(model, self.follow)
+        if self._reads_only_named_columns(model):
+            # a foreign key the queryset already joins cannot be deferred
+            kept = [*read_fields, *_joined_relations(queryset)]
+            queryset = queryset.defer(*_unread_columns(model, kept, followed))
+        selected, prefetched = _sorted_relations(followed)
+        runs = _selected_runs(model, _lookup_paths(read_fields))
+        selected.extend(_query_path(run) for run in runs.values())
+        # never select_related() without a field: it would follow every non-null
+        # foreign key, followed or not
+        if selected:
+            queryset = queryset.select_related(*selected)
+            if unread := _deferrable_related_columns(queryset, runs, followed):
+                queryset = queryset.defer(*unread)
+        if prefetched:
+            queryset = queryset.prefetch_related(*prefetched)
+        return queryset
+
+    @property
+    def single_fields(self) -> list[str]:
+        """List the fields its title, language and url options name, if set."""
+        named = (self.title_field, self.language_field, self.url_field)
+        return [name for name in named if name is not None]
+
+    def _reads_only_named_columns(self, model: type[Model]) -> bool:
+        """Tell whether the own columns of ``model`` it reads are all named by it.
+
+        Only the fields it declares name them, and get_absolute_url() may read any
+        column, when no URL field replaces it.
+        """
+        return bool(self.fields) and bool(
+            self.url_field or not hasattr(model, "get_absolute_url")
         )
 
     def _url(self, instance: Model) -> str:

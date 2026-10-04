@@ -1,8 +1,19 @@
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
-from tests.testapp.models import Category, Product
+from tests.testapp.models import (
+    Bookmark,
+    Bulletin,
+    Category,
+    Digest,
+    Listing,
+    Notice,
+    Offer,
+    Panel,
+    Product,
+)
 
 
 def create_product(*, name: str, description: str, price: str) -> Product:
@@ -11,6 +22,30 @@ def create_product(*, name: str, description: str, price: str) -> Product:
     return Product.objects.create(
         name=name, description=description, price=price, category=category
     )
+
+
+def create_faq_and_help_panels() -> tuple[Panel, Panel]:
+    """Create the FAQ and Help panels, in that primary key order.
+
+    FAQ: body "Answers to common questions.", label "FAQ", heading "Frequently
+    asked", name "faq", title "Questions". Help: body "Where to get support.",
+    label "Help", heading "Getting help", name "help", title "Support".
+    """
+    faq = Panel.objects.create(
+        body="Answers to common questions.",
+        label="FAQ",
+        heading="Frequently asked",
+        name="faq",
+        title="Questions",
+    )
+    help_panel = Panel.objects.create(
+        body="Where to get support.",
+        label="Help",
+        heading="Getting help",
+        name="help",
+        title="Support",
+    )
+    return faq, help_panel
 
 
 def test_pipeline_without_registered_model_produces_no_document() -> None:
@@ -480,6 +515,188 @@ def test_changing_the_declared_fields_list_after_registering_has_no_effect() -> 
 
     [document] = SyncPipeline().run()
     assert document.text == "Hammer"
+
+
+@pytest.mark.django_db
+def test_declared_own_fields_load_only_their_columns(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two digests: a summary column left out of the select but read anyway
+    # would show as one more query per digest.
+    weekly = Digest.objects.create(
+        title="Weekly news", summary="Three releases shipped."
+    )
+    monthly = Digest.objects.create(
+        title="Monthly news", summary="Twelve releases shipped."
+    )
+    rag.register(Digest, fields=["title"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.title) for document in documents
+    ] == [
+        (weekly.pk, "Weekly news", "Weekly news"),
+        (monthly.pk, "Monthly news", "Monthly news"),
+    ]
+    assert "summary" not in queries.captured_queries[0]["sql"]
+
+
+@pytest.mark.django_db
+def test_several_declared_own_fields_load_only_their_columns(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two panels: a heading, name or title column left out of the select but
+    # read anyway would show as one more query per panel.
+    faq, help_panel = create_faq_and_help_panels()
+    rag.register(Panel, fields=["label", "body"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.title) for document in documents
+    ] == [
+        (faq.pk, "FAQ\n\nAnswers to common questions.", "FAQ"),
+        (help_panel.pk, "Help\n\nWhere to get support.", "Help"),
+    ]
+    sql = queries.captured_queries[0]["sql"]
+    assert [column for column in ("title", "heading", "name") if column in sql] == []
+
+
+@pytest.mark.django_db
+def test_own_title_field_outside_the_declared_fields_is_loaded_with_them(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two panels: a heading column left out of the select but read anyway
+    # would show as one more query per panel.
+    faq, help_panel = create_faq_and_help_panels()
+    rag.register(Panel, fields=["body"], title_field="heading")
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.title) for document in documents
+    ] == [
+        (faq.pk, "Answers to common questions.", "Frequently asked"),
+        (help_panel.pk, "Where to get support.", "Getting help"),
+    ]
+    sql = queries.captured_queries[0]["sql"]
+    assert [column for column in ("label", "name", "title") if column in sql] == []
+
+
+@pytest.mark.django_db
+def test_own_language_field_is_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two bulletins: a locale column left out of the select but read anyway
+    # would show as one more query per bulletin.
+    french = Bulletin.objects.create(title="Bonjour", locale="fr")
+    english = Bulletin.objects.create(title="Hello", locale="en")
+    rag.register(Bulletin, fields=["title"], language_field="locale")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.language) for document in documents
+    ] == [
+        (french.pk, "Bonjour", "fr"),
+        (english.pk, "Hello", "en"),
+    ]
+
+
+@pytest.mark.django_db
+def test_guessed_language_field_is_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two notices: a language column left out of the select but read anyway
+    # would show as one more query per notice.
+    french = Notice.objects.create(title="Bonjour", language="fr")
+    english = Notice.objects.create(title="Hello", language="en")
+    rag.register(Notice, fields=["title"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.language) for document in documents
+    ] == [
+        (french.pk, "Bonjour", "fr"),
+        (english.pk, "Hello", "en"),
+    ]
+
+
+@pytest.mark.django_db
+def test_own_url_field_is_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two bookmarks: a link column left out of the select but read anyway
+    # would show as one more query per bookmark.
+    docs = Bookmark.objects.create(title="Docs", link="/docs/a/")
+    example = Bookmark.objects.create(title="Example", link="https://example.com/b")
+    rag.register(Bookmark, fields=["title"], url_field="link")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.url) for document in documents
+    ] == [
+        (docs.pk, "Docs", "/docs/a/"),
+        (example.pk, "Example", "https://example.com/b"),
+    ]
+
+
+@pytest.mark.django_db
+def test_foreign_key_the_default_manager_selects_stays_loaded_and_joined(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # The default manager of Listing joins its category with select_related():
+    # deferring that foreign key, though no declared field reads it, would make
+    # Django refuse the query, and losing the join, or a column the documents
+    # read, would show as more than one query.
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    hammer = Listing.objects.create(title="Hammer", link="/hammer/", category=tools)
+    rake = Listing.objects.create(title="Rake", link="/rake/", category=garden)
+    rag.register(Listing, fields=["title"], url_field="link")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.url) for document in documents
+    ] == [
+        (hammer.pk, "Hammer", "/hammer/"),
+        (rake.pk, "Rake", "/rake/"),
+    ]
+
+
+@pytest.mark.django_db
+def test_relation_the_default_manager_selects_past_a_lookup_path_stays_joined(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # The default manager of Offer joins its product, then the product's
+    # category, with select_related(): deferring the product's category, though
+    # the lookup path reads only the product's name, would make Django refuse
+    # the query, and losing a join, or a column the documents read, would show
+    # as more than one query.
+    hammer = create_product(name="Hammer", description="Steel.", price="9.90")
+    rake = create_product(name="Rake", description="Wooden.", price="14.50")
+    spring = Offer.objects.create(title="Spring sale", product=hammer)
+    autumn = Offer.objects.create(title="Autumn sale", product=rake)
+    rag.register(Offer, fields=["title", "product__name"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (spring.pk, "Spring sale\n\nHammer"),
+        (autumn.pk, "Autumn sale\n\nRake"),
+    ]
 
 
 def test_unregistering_a_model_that_is_not_registered_fails() -> None:
