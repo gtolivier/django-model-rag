@@ -3,7 +3,7 @@ from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
-from tests.testapp.models import Category, Digest, Product
+from tests.testapp.models import Category, Digest, Panel, Product
 
 
 def create_product(*, name: str, description: str, price: str) -> Product:
@@ -507,6 +507,41 @@ def test_declared_own_fields_load_only_their_columns(
         (monthly.pk, "Monthly news", "Monthly news"),
     ]
     assert "summary" not in queries.captured_queries[0]["sql"]
+
+
+@pytest.mark.django_db
+def test_several_declared_own_fields_load_only_their_columns(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two panels: a heading, name or title column left out of the select but
+    # read anyway would show as one more query per panel.
+    faq = Panel.objects.create(
+        body="Answers to common questions.",
+        label="FAQ",
+        heading="Frequently asked",
+        name="faq",
+        title="Questions",
+    )
+    help_panel = Panel.objects.create(
+        body="Where to get support.",
+        label="Help",
+        heading="Getting help",
+        name="help",
+        title="Support",
+    )
+    rag.register(Panel, fields=["label", "body"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.title) for document in documents
+    ] == [
+        (faq.pk, "FAQ\n\nAnswers to common questions.", "FAQ"),
+        (help_panel.pk, "Help\n\nWhere to get support.", "Help"),
+    ]
+    sql = queries.captured_queries[0]["sql"]
+    assert [column for column in ("title", "heading", "name") if column in sql] == []
 
 
 def test_unregistering_a_model_that_is_not_registered_fails() -> None:
