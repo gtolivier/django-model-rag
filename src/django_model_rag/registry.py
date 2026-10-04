@@ -297,6 +297,18 @@ def _require_text_language(language: object) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _require_permission_names(permissions: object) -> None:
+    """Fail unless ``permissions`` is a list or a tuple.
+
+    Raises:
+        ImproperlyConfigured: ``permissions`` is not a list or a tuple (a
+            bare string or a set, say).
+    """
+    if not isinstance(permissions, list | tuple):
+        message = "permissions must be a list or a tuple of strings"
+        raise ImproperlyConfigured(message)
+
+
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
 
@@ -398,11 +410,12 @@ class Registry:
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields``, ``exclude`` or ``follow`` is not
-                a list or a tuple; no field is declared, a field is declared
-                or excluded twice, or a field (``title_field``,
-                ``language_field``, ``url_field`` and ``exclude`` included) is
-                not one of the model's or is a relation;
+            ImproperlyConfigured: ``fields``, ``exclude``, ``follow`` or
+                ``permissions`` is not a list or a tuple; no field is
+                declared, a field is declared or excluded twice, or a field
+                (``title_field``, ``language_field``, ``url_field`` and
+                ``exclude`` included) is not one of the model's or is a
+                relation;
                 ``exclude`` is combined with ``fields``, or ``language`` with
                 ``language_field``; ``language`` is blank or not a string;
                 without ``fields`` and ``follow``, the model has no text
@@ -435,9 +448,7 @@ class Registry:
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
-        if not isinstance(permissions, list | tuple):
-            msg = "permissions must be a list or a tuple of strings"
-            raise ImproperlyConfigured(msg)
+        _require_permission_names(permissions)
         granted = tuple(permissions)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
             declared,
