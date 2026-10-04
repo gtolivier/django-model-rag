@@ -97,7 +97,9 @@ def _accessor_name(model: type[Model], step: str) -> str:
     relation = model._meta.get_field(step)
     if isinstance(relation, ForeignObjectRel):
         return relation.get_accessor_name() or step
-    return step
+    # a foreign key named by its column, such as category_id, is read as the
+    # related object, as in values()
+    return relation.name
 
 
 def _related_instance(instance: Model, step: str) -> Model | None:
