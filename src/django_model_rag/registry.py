@@ -43,6 +43,23 @@ def _guessed_fields(
     return guessed
 
 
+def _model_through(model: type[Model], step: str, path: str) -> type[Model]:
+    """Return the model ``model``'s relation ``step``, a link of ``path``, leads to.
+
+    Raises:
+        FieldDoesNotExist: ``model`` has no field ``step``.
+        ImproperlyConfigured: ``step`` is not a relation.
+    """
+    related_model = model._meta.get_field(step).related_model
+    if related_model is None:
+        message = (
+            f"{model.__name__}.{step} is not a relation, "
+            f"so {path!r} cannot go through it"
+        )
+        raise ImproperlyConfigured(message)
+    return related_model
+
+
 def _require_content_field(model: type[Model], path: str) -> None:
     """Fail unless ``model`` has a non-relation field at ``path``.
 
@@ -51,19 +68,12 @@ def _require_content_field(model: type[Model], path: str) -> None:
 
     Raises:
         ImproperlyConfigured: ``model`` has no such field, or it is a
-            relation.
+            relation; or a link of ``path`` is not a relation.
     """
     *steps, field_name = path.split(LOOKUP_SEP)
     try:
         for step in steps:
-            related_model = model._meta.get_field(step).related_model
-            if related_model is None:
-                message = (
-                    f"{model.__name__}.{step} is not a relation, "
-                    f"so {path!r} cannot go through it"
-                )
-                raise ImproperlyConfigured(message)
-            model = related_model
+            model = _model_through(model, step, path)
         field = model._meta.get_field(field_name)
     except FieldDoesNotExist as error:
         message = f"{model.__name__} has no field {path!r}"
