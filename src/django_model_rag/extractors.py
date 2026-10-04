@@ -1,7 +1,7 @@
 """The extractors: the base class of custom ones, and the one of declared fields."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
@@ -72,7 +72,7 @@ class BaseExtractor(ABC, Generic[M]):
         url: str = "",
         language: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-        permissions: Iterable[str] = (),
+        permissions: Collection[str] = (),
     ) -> NormalizedDocument:
         """Build a document with ``text``, its source taken from ``instance``."""
         return NormalizedDocument(
@@ -84,7 +84,7 @@ class BaseExtractor(ABC, Generic[M]):
             url=url,
             language=language,
             metadata=metadata or {},
-            permissions=frozenset(permissions),
+            permissions=permissions,
         )
 
 
