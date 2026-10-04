@@ -107,16 +107,18 @@ refactoring, not from the prototype.
   or `""`, never the next source. `permissions=["app_label.codename", ...]`
   puts a `frozenset` on every document of the model, and custom extractors
   pass their own through `build_document`.
-- [ ] **7b. The shape of the queryset** — now that the pipeline reads a
-  known set of attributes from an instance, load only those columns
-  (`QuerySet.only()`): each attribute read outside them would then cost a
-  query per instance, so the set must be exact. Give custom extractors an
-  optional hook to shape their queryset (`select_related`,
-  `prefetch_related`, iterated with `iterator(chunk_size=...)`), so that
-  one reading relations does not make a query per instance. The pipeline
-  reads `follow` by duck typing today: replace that with the hook. The
+- [x] **7b. The shape of the queryset** — `BaseExtractor.get_queryset()`
+  shapes the queryset the instances are loaded from (`select_related`,
+  `prefetch_related`…); it must return a `QuerySet`, and the pipeline
+  iterates it with `iterator(chunk_size=1000)`. A single-instance run does
+  not go through it. The extractor built by `register()` uses it to load
+  only the columns it reads: its own declared fields and single-field
+  options, the related columns its lookup paths name, and the text columns
+  of followed relations with the fields that link them back. Every own
+  column stays loaded when `get_absolute_url()` or `str(instance)` may read
+  any of them. The pipeline no longer duck-types extractors, and the
   single-field options (`title_field`, `language_field`, `url_field`) are
-  also listed twice, in the registry and in the pipeline.
+  listed once.
 - [ ] **8. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.
