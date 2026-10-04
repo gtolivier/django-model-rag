@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -481,6 +481,26 @@ def test_extractor_get_queryset_returning_a_list_fails_naming_the_extractor() ->
     with pytest.raises(
         TypeError, match=r"ListingCategoryExtractor\.get_queryset\(\).*QuerySet"
     ):
+        SyncPipeline().run()
+
+
+@pytest.mark.django_db
+def test_extractor_get_queryset_returning_values_fails_naming_the_extractor() -> None:
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class ValuesCategoryExtractor(BaseExtractor[Category]):
+        # A values() queryset, which loads dictionaries instead of instances,
+        # is the slip under test: the type checker rightly rejects it.
+        def get_queryset(  # type: ignore[override]
+            self, queryset: QuerySet[Category]
+        ) -> QuerySet[Category, Mapping[str, object]]:
+            return queryset.values("pk", "name")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text="A category.")
+
+    with pytest.raises(TypeError, match=r"ValuesCategoryExtractor\.get_queryset\(\)"):
         SyncPipeline().run()
 
 
