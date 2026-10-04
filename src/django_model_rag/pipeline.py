@@ -22,7 +22,7 @@ def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
 def _followed_foreign_keys(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
-    """List the relations ``extractor`` follows that are foreign keys of ``model``."""
+    """List the foreign keys and one-to-one fields ``extractor`` follows."""
     followed = _followed(extractor)
     # a followed name may be a reverse accessor, which is no field name:
     # look among the concrete fields instead of calling get_field()
@@ -58,9 +58,9 @@ def _followed_many_to_many(
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    The followed foreign keys come with each instance, in the same query, and
-    the followed reverse foreign keys and many-to-many fields in one more query
-    each for all the instances.
+    The followed foreign keys and one-to-one fields come with each instance, in
+    the same query, and the followed reverse foreign keys and many-to-many
+    fields in one more query each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
     # select_related() without a field is deprecated
