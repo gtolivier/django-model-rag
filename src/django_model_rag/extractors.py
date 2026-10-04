@@ -181,7 +181,10 @@ def _document_text(field_texts: list[str]) -> str:
 
 
 _GUESSED_LANGUAGE_FIELDS = ("language", "language_code")
-"""The names of the own field read as the language when none is declared."""
+"""The names of an own field read as the language when none is declared.
+
+The first name the model has wins.
+"""
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
@@ -227,12 +230,14 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         )
 
     def _language(self, instance: Model) -> str | None:
-        """Read the language field of ``instance``, declared or named ``language``."""
+        """Read the language field of ``instance``, declared or guessed by name."""
         own_fields = {field.name for field in instance._meta.get_fields()}
         candidates = (
             (self.language_field,) if self.language_field else _GUESSED_LANGUAGE_FIELDS
         )
-        name = next((name for name in candidates if name in own_fields), None)
+        name = next(
+            (candidate for candidate in candidates if candidate in own_fields), None
+        )
         if name is None:
             return None
         return _stripped_text(getattr(instance, name)) or None
