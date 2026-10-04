@@ -239,6 +239,13 @@ def guessed_language_field(model: type[Model]) -> str | None:
 # a select_related() lookup, mapped to the related model and its fields read
 _ReadByPrefix: TypeAlias = dict[str, tuple[type[Model], set[str]]]
 
+# quoted: Django's Field is generic for the type checker only
+_RelationsByAccessor: TypeAlias = dict[str, "Field[Any, Any] | ForeignObjectRel"]
+"""Relations, forward or reverse, mapped by their accessor."""
+
+# a lookup path, mapped to the run of single-object relations it starts with
+_SelectedRuns: TypeAlias = dict[str, list[PathLink]]
+
 
 def _lookup_paths(read_fields: Iterable[str]) -> list[str]:
     """Return, once each, the lookup paths among the ``read_fields``."""
@@ -267,28 +274,34 @@ def _is_prefetched(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
 
 
 def _is_reverse_foreign_key(
-    relation: "Field[Any, Any] | ForeignObjectRel | None",
+    relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> TypeGuard[ForeignObjectRel]:
     """Tell whether ``relation`` is a reverse foreign key, to the related objects."""
     return isinstance(relation, ForeignObjectRel) and bool(relation.one_to_many)
 
 
-def _sorted_relations(
+def _followed_relations(
     model: type[Model], followed: Sequence[str]
+) -> _RelationsByAccessor:
+    """Map each relation ``followed`` from ``model`` by its accessor, in order."""
+    relations = relations_by_accessor(model)
+    return {
+        accessor: relations[accessor] for accessor in followed if accessor in relations
+    }
+
+
+def _sorted_relations(
+    followed: _RelationsByAccessor,
 ) -> "tuple[list[str], list[str | Prefetch[Any]]]":
-    """Sort the relations ``followed`` from ``model`` by how they are read.
+    """Sort the ``followed`` relations by how they are read.
 
     Returns:
         The names to give select_related(), then the lookups to give
         prefetch_related().
     """
-    relations = relations_by_accessor(model)
     selected: list[str] = []
     prefetched: list[str | Prefetch[Any]] = []
-    for accessor in followed:
-        relation = relations.get(accessor)
-        if relation is None:
-            continue
+    for accessor, relation in followed.items():
         if _is_selected(relation):
             selected.append(query_name(relation))
         elif _is_prefetched(relation):
@@ -358,19 +371,16 @@ def _query_path(run: Sequence[PathLink]) -> str:
     return LOOKUP_SEP.join(link.query_name for link in run)
 
 
-def _selected_path_prefixes(model: type[Model], paths: Iterable[str]) -> list[str]:
-    """Return the run of single-object relations each lookup path starts with."""
-    runs = (_selected_run(model, path) for path in paths)
-    return [_query_path(run) for run in runs if run]
+def _selected_runs(model: type[Model], paths: Iterable[str]) -> _SelectedRuns:
+    """Map each lookup path from ``model`` to the run it starts with, if any."""
+    return {path: run for path in paths if (run := _selected_run(model, path))}
 
 
-def _followed_read(model: type[Model], followed: Sequence[str]) -> _ReadByPrefix:
+def _followed_read(followed: _RelationsByAccessor) -> _ReadByPrefix:
     """Map each ``followed`` selected relation to its model and its text fields."""
-    relations = relations_by_accessor(model)
     read: _ReadByPrefix = {}
-    for accessor in followed:
-        relation = relations.get(accessor)
-        if relation is None or not _is_selected(relation):
+    for relation in followed.values():
+        if not _is_selected(relation):
             continue
         owner = relation.related_model
         # for the type checker only: a selected relation leads to a model
@@ -380,16 +390,15 @@ def _followed_read(model: type[Model], followed: Sequence[str]) -> _ReadByPrefix
 
 
 def _read_by_prefix(
-    model: type[Model], paths: Iterable[str], followed: Sequence[str]
+    runs: _SelectedRuns, followed: _RelationsByAccessor
 ) -> _ReadByPrefix:
     """Map each selected relation followed or prefixing a lookup path to its reads.
 
     The value is the related model, and the names of its fields read: its text
     fields for a followed relation, those the paths name for a prefix.
     """
-    read = _followed_read(model, followed)
-    for path in paths:
-        run = _selected_run(model, path)
+    read = _followed_read(followed)
+    for path, run in runs.items():
         names = path.split(LOOKUP_SEP)
         for depth, link in enumerate(run, start=1):
             owner = link.relation.related_model
@@ -402,12 +411,12 @@ def _read_by_prefix(
 
 
 def _unread_related_columns(
-    model: type[Model], paths: Iterable[str], followed: Sequence[str]
+    runs: _SelectedRuns, followed: _RelationsByAccessor
 ) -> list[str]:
     """Return the lookup names of the selected related columns never read."""
     return [
         f"{prefix}{LOOKUP_SEP}{name}"
-        for prefix, (owner, read) in _read_by_prefix(model, paths, followed).items()
+        for prefix, (owner, read) in _read_by_prefix(runs, followed).items()
         for name in _unread_field_names(owner, read)
     ]
 
@@ -426,7 +435,7 @@ def _unread_field_names(model: type[Model], read: set[str]) -> list[str]:
 
 
 def _unread_columns(
-    model: type[Model], read_fields: Iterable[str], followed: Sequence[str]
+    model: type[Model], read_fields: Iterable[str], followed: _RelationsByAccessor
 ) -> list[str]:
     """Return the names of ``model``'s own columns never read.
 
@@ -435,7 +444,7 @@ def _unread_columns(
     the columns the followed relations' prefetches match by.
     """
     read = {name.split(LOOKUP_SEP)[0] for name in (*read_fields, *followed)}
-    read |= _prefetch_match_columns(model, followed)
+    read |= _prefetch_match_columns(followed)
     return _unread_field_names(model, read)
 
 
@@ -461,29 +470,28 @@ def _joined_paths(joined: object, prefix: str = "") -> set[str]:
 
 
 def _deferrable_related_columns(
-    queryset: QuerySet[Model], paths: Iterable[str], followed: Sequence[str]
+    queryset: QuerySet[Model], runs: _SelectedRuns, followed: _RelationsByAccessor
 ) -> list[str]:
     """Return the selected related columns never read that ``queryset`` can defer.
 
     A relation the queryset joins deeper cannot be deferred.
     """
     joined = _joined_paths(queryset.query.select_related)
-    unread = _unread_related_columns(queryset.model, paths, followed)
+    unread = _unread_related_columns(runs, followed)
     return [name for name in unread if name not in joined]
 
 
-def _prefetch_match_columns(model: type[Model], followed: Sequence[str]) -> set[str]:
+def _prefetch_match_columns(followed: _RelationsByAccessor) -> set[str]:
     """Return the names of the columns the ``followed`` prefetches match by."""
-    relations = relations_by_accessor(model)
     return {
         column
-        for accessor in followed
-        if (column := _prefetch_match_column(relations.get(accessor))) is not None
+        for relation in followed.values()
+        if (column := _prefetch_match_column(relation)) is not None
     }
 
 
 def _prefetch_match_column(
-    relation: "Field[Any, Any] | ForeignObjectRel | None",
+    relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> str | None:
     """Return the name of the parent's column a prefetch of ``relation`` matches by.
 
@@ -499,7 +507,7 @@ def _prefetch_match_column(
 
 
 def _through_key_to_parent(
-    relation: "Field[Any, Any] | ForeignObjectRel | None",
+    relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> "Field[Any, Any] | ForeignObjectRel | None":
     """Return the field of ``relation``'s through model that links to the parent.
 
@@ -586,18 +594,19 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         """
         model = queryset.model
         read_fields = [*self.fields, *self.single_fields]
+        followed = _followed_relations(model, self.follow)
         if self._reads_only_named_columns(model):
             # a foreign key the queryset already joins cannot be deferred
             kept = [*read_fields, *_joined_relations(queryset)]
-            queryset = queryset.defer(*_unread_columns(model, kept, self.follow))
-        selected, prefetched = _sorted_relations(model, self.follow)
-        paths = _lookup_paths(read_fields)
-        selected.extend(_selected_path_prefixes(model, paths))
+            queryset = queryset.defer(*_unread_columns(model, kept, followed))
+        selected, prefetched = _sorted_relations(followed)
+        runs = _selected_runs(model, _lookup_paths(read_fields))
+        selected.extend(_query_path(run) for run in runs.values())
         # never select_related() without a field: it would follow every non-null
         # foreign key, followed or not
         if selected:
             queryset = queryset.select_related(*selected)
-            if unread := _deferrable_related_columns(queryset, paths, self.follow):
+            if unread := _deferrable_related_columns(queryset, runs, followed):
                 queryset = queryset.defer(*unread)
         if prefetched:
             queryset = queryset.prefetch_related(*prefetched)
