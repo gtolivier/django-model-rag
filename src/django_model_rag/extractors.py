@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Generic, TypeVar, cast
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import CharField, Field, Model, TextField
+from django.db.models import CharField, Field, Model, QuerySet, TextField
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.fields.reverse_related import ForeignObjectRel
 from django.db.models.manager import BaseManager
@@ -63,6 +63,10 @@ class BaseExtractor(ABC, Generic[M]):
         self, instance: M
     ) -> NormalizedDocument | Iterable[NormalizedDocument] | None:
         """Build the document(s) of ``instance``, or nothing to skip it."""
+
+    def get_queryset(self, queryset: QuerySet[M]) -> QuerySet[M]:
+        """Shape the ``queryset`` the instances to extract are read from."""
+        return queryset
 
     def build_document(  # noqa: PLR0913  # one keyword per document field
         self,

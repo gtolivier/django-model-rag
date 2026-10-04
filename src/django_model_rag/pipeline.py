@@ -130,6 +130,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
         queryset = queryset.select_related(*selected)
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)
+    queryset = extractor.get_queryset(queryset)
     return queryset.iterator(chunk_size=_CHUNK_SIZE)
 
 
