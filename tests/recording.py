@@ -27,6 +27,17 @@ class RecordingOutput:
         self.pruned.append((model_label, set(kept_keys)))
         self.calls.append("prune")
 
+    def received_groups(self) -> dict[str, list[NormalizedDocument]]:
+        """Every group received, merged into one mapping across replace calls.
+
+        run() may split a model's groups across several calls.
+        """
+        return {
+            source_key: list(group)
+            for groups in self.replaced
+            for source_key, group in groups.items()
+        }
+
     def documents(self) -> list[NormalizedDocument]:
         """Every document received, flattened in the order received.
 

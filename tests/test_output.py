@@ -94,12 +94,7 @@ def test_pipeline_hands_each_instance_documents_to_its_output_by_source_key() ->
     instance_output = RecordingOutput()
     SyncPipeline(output=instance_output).run_instance(about)
 
-    # run() may split its groups across several calls: merge them.
-    run_groups = {
-        source_key: group
-        for groups in run_output.replaced
-        for source_key, group in groups.items()
-    }
+    run_groups = run_output.received_groups()
     assert run_groups == {
         f"testapp.page:{faq.pk}": [
             NormalizedDocument(
@@ -149,7 +144,7 @@ def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
     output = RecordingOutput()
     SyncPipeline(output).run()
 
-    received_keys = {key for groups in output.replaced for key in groups}
+    received_keys = set(output.received_groups())
     assert f"testapp.category:{lighting.pk}" in received_keys
     assert f"testapp.category:{empty.pk}" not in received_keys
 
@@ -332,7 +327,7 @@ def test_pipeline_rejects_a_document_whose_source_is_another_model() -> None:
     with pytest.raises(TypeError, match="MisattributingCategoryExtractor"):
         SyncPipeline(output).run()
 
-    received_keys = {key for groups in output.replaced for key in groups}
+    received_keys = set(output.received_groups())
     assert f"testapp.page:{faq.pk}" not in received_keys
 
 
