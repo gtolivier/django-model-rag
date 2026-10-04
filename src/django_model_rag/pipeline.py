@@ -27,7 +27,11 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
 
 
 def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet[Model]:
-    """Return what ``extractor``'s get_queryset() hooked, failing on a non-queryset."""
+    """Return what ``extractor``'s get_queryset() hooked.
+
+    Raises:
+        TypeError: it is not a QuerySet of model instances.
+    """
     if not isinstance(hooked, QuerySet):
         raise TypeError(
             f"{type(extractor).__name__}.get_queryset() must return a QuerySet, "
