@@ -67,9 +67,20 @@ def _followed_reverse_foreign_keys(
 def _followed_many_to_many(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
-    """List the names of the many-to-many fields of ``model`` ``extractor`` follows."""
+    """List the many-to-many relations of ``model`` ``extractor`` follows.
+
+    These are the many-to-many fields and their reverse accessors.
+    """
     followed = _followed(extractor)
-    return [field.name for field in model._meta.many_to_many if field.name in followed]
+    forward = [
+        field.name for field in model._meta.many_to_many if field.name in followed
+    ]
+    reverse = [
+        accessor
+        for relation, accessor in _followed_reverse_relations(model, extractor)
+        if relation.many_to_many
+    ]
+    return [*forward, *reverse]
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
