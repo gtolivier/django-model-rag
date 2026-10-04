@@ -426,6 +426,8 @@ class Registry:
             _require_content_field(model, title_field)
         if language_field is not None:
             _require_content_field(model, language_field)
+        if url_field is not None:
+            _require_content_field(model, url_field)
         if follow:
             _require_models_ready(model, "follow relations")
             _require_followable_relations(model, follow)
