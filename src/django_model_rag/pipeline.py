@@ -130,14 +130,18 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
         queryset = queryset.select_related(*selected)
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)
-    queryset = extractor.get_queryset(queryset)
-    if not isinstance(queryset, QuerySet):
-        name = type(extractor).__name__
+    hooked = _checked_queryset(extractor.get_queryset(queryset), extractor)
+    return hooked.iterator(chunk_size=_CHUNK_SIZE)
+
+
+def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet[Model]:
+    """Return what ``extractor``'s get_queryset() hooked, failing on a non-queryset."""
+    if not isinstance(hooked, QuerySet):
         raise TypeError(
-            f"{name}.get_queryset() must return a QuerySet, "
-            f"not a {type(queryset).__name__}"
+            f"{type(extractor).__name__}.get_queryset() must return a QuerySet, "
+            f"not a {type(hooked).__name__}"
         )
-    return queryset.iterator(chunk_size=_CHUNK_SIZE)
+    return hooked
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
