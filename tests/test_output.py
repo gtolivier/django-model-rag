@@ -155,6 +155,19 @@ def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
 
 
 @pytest.mark.django_db
+def test_run_instance_hands_an_empty_group_for_an_instance_without_documents() -> None:
+    # run_instance() prunes nothing: replacing the instance's documents with
+    # none is the only way to delete what the output still holds for it.
+    empty = Category.objects.create(name="")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(empty)
+
+    assert output.replaced == [{f"testapp.category:{empty.pk}": []}]
+
+
+@pytest.mark.django_db
 def test_pipeline_prunes_a_model_without_instances_keeping_no_key() -> None:
     # No instance left: every document the output still holds for the model
     # is stale, and only prune can delete them.
