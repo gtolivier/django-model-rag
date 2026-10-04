@@ -160,15 +160,14 @@ def _related_instance(instance: Model, accessor: str) -> Model | None:
     return related
 
 
-def _field_text(instance: Model, name: str, *, stored: bool = False) -> str:
+def _field_text(instance: Model, name: str) -> str:
     """Read the own field ``name`` of ``instance`` as stripped text.
 
-    A field with choices reads as its label, unless ``stored`` asks for the
-    stored value.
+    A field with choices reads as its label.
     """
     value = getattr(instance, name)
     # Django adds get_<name>_display only to fields that have choices
-    if not stored and getattr(instance._meta.get_field(name), "choices", None):
+    if getattr(instance._meta.get_field(name), "choices", None):
         value = getattr(instance, f"get_{name}_display")()
     return _stripped_text(value)
 
@@ -277,31 +276,40 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         if self.language is not None:
             return self.language
         if self.language_field and LOOKUP_SEP in self.language_field:
-            return (
-                self._declared_text(instance, self.language_field, stored=True) or None
-            )
+            path_end = self._path_end(instance, self.language_field)
+            if path_end is None:
+                return None
+            owner, field_name = path_end
+            return _stripped_text(getattr(owner, field_name)) or None
         name = language_field_name(type(instance), self.language_field)
         if name is None:
             return None
         return _stripped_text(getattr(instance, name)) or None
 
-    def _declared_text(
-        self, instance: Model, path: str, *, stored: bool = False
-    ) -> str:
+    def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
-
-        ``stored`` reads a field with choices as its stored value.
 
         ``path`` may be a lookup path, such as ``category__name``, to read a
         field of a related instance.
+        """
+        path_end = self._path_end(instance, path)
+        if path_end is None:
+            return ""
+        owner, name = path_end
+        return _field_text(owner, name)
+
+    def _path_end(self, instance: Model, path: str) -> tuple[Model, str] | None:
+        """Give the instance holding the last field of ``path``, and its name.
+
+        ``None`` when a link of ``path`` from ``instance`` is unset.
         """
         *_, name = path.split(LOOKUP_SEP)
         for accessor in self._accessors(type(instance), path):
             related = _related_instance(instance, accessor)
             if related is None:
-                return ""
+                return None
             instance = related
-        return _field_text(instance, name, stored=stored)
+        return instance, name
 
     def _accessors(self, model: type[Model], path: str) -> list[str]:
         """List the attributes crossing the links of ``path`` from ``model``.
