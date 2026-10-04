@@ -5,7 +5,7 @@ from contextlib import suppress
 from typing import Any
 
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Field, ForeignObjectRel, Model
+from django.db.models import Field, ForeignObjectRel, Model, QuerySet
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
@@ -131,6 +131,12 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)
     queryset = extractor.get_queryset(queryset)
+    if not isinstance(queryset, QuerySet):
+        name = type(extractor).__name__
+        raise TypeError(
+            f"{name}.get_queryset() must return a QuerySet, "
+            f"not a {type(queryset).__name__}"
+        )
     return queryset.iterator(chunk_size=_CHUNK_SIZE)
 
 
