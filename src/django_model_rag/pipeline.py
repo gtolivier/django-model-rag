@@ -5,7 +5,7 @@ from contextlib import suppress
 from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist
-from django.db.models import Field, ForeignObjectRel, Model, QuerySet
+from django.db.models import Field, ForeignObjectRel, Model, Prefetch, QuerySet
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
@@ -116,6 +116,25 @@ def _sorted_relations(
         elif _is_prefetched(relation):
             prefetched.append(accessor)
     return selected, prefetched
+
+
+def _prefetch(model: type[Model], accessor: str) -> "str | Prefetch[Any]":
+    """Return what to give prefetch_related() for the relation ``accessor``.
+
+    A reverse foreign key loads only its text columns and its link back.
+    """
+    relation = relations_by_accessor(model).get(accessor)
+    if isinstance(relation, ForeignObjectRel) and relation.one_to_many:
+        related = relation.related_model
+        # for the type checker only: a reverse relation leads to a model
+        if isinstance(related, type):
+            return Prefetch(
+                accessor,
+                queryset=related._default_manager.only(
+                    "pk", *text_fields(related), relation.field.name
+                ),
+            )
+    return accessor
 
 
 def _selected_run(model: type[Model], path: str) -> list[PathLink]:
@@ -249,7 +268,9 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
         if unread := _unread_related_columns(model, extractor):
             queryset = queryset.defer(*unread)
     if prefetched:
-        queryset = queryset.prefetch_related(*prefetched)
+        queryset = queryset.prefetch_related(
+            *(_prefetch(model, accessor) for accessor in prefetched)
+        )
     hooked = _checked_queryset(extractor.get_queryset(queryset), extractor)
     return hooked.iterator(chunk_size=_CHUNK_SIZE)
 
