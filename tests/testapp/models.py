@@ -513,3 +513,17 @@ class Flyer(models.Model):
 class Bookmark(models.Model):
     title = models.CharField(max_length=200)
     link = models.CharField(max_length=200)
+
+
+# --- A URL held in an own field, next to a get_absolute_url -------------
+# A Pamphlet has both a get_absolute_url and its own nullable CharField named
+# ``link``: its link may be filled, blank or unknown, stored as None, while
+# get_absolute_url always gives a URL.
+
+
+class Pamphlet(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(max_length=200, blank=True, null=True)  # noqa: DJ001 -- the test bench needs a url field whose value can be None
+
+    def get_absolute_url(self) -> str:
+        return f"/pamphlets/{self.pk}/"

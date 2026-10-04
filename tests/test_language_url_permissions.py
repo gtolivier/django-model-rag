@@ -22,6 +22,7 @@ from tests.testapp.models import (
     Memo,
     Notice,
     Page,
+    Pamphlet,
 )
 
 
@@ -287,6 +288,22 @@ def test_url_field_gives_each_document_its_stripped_value_relative_or_absolute()
     assert {document.text: document.url for document in documents} == {
         "Docs": "/docs/a/",
         "Example": "https://example.com/b",
+    }
+
+
+@pytest.mark.django_db
+def test_url_field_wins_over_get_absolute_url_even_when_blank_or_null() -> None:
+    Pamphlet.objects.create(title="Filled", link="  https://example.com/p  ")
+    Pamphlet.objects.create(title="Blank", link="   ")
+    Pamphlet.objects.create(title="Null", link=None)
+    rag.register(Pamphlet, fields=["title"], url_field="link")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "Filled": "https://example.com/p",
+        "Blank": "",
+        "Null": "",
     }
 
 
