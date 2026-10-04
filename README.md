@@ -227,6 +227,16 @@ key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
 in chunks of 1000. `run_instance` makes at most one query per relation it crosses.
 
+Those queries load only the columns the documents read: the declared
+fields, the title, language and URL fields, the related columns a lookup
+path names, and the text fields of a followed relation with what links it
+back. A model whose `get_absolute_url()` builds the URL (no `url_field`), or
+whose title falls back on `str(instance)`, keeps all its own columns, since
+either may read any of them. A custom extractor shapes the queryset its
+instances are loaded from by overriding `get_queryset(queryset)` — to add
+`select_related` or `prefetch_related`, say — and must return a `QuerySet`;
+`run_instance` does not go through it.
+
 ## Requirements
 
 - Python 3.11+
