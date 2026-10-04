@@ -280,6 +280,26 @@ class PageIntro(models.Model):
     body = models.TextField()
 
 
+# --- A one-to-one relation with its own query name ----------------------
+# A Supplier may have one SupplierProfile, or none: the Supplier reaches it by
+# the reverse one-to-one accessor ``profile``, while the query name of the
+# relation, set by related_query_name, is ``supplier_profile``.
+
+
+class Supplier(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class SupplierProfile(models.Model):
+    supplier = models.OneToOneField(
+        Supplier,
+        related_name="profile",
+        related_query_name="supplier_profile",
+        on_delete=models.CASCADE,
+    )
+    body = models.TextField()
+
+
 # --- Multi-table inheritance --------------------------------------------
 # A FeaturedProduct is a Product with a tagline of its own: it inherits the
 # Product's fields and relations, and Django links it to its parent row by

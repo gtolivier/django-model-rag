@@ -25,6 +25,8 @@ from tests.testapp.models import (
     Review,
     Step,
     StockLevel,
+    Supplier,
+    SupplierProfile,
     TextPlugin,
     Topic,
     Workshop,
@@ -476,6 +478,28 @@ def test_followed_reverse_one_to_one_is_read_with_its_instances_in_a_single_quer
         "About us\n\nWe build chairs by hand.",
         "Contact",
         "Visits\n\nVisits on Saturdays.",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_one_to_one_with_its_own_query_name_uses_its_accessor(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # SupplierProfile.supplier sets a related_query_name, "supplier_profile",
+    # that differs from its accessor, "profile": the relation is followed by
+    # its accessor, and still read with the suppliers in a single query. Only
+    # the second supplier has a profile.
+    Supplier.objects.create(name="Oak & Co")
+    birch = Supplier.objects.create(name="Birch Mill")
+    SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+    rag.register(Supplier, follow=["profile"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Oak & Co",
+        "Birch Mill\n\nKiln-dried boards.",
     ]
 
 
