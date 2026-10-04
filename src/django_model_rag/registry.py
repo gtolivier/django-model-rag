@@ -343,8 +343,8 @@ class Registry:
         those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
         The text of the relations named in ``follow`` comes after the fields.
-        ``language_field`` names the own field whose value is the document
-        language.
+        ``language_field`` names the field whose value is the document
+        language: an own field, or a lookup path such as ``page__language``.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.

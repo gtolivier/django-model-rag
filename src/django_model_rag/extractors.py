@@ -213,7 +213,8 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
         The text of the relations in ``follow`` comes after the fields.
-        ``language_field`` (if any) names the own field holding the language.
+        ``language_field`` (if any) names the field holding the language: an
+        own field, or a lookup path such as ``page__language``.
         """
         self.fields = fields
         self.title_field = title_field
