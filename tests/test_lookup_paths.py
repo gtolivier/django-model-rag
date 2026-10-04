@@ -2,13 +2,16 @@ import re
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import Model
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     Category,
+    Course,
     Lesson,
     Page,
+    Photo,
     Product,
     Review,
     Supplier,
@@ -261,3 +264,29 @@ def test_lookup_path_ending_on_a_relation_fails_at_registration() -> None:
     message = str(excinfo.value)
     assert "product__category" in message
     assert "a relation" in message
+
+
+@pytest.mark.parametrize(
+    ("model", "fields", "path"),
+    [
+        pytest.param(
+            Category, ["name", "products__name"], "products__name", id="reverse-fk"
+        ),
+        pytest.param(
+            Course, ["title", "topics__title"], "topics__title", id="many-to-many"
+        ),
+        pytest.param(
+            Photo, ["title", "tags__label"], "tags__label", id="generic-relation"
+        ),
+    ],
+)
+def test_lookup_path_through_a_many_valued_relation_fails_at_registration(
+    model: type[Model], fields: list[str], path: str
+) -> None:
+    # Each first link can hold several objects: the path has no single value.
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(model, fields=fields)
+
+    message = str(excinfo.value)
+    assert path in message
+    assert "several" in message
