@@ -206,7 +206,7 @@ refactoring, not from the prototype.
     the prefetch that loads only its text columns. A quick check on the test
     bench (`Offer`, followed from `Product`) ran in two queries with the
     right text, but no test pins it down.
-- [ ] **8. The output** — `SyncPipeline(output=...)` hands the documents to
+- [x] **8. The output** — `SyncPipeline(output=...)` hands the documents to
   an output that the project supplies, as decided under "The output", above:
   - the output's Protocol, importable from `django_model_rag`, with
     `replace(groups)` and `prune(model_label, kept_keys)`, typed against
@@ -218,9 +218,10 @@ refactoring, not from the prototype.
   - `run_instance()` sends its instance's group, even empty;
   - a document whose source is not the instance it was extracted from fails
     with a `TypeError` naming the extractor;
-  - to decide when the feature starts: what `run()` and `run_instance()`
-    return when they have an output, and whether they still work without
-    one.
+  - the output is a required argument of `SyncPipeline`, and `run()` and
+    `run_instance()` return `None`: the documents go only to the output, so
+    a large run holds no list of them. Tests read them back through an
+    output that records what it receives.
 
 Then, in django-model-rag-demo, an integration test replays the prototype's
 demo scenario against the installed package: a product with its category, a
