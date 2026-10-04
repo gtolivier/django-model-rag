@@ -258,6 +258,19 @@ def _require_fields_or_exclude(
         raise ImproperlyConfigured(message)
 
 
+def _require_single_language_source(
+    language: str | None, language_field: str | None
+) -> None:
+    """Fail if both a constant ``language`` and a ``language_field`` are given.
+
+    Raises:
+        ImproperlyConfigured: ``language`` is combined with ``language_field``.
+    """
+    if language is not None and language_field is not None:
+        message = "language and language_field cannot be combined"
+        raise ImproperlyConfigured(message)
+
+
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
 
@@ -359,7 +372,8 @@ class Registry:
                 or excluded twice, or a field (``title_field``,
                 ``language_field`` and ``exclude`` included) is not one of the
                 model's or is a relation;
-                ``exclude`` is combined with ``fields``; without ``fields``
+                ``exclude`` is combined with ``fields``, or ``language`` with
+                ``language_field``; without ``fields``
                 and ``follow``, the model has no text field, or none left once
                 ``exclude`` is applied; a name in ``follow`` is not one of the
                 model's relation accessors, is given twice, or leads to a
@@ -367,9 +381,7 @@ class Registry:
                 path; or relations are followed while models are loading.
         """
         self._require_unregistered(model)
-        if language is not None and language_field is not None:
-            message = "language and language_field cannot be combined."
-            raise ImproperlyConfigured(message)
+        _require_single_language_source(language, language_field)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
