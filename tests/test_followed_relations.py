@@ -225,6 +225,33 @@ def test_followed_foreign_key_brings_the_guessed_text_fields_of_the_related() ->
 
 
 @pytest.mark.django_db
+def test_followed_foreign_key_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two lessons, each with its own topic: the topic's slug is not text, so
+    # it is never read, and a text column left out of the select but read
+    # anyway would show as one more query per lesson.
+    joinery = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    turning = Topic.objects.create(
+        summary="Bowls and spindles.", title="Turning", slug="turning"
+    )
+    Lesson.objects.create(title="Dovetails", topic=joinery)
+    Lesson.objects.create(title="Spindles", topic=turning)
+    rag.register(Lesson, follow=["topic"])
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Dovetails\n\nJoinery\n\nJoints and finishes.",
+        "Spindles\n\nTurning\n\nBowls and spindles.",
+    ]
+    assert '"testapp_topic"."slug"' not in queries.captured_queries[0]["sql"]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_brings_the_label_of_a_related_field_with_choices() -> (
     None
 ):
