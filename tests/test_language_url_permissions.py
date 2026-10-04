@@ -136,3 +136,21 @@ def test_relation_named_language_is_not_guessed_as_the_language() -> None:
     documents = SyncPipeline().run()
 
     assert [document.language for document in documents] == [None]
+
+
+@pytest.mark.django_db
+def test_language_field_is_left_out_of_guessed_text_fields_not_declared_ones() -> None:
+    Notice.objects.create(title="Bonjour", language="fr")
+    Bulletin.objects.create(title="Hello", locale="en")
+    Circular.objects.create(title="Hallo", language_code="de")
+    rag.register(Notice)
+    rag.register(Bulletin, language_field="locale")
+    rag.register(Circular, fields=["title", "language_code"])
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour": "fr",
+        "Hello": "en",
+        "Hallo\n\nde": "de",
+    }
