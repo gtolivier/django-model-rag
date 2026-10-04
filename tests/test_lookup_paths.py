@@ -328,3 +328,14 @@ def test_lookup_path_through_a_generic_foreign_key_fails_at_registration() -> No
     assert "generic foreign key" in message
     # A generic foreign key is a relation, only one without a single model.
     assert "not a relation" not in message
+
+
+def test_lookup_path_in_exclude_fails_at_registration_naming_it() -> None:
+    # exclude removes fields from the model's own guessed text fields: a path
+    # through a relation is never among them, so there is nothing to remove.
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(Product, exclude=["category__name"])
+
+    message = str(excinfo.value)
+    assert "category__name" in message
+    assert "own field" in message
