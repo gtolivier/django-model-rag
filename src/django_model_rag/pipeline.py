@@ -7,7 +7,7 @@ from django.db.models import Field, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor, accessor_name
+from django_model_rag.extractors import BaseExtractor
 from django_model_rag.registry import rag, relations_by_accessor
 
 # iterator() prefetches per chunk: this many instances share one query
@@ -26,21 +26,14 @@ def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
     return fields
 
 
-def _read_paths(extractor: BaseExtractor[Any]) -> list[str]:
-    """Return the fields ``extractor`` declares, and its title field, if any."""
+def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
+    """Return, once each, the lookup paths among the fields ``extractor`` reads.
+
+    The fields read are those it declares, and its title field, if any.
+    """
     title_field: str | None = getattr(extractor, "title_field", None)
-    return [*_declared_fields(extractor), *([title_field] if title_field else [])]
-
-
-def _lookup_path_relations(
-    model: type[Model], extractor: BaseExtractor[Any]
-) -> list[str]:
-    """Return the accessor of the first relation of each lookup path read."""
-    return [
-        accessor_name(model, name.split(LOOKUP_SEP)[0])
-        for name in _read_paths(extractor)
-        if LOOKUP_SEP in name
-    ]
+    read = [*_declared_fields(extractor), *([title_field] if title_field else [])]
+    return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
 
 
 # quoted: Django's Field is generic for the type checker only, and before
@@ -108,31 +101,22 @@ def _selected_run(model: type[Model], path: str) -> list[str]:
 def _selected_path_prefixes(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
-    """Return the longest run of single-object relations of each lookup path."""
-    prefixes: list[str] = []
-    for path in _read_paths(extractor):
-        relation_names = _selected_run(model, path)
-        # a run of one relation is already among the first relations of the
-        # lookup paths
-        if len(relation_names) > 1:
-            prefixes.append(LOOKUP_SEP.join(relation_names))
-    return prefixes
+    """Return the run of single-object relations each lookup path starts with."""
+    runs = (_selected_run(model, path) for path in _lookup_paths(extractor))
+    return [LOOKUP_SEP.join(run) for run in runs if run]
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    The relations read are the followed ones, the first relation of each
-    lookup path and, past it, the run of foreign keys and one-to-one relations
-    the path goes on with. Their foreign keys and one-to-one relations come
-    with each instance, in the same query, and their reverse foreign keys,
-    many-to-many relations, forward or reverse, and generic relations, in one
-    more query each for all the instances.
+    The followed foreign keys and one-to-one relations, and the run of them
+    each lookup path starts with, come with each instance, in the same query.
+    The followed reverse foreign keys, many-to-many relations, forward or
+    reverse, and generic relations come in one more query each for all the
+    instances.
     """
     queryset = model._default_manager.order_by("pk")
-    selected, prefetched = _sorted_relations(
-        model, [*_followed(extractor), *_lookup_path_relations(model, extractor)]
-    )
+    selected, prefetched = _sorted_relations(model, _followed(extractor))
     selected.extend(_selected_path_prefixes(model, extractor))
     # never select_related() without a field: it would follow every non-null
     # foreign key, followed or not
