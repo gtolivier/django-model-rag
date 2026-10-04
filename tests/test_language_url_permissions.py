@@ -335,6 +335,27 @@ def test_url_field_lookup_path_reads_the_url_of_the_related_object() -> None:
     }
 
 
+@pytest.mark.django_db
+def test_url_field_lookup_path_is_read_with_its_instances_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three citations, each of its own bookmark: one query per citation would
+    # show as more than one query.
+    for title, link in [("A", "/docs/a/"), ("B", "/docs/b/"), ("C", "/docs/c/")]:
+        bookmark = Bookmark.objects.create(title=title, link=link)
+        Citation.objects.create(title=title, bookmark=bookmark)
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "A": "/docs/a/",
+        "B": "/docs/b/",
+        "C": "/docs/c/",
+    }
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
