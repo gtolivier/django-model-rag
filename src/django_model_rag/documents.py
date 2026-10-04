@@ -42,6 +42,9 @@ class NormalizedDocument:
         if isinstance(self.permissions, str):
             msg = "permissions must be a collection of strings, not a bare string"
             raise TypeError(msg)
+        if not all(isinstance(item, str) for item in self.permissions):
+            msg = "permissions must be a collection of strings"
+            raise TypeError(msg)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
         object.__setattr__(self, "permissions", frozenset(self.permissions))
 
