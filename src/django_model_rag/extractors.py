@@ -103,35 +103,6 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
-def _related_text(related: Model | BaseManager[Model] | None) -> str:
-    """Join the texts of the text fields of ``related``, title-like ones first.
-
-    ``related`` may be the manager of a reverse relation: its objects follow
-    one another, in primary key order.
-    """
-    if related is None:
-        return ""
-    if isinstance(related, BaseManager):
-        # sorted in Python, not order_by(): a prefetched relation stays prefetched
-        items = sorted(related.all(), key=lambda item: item.pk)
-        return _document_text([_related_text(item) for item in items])
-    return _document_text(
-        [_field_text(related, name) for name in text_fields(type(related))]
-    )
-
-
-def _followed_text(instance: Model, name: str) -> str:
-    """Read the text of the relation ``name`` of ``instance``.
-
-    A reverse one-to-one without an object raises, where it has no text.
-    """
-    try:
-        related = getattr(instance, name)
-    except ObjectDoesNotExist:
-        return ""
-    return _related_text(related)
-
-
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
@@ -148,6 +119,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
+        # guessed once per related model; the registry builds a fresh
+        # extractor for each run, so a redefined model is never served stale
+        self._related_text_fields: dict[type[Model], list[str]] = {}
 
     def extract(self, instance: Model) -> NormalizedDocument | None:
         """Build the document of ``instance``, or nothing when it has no text.
@@ -155,13 +129,46 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         Its text is that of its fields, then of its followed relations.
         """
         field_texts = [_field_text(instance, name) for name in self.fields]
-        followed_texts = [_followed_text(instance, name) for name in self.follow]
+        followed_texts = [self._followed_text(instance, name) for name in self.follow]
         text = _document_text(field_texts + followed_texts)
         if not text:
             return None
         return self.build_document(
             instance, text=text, title=self._title(instance, field_texts)
         )
+
+    def _followed_text(self, instance: Model, name: str) -> str:
+        """Read the text of the relation ``name`` of ``instance``.
+
+        A reverse one-to-one without an object raises, where it has no text.
+        """
+        try:
+            related = getattr(instance, name)
+        except ObjectDoesNotExist:
+            return ""
+        return self._related_text(related)
+
+    def _related_text(self, related: Model | BaseManager[Model] | None) -> str:
+        """Join the texts of the text fields of ``related``, title-like ones first.
+
+        ``related`` may be the manager of a reverse relation: its objects follow
+        one another, in primary key order.
+        """
+        if related is None:
+            return ""
+        if isinstance(related, BaseManager):
+            # sorted in Python, not order_by(): a prefetched relation stays prefetched
+            items = sorted(related.all(), key=lambda item: item.pk)
+            return _document_text([self._related_text(item) for item in items])
+        return _document_text(
+            [_field_text(related, name) for name in self._text_fields_of(type(related))]
+        )
+
+    def _text_fields_of(self, model: type[Model]) -> list[str]:
+        """List the text fields of the related ``model``, guessed on first use."""
+        if model not in self._related_text_fields:
+            self._related_text_fields[model] = text_fields(model)
+        return self._related_text_fields[model]
 
     def _title(self, instance: Model, field_texts: list[str]) -> str:
         """Take the text of the title field, or the first of ``field_texts``.
