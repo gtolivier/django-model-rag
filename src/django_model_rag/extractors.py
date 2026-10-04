@@ -180,7 +180,7 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
-_GUESSED_LANGUAGE_FIELDS = ("language", "language_code")
+_GUESSED_LANGUAGE_FIELDS = ("language", "language_code", "lang")
 """The names of an own field read as the language when none is declared.
 
 The first name the model has wins.
