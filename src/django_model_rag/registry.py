@@ -298,22 +298,31 @@ def _require_text_language(language: object) -> None:
 
 
 def _require_permission_names(permissions: object) -> None:
-    """Fail unless ``permissions`` is a list or a tuple.
+    """Fail unless ``permissions`` is a list or a tuple of permission names.
 
     Raises:
         ImproperlyConfigured: ``permissions`` is not a list or a tuple (a
-            bare string or a set, say).
+            bare string or a set, say), or one of its items is not a
+            permission name.
     """
     if not isinstance(permissions, list | tuple):
         message = "permissions must be a list or a tuple of strings"
         raise ImproperlyConfigured(message)
     for permission in permissions:
-        app_label, dot, codename = str(permission).partition(".")
-        if not (app_label and dot and codename):
-            message = (
-                f"permission {permission!r} is not of the form 'app_label.codename'"
-            )
-            raise ImproperlyConfigured(message)
+        _require_permission_name(permission)
+
+
+def _require_permission_name(permission: object) -> None:
+    """Fail unless ``permission`` is of the form ``app_label.codename``.
+
+    Raises:
+        ImproperlyConfigured: the dot, the app label or the codename is
+            missing.
+    """
+    app_label, dot, codename = str(permission).partition(".")
+    if not (app_label and dot and codename):
+        message = f"permission {permission!r} is not of the form 'app_label.codename'"
+        raise ImproperlyConfigured(message)
 
 
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
