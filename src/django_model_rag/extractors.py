@@ -446,6 +446,18 @@ def _joined_paths(joined: object, prefix: str = "") -> set[str]:
     return paths
 
 
+def _deferrable_related_columns(
+    queryset: QuerySet[Model], paths: Iterable[str], followed: Sequence[str]
+) -> list[str]:
+    """Return the selected related columns never read that ``queryset`` can defer.
+
+    A relation the queryset joins deeper cannot be deferred.
+    """
+    joined = _joined_paths(queryset.query.select_related)
+    unread = _unread_related_columns(queryset.model, paths, followed)
+    return [name for name in unread if name not in joined]
+
+
 def _reverse_foreign_key_targets(
     model: type[Model], followed: Sequence[str]
 ) -> set[str]:
@@ -540,10 +552,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         # foreign key, followed or not
         if selected:
             queryset = queryset.select_related(*selected)
-            # a relation the queryset joins deeper cannot be deferred either
-            joined = _joined_paths(queryset.query.select_related)
-            unread = _unread_related_columns(model, paths, self.follow)
-            if unread := [name for name in unread if name not in joined]:
+            if unread := _deferrable_related_columns(queryset, paths, self.follow):
                 queryset = queryset.defer(*unread)
         if prefetched:
             queryset = queryset.prefetch_related(*prefetched)
