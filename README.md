@@ -237,8 +237,13 @@ too. A model whose `get_absolute_url()` builds the URL (no `url_field`), or
 whose title falls back on `str(instance)`, keeps all its own columns, since
 either may read any of them. A custom extractor shapes the queryset its
 instances are loaded from by overriding `get_queryset(queryset)` — to add
-`select_related` or `prefetch_related`, say — and must return a `QuerySet`;
-`run_instance` does not go through it.
+`select_related` or `prefetch_related`, say — and must return a `QuerySet`
+of the model's instances: a `values()` queryset, or another model's, raises
+`TypeError`. The documents stay in primary key order whatever order the hook
+sets. `run_instance` does not go through it, so a hook that filters
+instances out makes `run()` skip documents that `run_instance` still
+produces: leave an instance out by returning `None` from `extract()`
+instead.
 
 ## Requirements
 
