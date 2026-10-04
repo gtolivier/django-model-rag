@@ -307,6 +307,13 @@ def _require_permission_names(permissions: object) -> None:
     if not isinstance(permissions, list | tuple):
         message = "permissions must be a list or a tuple of strings"
         raise ImproperlyConfigured(message)
+    for permission in permissions:
+        app_label, dot, codename = str(permission).partition(".")
+        if not (app_label and dot and codename):
+            message = (
+                f"permission {permission!r} is not of the form 'app_label.codename'"
+            )
+            raise ImproperlyConfigured(message)
 
 
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
