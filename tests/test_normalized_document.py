@@ -130,23 +130,30 @@ def test_document_metadata_cannot_be_modified_through_the_document() -> None:
 
 
 def test_document_stores_the_permissions_it_is_given_as_a_frozenset() -> None:
-    # Built without make_document so the type checker sees the list argument.
+    # Built without make_document so the type checker sees the set argument.
     document = NormalizedDocument(
         text="A desk lamp",
         source_app_label="testapp",
         source_model="product",
         source_pk=1,
-        permissions=[
-            "testapp.view_product",
-            "testapp.change_product",
-            "testapp.view_product",
-        ],
+        permissions={"testapp.view_product", "testapp.change_product"},
     )
 
     assert isinstance(document.permissions, frozenset)
     assert document.permissions == frozenset(
         {"testapp.view_product", "testapp.change_product"}
     )
+
+
+def test_document_permissions_support_set_operations() -> None:
+    # Typed as an abstract set of strings, so callers can compare and combine
+    # the permissions with set operators without converting them first.
+    document = make_document(permissions={"testapp.view_product"})
+    view_or_change = {"testapp.view_product", "testapp.change_product"}
+    view_or_delete = {"testapp.view_product", "testapp.delete_product"}
+
+    assert document.permissions <= view_or_change
+    assert document.permissions & view_or_delete == {"testapp.view_product"}
 
 
 def test_document_refuses_a_bare_string_as_permissions() -> None:
