@@ -123,6 +123,10 @@ def _prefetch(model: type[Model], accessor: str) -> "str | Prefetch[Any]":
 
     A reverse foreign key loads only its text columns and its link back.
     """
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported from models modules
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
     relation = relations_by_accessor(model).get(accessor)
     if isinstance(relation, ForeignObjectRel) and relation.one_to_many:
         related = relation.related_model
@@ -132,6 +136,19 @@ def _prefetch(model: type[Model], accessor: str) -> "str | Prefetch[Any]":
                 accessor,
                 queryset=related._default_manager.only(
                     "pk", *text_fields(related), relation.field.name
+                ),
+            )
+    if isinstance(relation, GenericRelation):
+        related = relation.related_model
+        # for the type checker only: a generic relation leads to a model
+        if isinstance(related, type):
+            return Prefetch(
+                accessor,
+                queryset=related._default_manager.only(
+                    "pk",
+                    *text_fields(related),
+                    relation.object_id_field_name,
+                    relation.content_type_field_name,
                 ),
             )
     return accessor
