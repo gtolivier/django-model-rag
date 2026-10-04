@@ -127,6 +127,26 @@ def _selected_path_prefixes(
     return [LOOKUP_SEP.join(run) for run in runs if run]
 
 
+def _unread_columns(
+    model: type[Model], extractor: DeclaredFieldsExtractor
+) -> list[str]:
+    """Return the names of the own columns ``extractor`` never reads.
+
+    It reads the first link of each lookup path it declares, and each relation
+    it follows: they stay, with the own fields it names.
+    """
+    named = [_option(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS]
+    read = {
+        name.split(LOOKUP_SEP)[0]
+        for name in (*extractor.fields, *extractor.follow, *filter(None, named))
+    }
+    return [
+        field.name
+        for field in model._meta.concrete_fields
+        if not field.primary_key and not {field.name, field.attname} & read
+    ]
+
+
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
@@ -137,6 +157,13 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     instances.
     """
     queryset = model._default_manager.order_by("pk")
+    # get_absolute_url() may read any column, when no url field replaces it
+    if (
+        isinstance(extractor, DeclaredFieldsExtractor)
+        and extractor.fields
+        and (extractor.url_field or not hasattr(model, "get_absolute_url"))
+    ):
+        queryset = queryset.defer(*_unread_columns(model, extractor))
     selected, prefetched = _sorted_relations(model, _followed(extractor))
     selected.extend(_selected_path_prefixes(model, extractor))
     # never select_related() without a field: it would follow every non-null
