@@ -15,6 +15,9 @@ from django_model_rag.registry import rag, relations_by_accessor
 # iterator() prefetches per chunk: this many instances share one query
 _CHUNK_SIZE = 1000
 
+# the extractor options that each name one field, possibly a lookup path
+_SINGLE_FIELD_OPTIONS = ("title_field", "language_field", "url_field")
+
 
 def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
     """Return the names of the relations ``extractor`` follows, if any."""
@@ -31,18 +34,13 @@ def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
 def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
     """Return, once each, the lookup paths among the fields ``extractor`` reads.
 
-    The fields read are those it declares, its title field and its language
-    field, if any.
+    The fields read are those it declares, its title field, its language field
+    and its URL field, if any.
     """
-    title_field: str | None = getattr(extractor, "title_field", None)
-    language_field: str | None = getattr(extractor, "language_field", None)
-    url_field: str | None = getattr(extractor, "url_field", None)
-    read = [
-        *_declared_fields(extractor),
-        *([title_field] if title_field else []),
-        *([language_field] if language_field else []),
-        *([url_field] if url_field else []),
+    named: list[str | None] = [
+        getattr(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS
     ]
+    read = [*_declared_fields(extractor), *(name for name in named if name)]
     return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
 
 
