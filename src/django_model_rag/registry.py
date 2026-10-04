@@ -388,7 +388,8 @@ class Registry:
         ``language_field`` names the field whose value is the document
         language: an own field, or a lookup path such as ``page__language``.
         ``language`` gives every document of the model that language.
-        ``url_field`` names the own field whose stripped value is the url.
+        ``url_field`` names the field whose stripped value is the document
+        url: an own field, or a lookup path such as ``bookmark__link``.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.

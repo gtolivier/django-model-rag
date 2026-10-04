@@ -218,8 +218,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         ``language_field`` (if any) names the field holding the language: an
         own field, or a lookup path such as ``page__language``.
         ``language`` (if any) is the constant language of every document.
-        ``url_field`` (if any) names the own field whose stripped value is
-        the document url.
+        ``url_field`` (if any) names the field whose stripped value is the
+        document url: an own field, or a lookup path such as
+        ``bookmark__link``.
         """
         self.fields = fields
         self.title_field = title_field
