@@ -15,6 +15,7 @@ from django_model_rag.extractors import (
     M,
     PathLink,
     accessor_name,
+    language_field_name,
     path_links,
     text_fields,
 )
@@ -24,9 +25,14 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 
 
 def _guessed_fields(
-    model: type[Model], exclude: FieldNames, follow: FieldNames
+    model: type[Model],
+    exclude: FieldNames,
+    follow: FieldNames,
+    language_field: str | None,
 ) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
+
+    The own field read as the language is left out too.
 
     A model that follows relations may be left with no text field of its
     own: their text is enough to make a document.
@@ -35,7 +41,8 @@ def _guessed_fields(
         ImproperlyConfigured: ``model`` follows no relation and has no text
             field, or none left once ``exclude`` is applied.
     """
-    names = text_fields(model)
+    language = language_field_name(model, language_field)
+    names = [name for name in text_fields(model) if name != language]
     if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
@@ -359,7 +366,7 @@ class Registry:
         if fields is None:
             _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(model, exclude, follow)
+            fields = _guessed_fields(model, exclude, follow, language_field)
         else:
             _require_content_fields(model, fields)
         if title_field is not None:

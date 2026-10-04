@@ -187,6 +187,19 @@ The first name the model has wins.
 """
 
 
+def language_field_name(model: type[Model], declared: str | None) -> str | None:
+    """Name the own field of ``model`` read as the language, if any.
+
+    ``declared`` is the configured name; without it, the name is guessed.
+    """
+    # concrete_fields, not get_fields(): it needs no loaded app registry
+    own_fields = {
+        field.name for field in model._meta.concrete_fields if not field.is_relation
+    }
+    candidates = (declared,) if declared else _GUESSED_LANGUAGE_FIELDS
+    return next((name for name in candidates if name in own_fields), None)
+
+
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
@@ -231,15 +244,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
 
     def _language(self, instance: Model) -> str | None:
         """Read the language field of ``instance``, declared or guessed by name."""
-        own_fields = {
-            field.name for field in instance._meta.get_fields() if not field.is_relation
-        }
-        candidates = (
-            (self.language_field,) if self.language_field else _GUESSED_LANGUAGE_FIELDS
-        )
-        name = next(
-            (candidate for candidate in candidates if candidate in own_fields), None
-        )
+        name = language_field_name(type(instance), self.language_field)
         if name is None:
             return None
         return _stripped_text(getattr(instance, name)) or None
