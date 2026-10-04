@@ -82,7 +82,9 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             is given twice, or its related model has no text field.
     """
     accessors = {
-        field.get_accessor_name() if field.auto_created else field.name: field  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
+        field.get_accessor_name()  # type: ignore[union-attr] # reverse relations have it; get_fields() is typed too loosely
+        if field.auto_created and not field.concrete
+        else field.name: field
         for field in model._meta.get_fields()
         if field.is_relation
     }
