@@ -41,8 +41,8 @@ def _guessed_fields(
         ImproperlyConfigured: ``model`` follows no relation and has no text
             field, or none left once ``exclude`` is applied.
     """
-    language = language_field_name(model, language_field)
-    names = [name for name in text_fields(model) if name != language]
+    resolved_language_field = language_field_name(model, language_field)
+    names = [name for name in text_fields(model) if name != resolved_language_field]
     if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
