@@ -149,6 +149,13 @@ def test_document_stores_the_permissions_it_is_given_as_a_frozenset() -> None:
     )
 
 
+def test_document_refuses_a_bare_string_as_permissions() -> None:
+    # A string is a collection of strings too: storing it would silently split
+    # "testapp.view_product" into its single characters.
+    with pytest.raises(TypeError, match="permissions"):
+        make_document(permissions="testapp.view_product")
+
+
 def test_document_source_key_identifies_its_source() -> None:
     document = make_document(
         source_app_label="testapp", source_model="product", source_pk=1
