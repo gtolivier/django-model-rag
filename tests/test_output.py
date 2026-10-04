@@ -273,6 +273,24 @@ def test_pipeline_does_not_prune_a_model_whose_extractor_raises() -> None:
 
 
 @pytest.mark.django_db
+def test_run_instance_hands_nothing_to_its_output_when_the_extractor_raises() -> None:
+    # An empty group for the failed instance would delete the documents the
+    # output still holds for it, as if it had none.
+    broken = Category.objects.create(name="Broken")
+
+    @rag.register_extractor(Category)
+    class FailingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            raise ExtractionFailedError(instance.name)
+
+    output = RecordingOutput()
+    with pytest.raises(ExtractionFailedError, match="Broken"):
+        SyncPipeline(output).run_instance(broken)
+
+    assert output.calls == []
+
+
+@pytest.mark.django_db
 def test_pipeline_hands_over_each_chunk_before_extracting_the_next() -> None:
     # The failure is on the first instance of the second chunk: a pipeline
     # extracting the whole model before handing anything over would lose the
