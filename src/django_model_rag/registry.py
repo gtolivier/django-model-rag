@@ -15,7 +15,7 @@ from django_model_rag.extractors import (
     M,
     PathLink,
     accessor_name,
-    language_field_name,
+    guessed_language_field,
     path_links,
     text_fields,
 )
@@ -27,21 +27,17 @@ PermissionNames: TypeAlias = list[str] | tuple[str, ...]
 """The ``app_label.codename`` permissions a model's documents require."""
 
 
-def _metadata_fields(
-    model: type[Model],
-    language_field: str | None,
-    language: str | None,
-    url_field: str | None,
-) -> tuple[str | None, ...]:
-    """Return the own fields of ``model`` read as document metadata.
+def _language_field(
+    model: type[Model], language_field: str | None, language: str | None
+) -> str | None:
+    """Name the field ``model``'s documents read their language from, if any.
 
-    They are the field read as the language, unless the language is a
-    constant, and the ``url_field``.
+    It is the declared ``language_field``; without it, an own field guessed
+    by name, unless the language is the constant ``language``.
     """
-    resolved_language_field = (
-        language_field_name(model, language_field) if language is None else None
-    )
-    return (resolved_language_field, url_field)
+    if language_field is not None or language is not None:
+        return language_field
+    return guessed_language_field(model)
 
 
 def _guessed_fields(
@@ -450,12 +446,11 @@ class Registry:
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
+        read_language_field = _language_field(model, language_field, language)
         if fields is None:
             _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
-            metadata_fields = _metadata_fields(
-                model, language_field, language, url_field
-            )
+            metadata_fields = (read_language_field, url_field)
             fields = _guessed_fields(model, exclude, follow, metadata_fields)
         else:
             _require_content_fields(model, fields)
@@ -473,7 +468,7 @@ class Registry:
             declared,
             title_field,
             followed,
-            language_field,
+            read_language_field,
             language,
             url_field,
             granted,

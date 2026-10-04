@@ -189,17 +189,13 @@ The first name the model has wins.
 """
 
 
-def language_field_name(model: type[Model], declared: str | None) -> str | None:
-    """Name the own field of ``model`` read as the language, if any.
-
-    ``declared`` is the configured name; without it, the name is guessed.
-    """
+def guessed_language_field(model: type[Model]) -> str | None:
+    """Name the own field of ``model`` guessed, by its name, as the language."""
     # concrete_fields, not get_fields(): it needs no loaded app registry
     own_fields = {
         field.name for field in model._meta.concrete_fields if not field.is_relation
     }
-    candidates = (declared,) if declared else _GUESSED_LANGUAGE_FIELDS
-    return next((name for name in candidates if name in own_fields), None)
+    return next((name for name in _GUESSED_LANGUAGE_FIELDS if name in own_fields), None)
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
@@ -218,8 +214,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
         The text of the relations in ``follow`` comes after the fields.
-        ``language_field`` (if any) names the field holding the language: an
-        own field, or a lookup path such as ``page__language``.
+        ``language_field`` (if any) names the field holding the language,
+        declared or guessed: an own field, or a lookup path such as
+        ``page__language``.
         ``language`` (if any), stripped, is the constant language of every
         document.
         ``url_field`` (if any) names the field whose stripped value is the
@@ -234,10 +231,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         self.language = None if language is None else language.strip()
         self.url_field = url_field
         self.permissions = permissions
-        # guessed once per model, and resolved once per lookup path; the
-        # registry builds a fresh extractor for each run, so a redefined model
-        # is never served stale
-        self._guessed_language_fields: dict[type[Model], str | None] = {}
+        # listed once per related model, and resolved once per lookup path;
+        # the registry builds a fresh extractor for each run, so a redefined
+        # model is never served stale
         self._related_text_fields: dict[type[Model], list[str]] = {}
         self._path_accessors: dict[tuple[type[Model], str], list[str]] = {}
 
@@ -273,20 +269,13 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
     def _language(self, instance: Model) -> str | None:
         """Give the constant language, else read ``instance``'s language field.
 
-        That field is the declared one, or one guessed by name.
+        That field is the declared one, or the one the registry guessed by name.
         """
         if self.language is not None:
             return self.language
-        path = self.language_field or self._guessed_language_field(type(instance))
-        if path is None:
+        if self.language_field is None:
             return None
-        return self._stored_text(instance, path) or None
-
-    def _guessed_language_field(self, model: type[Model]) -> str | None:
-        """Name the own field of ``model`` guessed as the language, on first use."""
-        if model not in self._guessed_language_fields:
-            self._guessed_language_fields[model] = language_field_name(model, None)
-        return self._guessed_language_fields[model]
+        return self._stored_text(instance, self.language_field) or None
 
     def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
