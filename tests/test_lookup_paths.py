@@ -3,11 +3,13 @@ import pytest
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     Category,
+    Lesson,
     Page,
     Product,
     Review,
     Supplier,
     SupplierProfile,
+    Topic,
     Workshop,
 )
 
@@ -132,3 +134,18 @@ def test_lookup_path_through_a_missing_reverse_one_to_one_adds_nothing() -> None
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Home"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_and_follow_through_the_same_relation_combine() -> None:
+    topic = Topic.objects.create(
+        title="Basics", summary="The very start", slug="basics"
+    )
+    Lesson.objects.create(title="Intro", topic=topic)
+    rag.register(Lesson, fields=["title", "topic__slug"], follow=["topic"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Intro\n\nbasics\n\nBasics\n\nThe very start"
+    ]
