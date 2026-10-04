@@ -14,6 +14,7 @@ from tests.testapp.models import (
     Category,
     Course,
     Delivery,
+    FeaturedProduct,
     Lesson,
     Note,
     Page,
@@ -498,6 +499,30 @@ def test_followed_forward_one_to_one_is_read_with_its_instances_in_a_single_quer
         "We build chairs by hand.\n\nAbout us",
         "Write to us.\n\nContact",
         "Visits on Saturdays.\n\nVisits",
+    ]
+
+
+@pytest.mark.django_db
+def test_child_model_follows_a_relation_inherited_from_its_parent() -> None:
+    # FeaturedProduct inherits from Product through multi-table inheritance:
+    # its automatic link to the parent row, product_ptr, is a one-to-one
+    # relation too, and must not keep the inherited category from being
+    # followed. The tagline, its own field, comes after the inherited ones.
+    category = Category.objects.create(name="Furniture")
+    FeaturedProduct.objects.create(
+        name="Chair",
+        description="Adjustable.",
+        price="49.90",
+        category=category,
+        condition="new",
+        tagline="Made in Lyon.",
+    )
+    rag.register(FeaturedProduct, follow=["category"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Chair\n\nAdjustable.\n\nNew\n\nMade in Lyon.\n\nFurniture"
     ]
 
 

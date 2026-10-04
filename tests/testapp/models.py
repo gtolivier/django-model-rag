@@ -277,3 +277,13 @@ class Remark(models.Model):
 class PageIntro(models.Model):
     page = models.OneToOneField(Page, related_name="intro", on_delete=models.CASCADE)
     body = models.TextField()
+
+
+# --- Multi-table inheritance --------------------------------------------
+# A FeaturedProduct is a Product with a tagline of its own: it inherits the
+# Product's fields and relations, and Django links it to its parent row by
+# an automatic one-to-one field, ``product_ptr``.
+
+
+class FeaturedProduct(Product):
+    tagline = models.CharField(max_length=200)
