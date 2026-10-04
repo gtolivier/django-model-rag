@@ -12,6 +12,7 @@ from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import (
     BaseExtractor,
     DeclaredFieldsExtractor,
+    PathLink,
     path_links,
 )
 from django_model_rag.registry import rag, relations_by_accessor
@@ -113,16 +114,21 @@ def _sorted_relations(
     return selected, prefetched
 
 
-def _selected_run(model: type[Model], path: str) -> list[str]:
-    """Return the query names of the single-object relations ``path`` starts with."""
-    query_names: list[str] = []
+def _selected_run(model: type[Model], path: str) -> list[PathLink]:
+    """Return the single-object relations ``path`` starts with."""
+    run: list[PathLink] = []
     # a ``fields`` attribute of a custom extractor need not be paths
     with suppress(FieldDoesNotExist):
         for link in path_links(model, path):
             if not _is_selected(link.relation):
                 break
-            query_names.append(link.query_name)
-    return query_names
+            run.append(link)
+    return run
+
+
+def _query_path(run: Sequence[PathLink]) -> str:
+    """Join the links of ``run`` into the lookup select_related() names it by."""
+    return LOOKUP_SEP.join(link.query_name for link in run)
 
 
 def _selected_path_prefixes(
@@ -130,7 +136,7 @@ def _selected_path_prefixes(
 ) -> list[str]:
     """Return the run of single-object relations each lookup path starts with."""
     runs = (_selected_run(model, path) for path in _lookup_paths(extractor))
-    return [LOOKUP_SEP.join(run) for run in runs if run]
+    return [_query_path(run) for run in runs if run]
 
 
 def _read_by_prefix(
@@ -143,24 +149,18 @@ def _read_by_prefix(
     followed = set(_followed(extractor))
     read: dict[str, tuple[type[Model], set[str]]] = {}
     for path in _lookup_paths(extractor):
+        run = _selected_run(model, path)
+        # a followed relation is read in full
+        if run and run[0].accessor in followed:
+            continue
         names = path.split(LOOKUP_SEP)
-        run: list[str] = []
-        owner = model
-        # a ``fields`` attribute of a custom extractor need not be paths
-        with suppress(FieldDoesNotExist):
-            for link in path_links(model, path):
-                if (
-                    not _is_selected(link.relation)
-                    or link.relation.related_model is None
-                ):
-                    break
-                run.append(link.query_name)
-                owner = link.relation.related_model
-                prefix = LOOKUP_SEP.join(run)
-                # a followed relation is read in full
-                if link.accessor in followed and len(run) == 1:
-                    break
-                read.setdefault(prefix, (owner, set()))[1].add(names[len(run)])
+        for depth, link in enumerate(run, start=1):
+            owner = link.relation.related_model
+            # for the type checker only: a selected relation leads to a model
+            if owner is None:
+                break
+            prefix = _query_path(run[:depth])
+            read.setdefault(prefix, (owner, set()))[1].add(names[depth])
     return read
 
 
@@ -169,10 +169,22 @@ def _unread_related_columns(
 ) -> list[str]:
     """Return the lookup names of the related columns no lookup path reads."""
     return [
-        f"{prefix}{LOOKUP_SEP}{field.name}"
-        for prefix, (owner, names) in _read_by_prefix(model, extractor).items()
-        for field in owner._meta.concrete_fields
-        if not field.primary_key and not {field.name, field.attname} & names
+        f"{prefix}{LOOKUP_SEP}{name}"
+        for prefix, (owner, read) in _read_by_prefix(model, extractor).items()
+        for name in _unread_field_names(owner, read)
+    ]
+
+
+def _unread_field_names(model: type[Model], read: set[str]) -> list[str]:
+    """Return the names of ``model``'s columns that ``read`` does not name.
+
+    The primary key is always read. A foreign key may be named by its field
+    or by its column.
+    """
+    return [
+        field.name
+        for field in model._meta.concrete_fields
+        if not field.primary_key and not {field.name, field.attname} & read
     ]
 
 
@@ -199,11 +211,7 @@ def _unread_columns(model: type[Model], extractor: BaseExtractor[Any]) -> list[s
         name.split(LOOKUP_SEP)[0]
         for name in (*_read_fields(extractor), *_followed(extractor))
     }
-    return [
-        field.name
-        for field in model._meta.concrete_fields
-        if not field.primary_key and not {field.name, field.attname} & read
-    ]
+    return _unread_field_names(model, read)
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
