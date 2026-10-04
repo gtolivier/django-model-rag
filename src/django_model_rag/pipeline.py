@@ -97,8 +97,9 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     """Iterate over ``model``'s instances, in primary key order.
 
     The followed foreign keys and one-to-one relations come with each instance,
-    in the same query, and the followed reverse foreign keys and many-to-many
-    relations, forward or reverse, in one more query each for all the instances.
+    in the same query, and the followed reverse foreign keys, many-to-many
+    relations, forward or reverse, and generic relations, in one more query
+    each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
     followed = _followed(extractor)
