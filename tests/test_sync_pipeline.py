@@ -22,6 +22,30 @@ def create_product(*, name: str, description: str, price: str) -> Product:
     )
 
 
+def create_faq_and_help_panels() -> tuple[Panel, Panel]:
+    """Create the FAQ and Help panels, in that primary key order.
+
+    FAQ: body "Answers to common questions.", label "FAQ", heading "Frequently
+    asked", name "faq", title "Questions". Help: body "Where to get support.",
+    label "Help", heading "Getting help", name "help", title "Support".
+    """
+    faq = Panel.objects.create(
+        body="Answers to common questions.",
+        label="FAQ",
+        heading="Frequently asked",
+        name="faq",
+        title="Questions",
+    )
+    help_panel = Panel.objects.create(
+        body="Where to get support.",
+        label="Help",
+        heading="Getting help",
+        name="help",
+        title="Support",
+    )
+    return faq, help_panel
+
+
 def test_pipeline_without_registered_model_produces_no_document() -> None:
     assert SyncPipeline().run() == []
 
@@ -523,20 +547,7 @@ def test_several_declared_own_fields_load_only_their_columns(
 ) -> None:
     # Two panels: a heading, name or title column left out of the select but
     # read anyway would show as one more query per panel.
-    faq = Panel.objects.create(
-        body="Answers to common questions.",
-        label="FAQ",
-        heading="Frequently asked",
-        name="faq",
-        title="Questions",
-    )
-    help_panel = Panel.objects.create(
-        body="Where to get support.",
-        label="Help",
-        heading="Getting help",
-        name="help",
-        title="Support",
-    )
+    faq, help_panel = create_faq_and_help_panels()
     rag.register(Panel, fields=["label", "body"])
 
     with django_assert_num_queries(1) as queries:
@@ -558,20 +569,7 @@ def test_own_title_field_outside_the_declared_fields_is_loaded_with_them(
 ) -> None:
     # Two panels: a heading column left out of the select but read anyway
     # would show as one more query per panel.
-    faq = Panel.objects.create(
-        body="Answers to common questions.",
-        label="FAQ",
-        heading="Frequently asked",
-        name="faq",
-        title="Questions",
-    )
-    help_panel = Panel.objects.create(
-        body="Where to get support.",
-        label="Help",
-        heading="Getting help",
-        name="help",
-        title="Support",
-    )
+    faq, help_panel = create_faq_and_help_panels()
     rag.register(Panel, fields=["body"], title_field="heading")
 
     with django_assert_num_queries(1) as queries:
