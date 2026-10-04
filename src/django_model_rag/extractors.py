@@ -434,6 +434,18 @@ def _joined_relations(queryset: QuerySet[Model]) -> list[str]:
     return list(joined) if isinstance(joined, dict) else []
 
 
+def _joined_paths(joined: object, prefix: str = "") -> set[str]:
+    """Return every lookup path a select_related() mapping joins, nested too."""
+    if not isinstance(joined, dict):
+        return set()
+    paths: set[str] = set()
+    for name, deeper in joined.items():
+        path = f"{prefix}{name}"
+        paths.add(path)
+        paths |= _joined_paths(deeper, f"{path}{LOOKUP_SEP}")
+    return paths
+
+
 def _reverse_foreign_key_targets(
     model: type[Model], followed: Sequence[str]
 ) -> set[str]:
@@ -528,7 +540,10 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         # foreign key, followed or not
         if selected:
             queryset = queryset.select_related(*selected)
-            if unread := _unread_related_columns(model, paths, self.follow):
+            # a relation the queryset joins deeper cannot be deferred either
+            joined = _joined_paths(queryset.query.select_related)
+            unread = _unread_related_columns(model, paths, self.follow)
+            if unread := [name for name in unread if name not in joined]:
                 queryset = queryset.defer(*unread)
         if prefetched:
             queryset = queryset.prefetch_related(*prefetched)
