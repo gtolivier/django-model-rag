@@ -454,6 +454,30 @@ def test_followed_reverse_one_to_one_without_related_object_adds_nothing() -> No
 
 
 @pytest.mark.django_db
+def test_followed_reverse_one_to_one_is_read_with_its_instances_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three pages, the middle one without an intro: one query per page would
+    # show as more than one query, and the page without an intro keeps only
+    # its own text.
+    about = Page.objects.create(title="About us", slug="about-us")
+    Page.objects.create(title="Contact", slug="contact")
+    visits = Page.objects.create(title="Visits", slug="visits")
+    PageIntro.objects.create(page=about, body="We build chairs by hand.")
+    PageIntro.objects.create(page=visits, body="Visits on Saturdays.")
+    rag.register(Page, follow=["intro"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "About us\n\nWe build chairs by hand.",
+        "Contact",
+        "Visits\n\nVisits on Saturdays.",
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_forward_one_to_one_is_read_with_its_instances_in_a_single_query(
     django_assert_num_queries: DjangoAssertNumQueries,
 ) -> None:
