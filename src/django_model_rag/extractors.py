@@ -243,8 +243,16 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
             instance,
             text=text,
             title=self._title(instance, field_texts),
+            url=self._url(instance),
             language=self._language(instance),
         )
+
+    def _url(self, instance: Model) -> str:
+        """Give the result of ``instance``'s ``get_absolute_url``, else ``""``."""
+        get_absolute_url = getattr(instance, "get_absolute_url", None)
+        if get_absolute_url is None:
+            return ""
+        return str(get_absolute_url())
 
     def _language(self, instance: Model) -> str | None:
         """Give the constant language, else read ``instance``'s language field.
