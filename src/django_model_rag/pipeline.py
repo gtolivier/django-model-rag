@@ -139,6 +139,7 @@ class SyncPipeline:
         for model, extractor in _extractors_to_run(models):
             for instance in _instances(model, extractor):
                 _hand_over(instance, extractor, self._output)
+            self._output.prune(model._meta.label_lower, set())
 
     def run_instance(self, instance: Model) -> None:
         """Produce the documents of ``instance`` only.
