@@ -69,6 +69,14 @@ def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError
     )
 
 
+def _foreign_source(extractor: BaseExtractor[Any], source_key: str) -> TypeError:
+    """Build the error for an ``extractor`` whose document is not of ``source_key``."""
+    return TypeError(
+        f"{type(extractor).__name__}.extract() returned a document "
+        f"whose source is not {source_key}"
+    )
+
+
 def _instance_documents(
     instance: Model, extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
@@ -163,16 +171,13 @@ class SyncPipeline:
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
+            TypeError: its extractor returned a document of another source.
         """
         extractor = rag.new_extractor(type(instance))
         groups = _groups([instance], extractor)
-        key = build_source_key(instance._meta.label_lower, instance.pk)
-        foreign = set(groups) - {key}
-        if foreign:
-            raise TypeError(
-                f"{type(extractor).__name__}.extract() returned a document "
-                f"whose source is not {key}"
-            )
+        source_key = build_source_key(instance._meta.label_lower, instance.pk)
+        if set(groups) - {source_key}:
+            raise _foreign_source(extractor, source_key)
         # an empty group still replaces what the output holds for the instance
-        groups.setdefault(key, [])
+        groups.setdefault(source_key, [])
         self._output.replace(groups)
