@@ -13,6 +13,9 @@ from django_model_rag.extractors import (
     BaseExtractor,
     DeclaredFieldsExtractor,
     M,
+    PathLink,
+    accessor_name,
+    path_links,
     text_fields,
 )
 
@@ -43,26 +46,23 @@ def _guessed_fields(
     return guessed
 
 
-def _model_through(model: type[Model], step: str, path: str) -> type[Model]:
-    """Return the model ``model``'s relation ``step``, a link of ``path``, leads to.
+def _model_through(link: PathLink, path: str) -> type[Model]:
+    """Return the model ``link``, a link of ``path``, leads to.
 
     Raises:
-        FieldDoesNotExist: ``model`` has no field ``step``.
-        ImproperlyConfigured: ``step`` is not a relation, is a generic
+        ImproperlyConfigured: ``link`` is not a relation, is a generic
             foreign key, or holds several objects.
     """
-    relation = model._meta.get_field(step)
+    relation = link.relation
     related_model = relation.related_model
+    origin = f"{link.model.__name__}.{link.name}"
     if related_model is None:
         # A generic foreign key is a relation, only one without a single model.
         kind = "a generic foreign key" if relation.is_relation else "not a relation"
-        message = f"{model.__name__}.{step} is {kind}, so {path!r} cannot go through it"
+        message = f"{origin} is {kind}, so {path!r} cannot go through it"
         raise ImproperlyConfigured(message)
     if relation.many_to_many or relation.one_to_many:
-        message = (
-            f"{model.__name__}.{step} holds several objects, "
-            f"so {path!r} has no single value"
-        )
+        message = f"{origin} holds several objects, so {path!r} has no single value"
         raise ImproperlyConfigured(message)
     return related_model
 
@@ -83,8 +83,8 @@ def _require_content_field(model: type[Model], path: str) -> None:
         _require_models_ready(model, f"resolve the lookup path {path!r}")
     target = model
     try:
-        for step in steps:
-            target = _model_through(target, step, path)
+        for link in path_links(model, path):
+            target = _model_through(link, path)
         field = target._meta.get_field(field_name)
     except FieldDoesNotExist as error:
         message = f"{model.__name__} has no field {path!r}"
@@ -124,11 +124,7 @@ def relations_by_accessor(
     """
     relations: dict[str, Field[Any, Any] | ForeignObjectRel] = {}
     for field in model._meta.get_fields():
-        if not field.is_relation:
-            continue
-        if not isinstance(field, ForeignObjectRel):
-            relations[field.name] = field
-        elif (accessor := field.get_accessor_name()) is not None:
+        if field.is_relation and (accessor := accessor_name(field)) is not None:
             relations[accessor] = field
     return relations
 

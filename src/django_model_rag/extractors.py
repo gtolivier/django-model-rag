@@ -1,7 +1,8 @@
 """The extractors: the base class of custom ones, and the one of declared fields."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from django.core.exceptions import ObjectDoesNotExist
@@ -88,44 +89,80 @@ class BaseExtractor(ABC, Generic[M]):
 _FIELD_SEPARATOR = "\n\n"
 
 
-def _accessor_name(model: type[Model], step: str) -> str:
-    """Name the attribute of ``model`` that crosses the relation ``step``.
+def accessor_name(relation: "Field[Any, Any] | ForeignObjectRel") -> str | None:
+    """Name the attribute that crosses ``relation`` on an instance, if it has one.
 
-    A lookup path names a reverse relation by its query name; it is reached
-    by its accessor.
+    A reverse relation is reached by its accessor, which ``related_name`` may
+    set apart from its query name; a forward one by its name.
     """
-    relation = model._meta.get_field(step)
     if isinstance(relation, ForeignObjectRel):
-        return relation.get_accessor_name() or step
-    # a foreign key named by its column, such as category_id, is read as the
-    # related object, as in values()
+        return relation.get_accessor_name()
     return relation.name
 
 
-def _related_instance(instance: Model, step: str) -> Model | None:
-    """Cross the relation ``step`` of ``instance``, or ``None`` if unset.
+@dataclass(frozen=True)
+class PathLink:
+    """A relation a lookup path crosses, as the path names it."""
+
+    model: type[Model]
+    """The model the link starts from."""
+    name: str
+    """The link as written in the path: a query name, or a column name."""
+    # quoted: Django's Field is generic for the type checker only
+    relation: "Field[Any, Any] | ForeignObjectRel"
+    """The relation the link crosses, forward or reverse."""
+
+    @property
+    def accessor(self) -> str:
+        """Name the attribute that crosses the link on an instance."""
+        # a foreign key named by its column, such as category_id, is read as
+        # the related object, as in values()
+        return accessor_name(self.relation) or self.name
+
+    @property
+    def query_name(self) -> str:
+        """Name the link as select_related() does."""
+        # select_related() names a reverse relation by its query name, which
+        # related_query_name may set apart from its accessor
+        return self.relation.name
+
+
+def path_links(model: type[Model], path: str) -> Iterator[PathLink]:
+    """Walk the links of the lookup ``path`` from ``model``, up to its last field.
+
+    The walk ends after a link that leads to no single model: a field that is
+    not a relation, or a generic foreign key.
+
+    Raises:
+        FieldDoesNotExist: a link is not a field of the model it starts from.
+    """
+    *names, _ = path.split(LOOKUP_SEP)
+    for name in names:
+        relation = model._meta.get_field(name)
+        yield PathLink(model, name, relation)
+        related_model = relation.related_model
+        if related_model is None:
+            return
+        model = related_model
+
+
+def _related_instance(instance: Model, accessor: str) -> Model | None:
+    """Cross the relation ``accessor`` of ``instance``, or ``None`` if unset.
 
     A missing reverse one-to-one raises instead of returning ``None``.
     """
     try:
-        related: Model | None = getattr(instance, _accessor_name(type(instance), step))
+        related: Model | None = getattr(instance, accessor)
     except ObjectDoesNotExist:
         return None
     return related
 
 
 def _field_text(instance: Model, name: str) -> str:
-    """Read the field ``name`` of ``instance`` as stripped text.
+    """Read the own field ``name`` of ``instance`` as stripped text.
 
-    ``name`` may be a lookup path, such as ``category__name``, to read a
-    field of a related instance. A field with choices reads as its label.
+    A field with choices reads as its label.
     """
-    *path, name = name.split(LOOKUP_SEP)
-    for step in path:
-        related = _related_instance(instance, step)
-        if related is None:
-            return ""
-        instance = related
     value = getattr(instance, name)
     # Django adds get_<name>_display only to fields that have choices
     if getattr(instance._meta.get_field(name), "choices", None):
@@ -154,16 +191,18 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
-        # guessed once per related model; the registry builds a fresh
-        # extractor for each run, so a redefined model is never served stale
+        # guessed once per related model, and resolved once per lookup path;
+        # the registry builds a fresh extractor for each run, so a redefined
+        # model is never served stale
         self._related_text_fields: dict[type[Model], list[str]] = {}
+        self._path_accessors: dict[tuple[type[Model], str], list[str]] = {}
 
     def extract(self, instance: Model) -> NormalizedDocument | None:
         """Build the document of ``instance``, or nothing when it has no text.
 
         Its text is that of its fields, then of its followed relations.
         """
-        field_texts = [_field_text(instance, name) for name in self.fields]
+        field_texts = [self._declared_text(instance, name) for name in self.fields]
         followed_texts = [self._followed_text(instance, name) for name in self.follow]
         text = _document_text(field_texts + followed_texts)
         if not text:
@@ -171,6 +210,32 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         return self.build_document(
             instance, text=text, title=self._title(instance, field_texts)
         )
+
+    def _declared_text(self, instance: Model, path: str) -> str:
+        """Read the declared field ``path`` of ``instance`` as stripped text.
+
+        ``path`` may be a lookup path, such as ``category__name``, to read a
+        field of a related instance.
+        """
+        *_, name = path.split(LOOKUP_SEP)
+        for accessor in self._accessors(type(instance), path):
+            related = _related_instance(instance, accessor)
+            if related is None:
+                return ""
+            instance = related
+        return _field_text(instance, name)
+
+    def _accessors(self, model: type[Model], path: str) -> list[str]:
+        """List the attributes crossing the links of ``path`` from ``model``.
+
+        They are resolved on first use.
+        """
+        key = (model, path)
+        if key not in self._path_accessors:
+            self._path_accessors[key] = [
+                link.accessor for link in path_links(model, path)
+            ]
+        return self._path_accessors[key]
 
     def _followed_text(self, instance: Model, name: str) -> str:
         """Read the text of the relation ``name`` of ``instance``.
@@ -218,4 +283,4 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
             return field_texts[0] if field_texts else str(instance)
         if self.title_field in self.fields:
             return field_texts[self.fields.index(self.title_field)]
-        return _field_text(instance, self.title_field)
+        return self._declared_text(instance, self.title_field)

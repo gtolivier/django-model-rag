@@ -1,6 +1,7 @@
 """The pipeline that turns registered models into normalized documents."""
 
 from collections.abc import Iterable, Iterator, Sequence
+from contextlib import suppress
 from typing import Any
 
 from django.core.exceptions import FieldDoesNotExist
@@ -8,7 +9,7 @@ from django.db.models import Field, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor
+from django_model_rag.extractors import BaseExtractor, path_links
 from django_model_rag.registry import rag, relations_by_accessor
 
 # iterator() prefetches per chunk: this many instances share one query
@@ -87,20 +88,14 @@ def _sorted_relations(
 
 def _selected_run(model: type[Model], path: str) -> list[str]:
     """Return the query names of the single-object relations ``path`` starts with."""
-    current_model = model
-    relation_names: list[str] = []
-    for step in path.split(LOOKUP_SEP)[:-1]:
-        # a lookup path names a reverse relation by its query name
-        try:
-            relation = current_model._meta.get_field(step)
-        except FieldDoesNotExist:
-            # a ``fields`` attribute of a custom extractor need not be paths
-            break
-        if not relation.is_relation or not _is_selected(relation):
-            break
-        relation_names.append(relation.name)
-        current_model = relation.related_model  # type: ignore[assignment]  # a selected relation leads to a model
-    return relation_names
+    query_names: list[str] = []
+    # a ``fields`` attribute of a custom extractor need not be paths
+    with suppress(FieldDoesNotExist):
+        for link in path_links(model, path):
+            if not _is_selected(link.relation):
+                break
+            query_names.append(link.query_name)
+    return query_names
 
 
 def _selected_path_prefixes(
