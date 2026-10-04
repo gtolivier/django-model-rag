@@ -319,7 +319,10 @@ def _require_permission_name(permission: object) -> None:
         ImproperlyConfigured: the dot, the app label or the codename is
             missing.
     """
-    app_label, dot, codename = str(permission).partition(".")
+    if not isinstance(permission, str):
+        message = f"permissions must be strings, not {permission!r}"
+        raise ImproperlyConfigured(message)
+    app_label, dot, codename = permission.partition(".")
     if not (app_label and dot and codename):
         message = f"permission {permission!r} is not of the form 'app_label.codename'"
         raise ImproperlyConfigured(message)
