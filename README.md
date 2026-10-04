@@ -97,7 +97,10 @@ model's own fields:
 - **Names** are relation accessors, as in `prefetch_related`: a foreign key,
   a one-to-one or a many-to-many field by its name, a reverse relation by
   its `related_name`, or by its default accessor `<model>_set` when it has
-  none (`remark_set`, not the query name `remark`).
+  none (`remark_set`, not the query name `remark`). A `GenericRelation` is
+  followed by its name, like a reverse foreign key; a `GenericForeignKey`
+  cannot be followed, since its related model changes from one row to the
+  next (write a custom extractor for it).
 - **What a related object brings:** its guessed text fields, by the rules
   above, title-like ones first. `fields` and `exclude` apply to the model's
   own fields only, never to the related objects'.
@@ -116,8 +119,8 @@ model's own fields:
 
 Errors are raised at registration, with `ImproperlyConfigured`: `follow`
 that is not a list or a tuple, a name that is not a relation accessor of the
-model, a relation followed twice, a related model with no text field, and
-`follow` while models are still loading.
+model, a relation followed twice, a generic foreign key, a related model with
+no text field, and `follow` while models are still loading.
 
 **A related object brings all its guessed text fields, sensitive ones
 included.** `follow=["author"]` towards Django's `User` brings its
@@ -128,7 +131,7 @@ want indexed; for the others, write a custom extractor.
 
 **Queries.** `SyncPipeline().run()` reads foreign keys and one-to-one
 relations in the same query as the instances (`select_related`), and each
-reverse foreign key or many-to-many relation in one more query
+reverse foreign key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
 in chunks of 1000. `run_instance` makes one query per followed relation.
 

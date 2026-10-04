@@ -75,9 +75,10 @@ refactoring, not from the prototype.
   not guessed, which excludes nothing — a CharField subclass, say, that the
   project believes it is leaving out.
 - [x] **5. Followed relations** — `follow=[...]` adds the guessed text of
-  related objects, one level deep, across foreign keys, one-to-one, reverse
-  and many-to-many relations, named by their accessors as in
-  `prefetch_related`; a missing or empty relation adds nothing. The
+  related objects, one level deep, across foreign keys, one-to-one, reverse,
+  many-to-many and generic relations (a generic foreign key is refused),
+  named by their accessors as in `prefetch_related`; a missing or empty
+  relation adds nothing. The
   instance's string form becomes the title when the model has no field of
   its own to take it from, which only `follow` makes possible. Errors are
   raised at registration; following needs every model loaded, so such
