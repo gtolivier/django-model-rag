@@ -46,8 +46,8 @@ def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
     return fields
 
 
-def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
-    """Return, once each, the lookup paths among the fields ``extractor`` reads.
+def _read_fields(extractor: BaseExtractor[Any]) -> list[str]:
+    """Return the fields ``extractor`` reads, lookup paths included.
 
     The fields read are those it declares, its title field, its language field
     and its URL field, if any.
@@ -55,8 +55,14 @@ def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
     named: list[str | None] = [
         _option(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS
     ]
-    read = [*_declared_fields(extractor), *(name for name in named if name)]
-    return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
+    return [*_declared_fields(extractor), *(name for name in named if name)]
+
+
+def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
+    """Return, once each, the lookup paths among the fields ``extractor`` reads."""
+    return [
+        name for name in dict.fromkeys(_read_fields(extractor)) if LOOKUP_SEP in name
+    ]
 
 
 # quoted: Django's Field is generic for the type checker only, and before
@@ -127,18 +133,28 @@ def _selected_path_prefixes(
     return [LOOKUP_SEP.join(run) for run in runs if run]
 
 
-def _unread_columns(
-    model: type[Model], extractor: DeclaredFieldsExtractor
-) -> list[str]:
+def _reads_only_named_columns(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> bool:
+    """Tell whether the own columns ``extractor`` reads are all named by it.
+
+    Only the fields it declares name them, and get_absolute_url() may read any
+    column, when no URL field replaces it.
+    """
+    return bool(_declared_fields(extractor)) and bool(
+        _option(extractor, "url_field", None) or not hasattr(model, "get_absolute_url")
+    )
+
+
+def _unread_columns(model: type[Model], extractor: BaseExtractor[Any]) -> list[str]:
     """Return the names of the own columns ``extractor`` never reads.
 
     It reads the first link of each lookup path it declares, and each relation
     it follows: they stay, with the own fields it names.
     """
-    named = [_option(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS]
     read = {
         name.split(LOOKUP_SEP)[0]
-        for name in (*extractor.fields, *extractor.follow, *filter(None, named))
+        for name in (*_read_fields(extractor), *_followed(extractor))
     }
     return [
         field.name
@@ -157,12 +173,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     instances.
     """
     queryset = model._default_manager.order_by("pk")
-    # get_absolute_url() may read any column, when no url field replaces it
-    if (
-        isinstance(extractor, DeclaredFieldsExtractor)
-        and extractor.fields
-        and (extractor.url_field or not hasattr(model, "get_absolute_url"))
-    ):
+    if _reads_only_named_columns(model, extractor):
         queryset = queryset.defer(*_unread_columns(model, extractor))
     selected, prefetched = _sorted_relations(model, _followed(extractor))
     selected.extend(_selected_path_prefixes(model, extractor))
