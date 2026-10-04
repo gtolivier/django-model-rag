@@ -134,6 +134,9 @@ def _link_back_fields(
         return [relation.field.name]
     if isinstance(relation, GenericRelation):
         return [relation.object_id_field_name, relation.content_type_field_name]
+    if relation.many_to_many:
+        # the join table links it back, not a column of the related model
+        return []
     return None
 
 
