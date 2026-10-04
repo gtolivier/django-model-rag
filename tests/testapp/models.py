@@ -302,6 +302,19 @@ class SupplierProfile(models.Model):
     body = models.TextField()
 
 
+# --- A foreign key to a model with a reverse one-to-one -----------------
+# A SupplierOrder points to a Supplier, which reaches its SupplierProfile by
+# a reverse one-to-one whose query name differs from its accessor: a lookup
+# path from a SupplierOrder crosses that relation past its first link.
+
+
+class SupplierOrder(models.Model):
+    reference = models.CharField(max_length=100)
+    supplier = models.ForeignKey(
+        Supplier, related_name="orders", on_delete=models.CASCADE
+    )
+
+
 # --- Multi-table inheritance --------------------------------------------
 # A FeaturedProduct is a Product with a tagline of its own: it inherits the
 # Product's fields and relations, and Django links it to its parent row by

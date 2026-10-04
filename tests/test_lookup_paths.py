@@ -19,6 +19,7 @@ from tests.testapp.models import (
     Product,
     Review,
     Supplier,
+    SupplierOrder,
     SupplierProfile,
     Tag,
     Topic,
@@ -232,6 +233,36 @@ def test_reverse_one_to_one_lookup_path_by_query_name_is_read_in_a_single_query(
         "Acme\n\nFine tools since 1920",
         "Globex\n\nLamps for every room",
         "Initech\n\nChairs built to last",
+    ]
+
+
+@pytest.mark.django_db
+def test_reverse_one_to_one_past_the_first_link_by_query_name_is_read_in_one_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three orders, each from a supplier with its own profile: one query per
+    # order or per supplier would show as more than one query. The path names
+    # the reverse one-to-one, past its first link, by its query name
+    # (supplier_profile), which differs from its accessor (profile).
+    for reference, name, body in [
+        ("PO-1", "Acme", "Fine tools since 1920"),
+        ("PO-2", "Globex", "Lamps for every room"),
+        ("PO-3", "Initech", "Chairs built to last"),
+    ]:
+        supplier = Supplier.objects.create(name=name)
+        SupplierProfile.objects.create(supplier=supplier, body=body)
+        SupplierOrder.objects.create(reference=reference, supplier=supplier)
+    rag.register(
+        SupplierOrder, fields=["reference", "supplier__supplier_profile__body"]
+    )
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "PO-1\n\nFine tools since 1920",
+        "PO-2\n\nLamps for every room",
+        "PO-3\n\nChairs built to last",
     ]
 
 
