@@ -53,13 +53,14 @@ def _require_content_field(model: type[Model], name: str) -> None:
         ImproperlyConfigured: ``model`` has no such field, or it is a
             relation.
     """
-    *path, name = name.split(LOOKUP_SEP)
-    for step in path:
-        model = model._meta.get_field(step).related_model  # type: ignore[assignment]  # related_model is typed as optional
+    path = name
+    *steps, name = path.split(LOOKUP_SEP)
     try:
+        for step in steps:
+            model = model._meta.get_field(step).related_model  # type: ignore[assignment]  # related_model is typed as optional
         field = model._meta.get_field(name)
     except FieldDoesNotExist as error:
-        message = f"{model.__name__} has no field {name!r}"
+        message = f"{model.__name__} has no field {path!r}"
         raise ImproperlyConfigured(message) from error
     if field.is_relation:
         message = f"{model.__name__}.{name} is a relation, not a content field"
