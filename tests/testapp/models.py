@@ -372,3 +372,17 @@ class Photo(models.Model):
 class Bulletin(models.Model):
     title = models.CharField(max_length=200)
     locale = models.CharField(max_length=10)
+
+
+# --- A language held in a field with choices ----------------------------
+# A Leaflet keeps its language code in a field with choices, under a name of
+# its own like Bulletin's: its stored code, such as "fr", and its label, such
+# as "Français", differ.
+
+
+class Leaflet(models.Model):
+    title = models.CharField(max_length=200)
+    locale = models.CharField(
+        max_length=10,
+        choices=[("fr", "Français"), ("en", "English")],
+    )
