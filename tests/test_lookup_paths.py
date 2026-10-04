@@ -1,4 +1,7 @@
+import re
+
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import SyncPipeline, rag
@@ -223,3 +226,17 @@ def test_lookup_path_and_follow_on_its_first_relation_are_read_in_a_single_query
         "Heavy\n\nTools\n\nHammer\n\nNew",
         "Bright\n\nLighting\n\nLamp\n\nNew",
     ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("categroy__name", id="unknown-first-link"),
+        pytest.param("category__nmae", id="unknown-last-link"),
+    ],
+)
+def test_lookup_path_with_an_unknown_link_fails_at_registration_naming_the_path(
+    path: str,
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=re.escape(path)):
+        rag.register(Product, fields=["name", path])
