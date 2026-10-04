@@ -44,3 +44,13 @@ def test_lookup_path_keeps_its_place_in_the_declared_field_order() -> None:
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Furniture\n\nChair"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_declared_first_gives_the_title() -> None:
+    _create_product(name="Chair", category_name="Furniture")
+    rag.register(Product, fields=["category__name", "name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.title for document in documents] == ["Furniture"]
