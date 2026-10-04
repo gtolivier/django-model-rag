@@ -216,6 +216,16 @@ def test_constant_language_is_every_document_language_and_frees_the_guessed_fiel
     }
 
 
+@pytest.mark.django_db
+def test_model_without_get_absolute_url_or_url_field_gives_an_empty_url() -> None:
+    Category.objects.create(name="Tools")
+    rag.register(Category, fields=["name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.url for document in documents] == [""]
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
