@@ -406,12 +406,13 @@ def test_lookup_path_in_exclude_fails_at_registration_naming_it() -> None:
     assert "own field" in message
 
 
-def test_lookup_path_from_a_models_module_fails_and_points_to_appconfig_ready(
-    tmp_path: Path,
-) -> None:
-    # Resolving a lookup path needs the related models loaded, which is not the
-    # case while a models.py runs: this process's apps are long loaded, so a
-    # fresh interpreter loads a throwaway app that registers from its models.py.
+def _register_a_lookup_path_from_a_models_module(tmp_path: Path) -> str:
+    """Return the ImproperlyConfigured message of a registration in a models.py.
+
+    Resolving a lookup path needs the related models loaded, which is not the
+    case while a models.py runs: this process's apps are long loaded, so a
+    fresh interpreter loads a throwaway app that registers from its models.py.
+    """
     app = tmp_path / "noticeboard"
     app.mkdir()
     (app / "__init__.py").write_text("")
@@ -465,5 +466,24 @@ def test_lookup_path_from_a_models_module_fails_and_points_to_appconfig_ready(
     )
 
     assert result.stdout, f"no ImproperlyConfigured raised; stderr:\n{result.stderr}"
-    assert "rag.py" in result.stdout, result.stdout
-    assert "AppConfig.ready()" in result.stdout, result.stdout
+    return result.stdout
+
+
+def test_lookup_path_from_a_models_module_fails_and_points_to_appconfig_ready(
+    tmp_path: Path,
+) -> None:
+    message = _register_a_lookup_path_from_a_models_module(tmp_path)
+
+    assert "rag.py" in message, message
+    assert "AppConfig.ready()" in message, message
+
+
+def test_lookup_path_from_a_models_module_fails_naming_the_lookup_path(
+    tmp_path: Path,
+) -> None:
+    message = _register_a_lookup_path_from_a_models_module(tmp_path)
+
+    assert "lookup path" in message, message
+    assert "'board__name'" in message, message
+    # The registration uses fields only: it never asked to follow anything.
+    assert "follow relations" not in message, message
