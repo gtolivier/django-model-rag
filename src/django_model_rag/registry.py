@@ -56,7 +56,14 @@ def _require_content_field(model: type[Model], path: str) -> None:
     *steps, field_name = path.split(LOOKUP_SEP)
     try:
         for step in steps:
-            model = model._meta.get_field(step).related_model  # type: ignore[assignment]  # related_model is typed as optional
+            related_model = model._meta.get_field(step).related_model
+            if related_model is None:
+                message = (
+                    f"{model.__name__}.{step} is not a relation, "
+                    f"so {path!r} cannot go through it"
+                )
+                raise ImproperlyConfigured(message)
+            model = related_model
         field = model._meta.get_field(field_name)
     except FieldDoesNotExist as error:
         message = f"{model.__name__} has no field {path!r}"
