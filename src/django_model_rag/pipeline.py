@@ -29,7 +29,7 @@ def _followed_foreign_keys(
     return [
         field.name
         for field in model._meta.concrete_fields
-        if field.many_to_one and field.name in followed
+        if (field.many_to_one or field.one_to_one) and field.name in followed
     ]
 
 
