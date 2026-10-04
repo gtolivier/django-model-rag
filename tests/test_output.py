@@ -291,6 +291,26 @@ def test_run_instance_hands_nothing_to_its_output_when_the_extractor_raises() ->
 
 
 @pytest.mark.django_db
+def test_run_instance_rejects_a_document_whose_source_is_another_instance() -> None:
+    # A document attributed to lamps would make the output replace lamps'
+    # documents while syncing lighting: each instance's documents must come
+    # from that instance.
+    lamps = Category.objects.create(name="Lamps")
+    lighting = Category.objects.create(name="Lighting")
+
+    @rag.register_extractor(Category)
+    class MisattributingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(lamps, text=instance.name)
+
+    output = RecordingOutput()
+    with pytest.raises(TypeError, match="MisattributingCategoryExtractor"):
+        SyncPipeline(output).run_instance(lighting)
+
+    assert output.calls == []
+
+
+@pytest.mark.django_db
 def test_pipeline_hands_over_each_chunk_before_extracting_the_next() -> None:
     # The failure is on the first instance of the second chunk: a pipeline
     # extracting the whole model before handing anything over would lose the
