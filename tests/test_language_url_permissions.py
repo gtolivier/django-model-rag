@@ -372,6 +372,15 @@ def test_language_field_naming_a_relation_fails_at_registration_naming_it() -> N
         rag.register(Announcement, fields=["title"], language_field="language")
 
 
+def test_url_field_the_model_lacks_fails_at_registration_naming_it() -> None:
+    with pytest.raises(ImproperlyConfigured, match="nonexistent"):
+        rag.register(Bookmark, fields=["title"], url_field="nonexistent")
+
+    # A method, even the one that gives the url without url_field, is no field.
+    with pytest.raises(ImproperlyConfigured, match="get_absolute_url"):
+        rag.register(Pamphlet, fields=["title"], url_field="get_absolute_url")
+
+
 def test_constant_language_with_language_field_fails_at_registration_naming_both() -> (
     None
 ):
