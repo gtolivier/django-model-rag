@@ -29,16 +29,43 @@ from tests.testapp.models import (
 )
 
 
-@pytest.mark.django_db
-def test_followed_foreign_key_appends_the_related_text_after_the_own_fields() -> None:
-    category = Category.objects.create(name="Furniture")
-    Product.objects.create(
+def _create_chair(category: Category) -> Product:
+    """Create a new product named "Chair", described as "Adjustable.", in ``category``.
+
+    Its own text fields give "Chair", "Adjustable." and the condition's label,
+    "New", in that order.
+    """
+    return Product.objects.create(
         name="Chair",
         description="Adjustable.",
         price="49.90",
         category=category,
         condition="new",
     )
+
+
+def _create_woodworking_topics() -> tuple[Topic, Topic, Topic]:
+    """Create the Joinery, Turning and Carving topics, in that primary key order.
+
+    Their texts are "Joinery" / "Joints and finishes.", "Turning" / "Bowls and
+    spindles." and "Carving" / "Spoons and reliefs.".
+    """
+    joinery = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    turning = Topic.objects.create(
+        summary="Bowls and spindles.", title="Turning", slug="turning"
+    )
+    carving = Topic.objects.create(
+        summary="Spoons and reliefs.", title="Carving", slug="carving"
+    )
+    return joinery, turning, carving
+
+
+@pytest.mark.django_db
+def test_followed_foreign_key_appends_the_related_text_after_the_own_fields() -> None:
+    category = Category.objects.create(name="Furniture")
+    _create_chair(category)
     rag.register(Product, follow=["category"])
 
     documents = SyncPipeline().run()
@@ -51,13 +78,7 @@ def test_followed_foreign_key_appends_the_related_text_after_the_own_fields() ->
 @pytest.mark.django_db
 def test_run_instance_appends_the_followed_related_text_after_the_own_fields() -> None:
     category = Category.objects.create(name="Furniture")
-    product = Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=category,
-        condition="new",
-    )
+    product = _create_chair(category)
     rag.register(Product, follow=["category"])
 
     documents = SyncPipeline().run_instance(product)
@@ -74,13 +95,7 @@ def test_followed_foreign_key_appends_the_related_text_after_the_declared_fields
     # The fields are declared in the reverse of their declaration order, and
     # the condition is left out: only the declared fields come first.
     category = Category.objects.create(name="Furniture")
-    Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=category,
-        condition="new",
-    )
+    _create_chair(category)
     rag.register(Product, fields=["description", "name"], follow=["category"])
 
     documents = SyncPipeline().run()
@@ -95,13 +110,7 @@ def test_exclude_leaves_the_same_named_field_of_the_followed_related_in() -> Non
     # Product and Category both have a "name" field: excluding it leaves out
     # the product's own name only, never the followed category's.
     category = Category.objects.create(name="Furniture")
-    Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=category,
-        condition="new",
-    )
+    _create_chair(category)
     rag.register(Product, exclude=["name"], follow=["category"])
 
     documents = SyncPipeline().run()
@@ -140,13 +149,7 @@ def test_exclude_of_every_own_text_field_registers_with_a_followed_relation() ->
 def test_followed_foreign_key_appends_each_instance_its_own_related_text() -> None:
     furniture = Category.objects.create(name="Furniture")
     lighting = Category.objects.create(name="Lighting")
-    Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=furniture,
-        condition="new",
-    )
+    _create_chair(furniture)
     Product.objects.create(
         name="Lamp",
         description="Dimmable.",
@@ -172,13 +175,7 @@ def test_followed_foreign_key_is_read_with_its_instances_in_a_single_query(
     # category, would show as more than one query.
     furniture = Category.objects.create(name="Furniture")
     lighting = Category.objects.create(name="Lighting")
-    Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=furniture,
-        condition="new",
-    )
+    _create_chair(furniture)
     Product.objects.create(
         name="Lamp",
         description="Dimmable.",
@@ -249,13 +246,7 @@ def test_model_without_text_field_registers_when_a_followed_relation_brings_text
     # StockLevel has only a number, a date and a boolean: registered alone it
     # is refused, but the followed product gives its document a text.
     category = Category.objects.create(name="Furniture")
-    product = Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=category,
-        condition="new",
-    )
+    product = _create_chair(category)
     StockLevel.objects.create(
         quantity=12, counted_on=date(2026, 3, 1), in_stock=True, product=product
     )
@@ -271,13 +262,7 @@ def test_model_without_text_field_that_follows_a_relation_takes_str_as_title() -
     # StockLevel has no own text field to give a title, and defines no
     # __str__: the title is whatever str() gives for the instance.
     category = Category.objects.create(name="Furniture")
-    product = Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=category,
-        condition="new",
-    )
+    product = _create_chair(category)
     stock_level = StockLevel.objects.create(
         quantity=12, counted_on=date(2026, 3, 1), in_stock=True, product=product
     )
@@ -295,13 +280,7 @@ def test_model_without_text_field_that_follows_a_relation_takes_its_str_as_title
     # Delivery has no own text field, but defines a __str__ built from its
     # quantity and date: the title is what that __str__ gives.
     category = Category.objects.create(name="Furniture")
-    product = Product.objects.create(
-        name="Chair",
-        description="Adjustable.",
-        price="49.90",
-        category=category,
-        condition="new",
-    )
+    product = _create_chair(category)
     Delivery.objects.create(quantity=12, delivered_on=date(2026, 3, 1), product=product)
     rag.register(Delivery, follow=["product"])
 
@@ -531,15 +510,7 @@ def test_child_model_follows_a_relation_inherited_from_its_parent() -> None:
 def test_followed_many_to_many_appends_the_related_texts_in_pk_order() -> None:
     # The topics are linked in an order other than their primary keys', so
     # neither the link order nor the reversed selects can give pk order.
-    joinery = Topic.objects.create(
-        summary="Joints and finishes.", title="Joinery", slug="joinery"
-    )
-    turning = Topic.objects.create(
-        summary="Bowls and spindles.", title="Turning", slug="turning"
-    )
-    carving = Topic.objects.create(
-        summary="Spoons and reliefs.", title="Carving", slug="carving"
-    )
+    joinery, turning, carving = _create_woodworking_topics()
     course = Course.objects.create(title="Woodworking basics")
     course.topics.add(turning, carving, joinery)
     rag.register(Course, follow=["topics"])
@@ -561,15 +532,7 @@ def test_followed_many_to_many_is_read_in_one_query_for_all_instances(
     # course would show as more than two queries, and the topics are linked in
     # an order other than their primary keys', so neither the link order nor
     # the reversed selects can give each course its texts in pk order.
-    joinery = Topic.objects.create(
-        summary="Joints and finishes.", title="Joinery", slug="joinery"
-    )
-    turning = Topic.objects.create(
-        summary="Bowls and spindles.", title="Turning", slug="turning"
-    )
-    carving = Topic.objects.create(
-        summary="Spoons and reliefs.", title="Carving", slug="carving"
-    )
+    joinery, turning, carving = _create_woodworking_topics()
     basics = Course.objects.create(title="Woodworking basics")
     furniture = Course.objects.create(title="Furniture making")
     restoration = Course.objects.create(title="Antique restoration")
@@ -622,15 +585,7 @@ def test_followed_reverse_many_to_many_is_read_in_one_query_for_all_instances(
     # topic would show as more than two queries, and the courses are linked in
     # an order other than their primary keys', so neither the link order nor
     # the reversed selects can give each topic its texts in pk order.
-    joinery = Topic.objects.create(
-        summary="Joints and finishes.", title="Joinery", slug="joinery"
-    )
-    turning = Topic.objects.create(
-        summary="Bowls and spindles.", title="Turning", slug="turning"
-    )
-    carving = Topic.objects.create(
-        summary="Spoons and reliefs.", title="Carving", slug="carving"
-    )
+    joinery, turning, carving = _create_woodworking_topics()
     basics = Course.objects.create(title="Woodworking basics")
     furniture = Course.objects.create(title="Furniture making")
     restoration = Course.objects.create(title="Antique restoration")
