@@ -365,6 +365,7 @@ class Registry:
         follow: FieldNames = (),
         language_field: str | None = None,
         language: str | None = None,
+        url_field: str | None = None,
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -375,6 +376,7 @@ class Registry:
         ``language_field`` names the field whose value is the document
         language: an own field, or a lookup path such as ``page__language``.
         ``language`` gives every document of the model that language.
+        ``url_field`` names the own field whose stripped value is the url.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -414,7 +416,7 @@ class Registry:
         declared = tuple(fields)
         followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field, followed, language_field, language
+            declared, title_field, followed, language_field, language, url_field
         )
 
     def register_extractor(

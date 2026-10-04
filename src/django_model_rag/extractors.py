@@ -203,13 +203,14 @@ def language_field_name(model: type[Model], declared: str | None) -> str | None:
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917  # one argument per registration option
         self,
         fields: tuple[str, ...],
         title_field: str | None,
         follow: tuple[str, ...] = (),
         language_field: str | None = None,
         language: str | None = None,
+        url_field: str | None = None,
     ) -> None:
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
@@ -217,7 +218,10 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         ``language_field`` (if any) names the field holding the language: an
         own field, or a lookup path such as ``page__language``.
         ``language`` (if any) is the constant language of every document.
+        ``url_field`` (if any) names the own field whose stripped value is
+        the document url.
         """
+        self.url_field = url_field
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
@@ -248,7 +252,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         )
 
     def _url(self, instance: Model) -> str:
-        """Give the result of ``instance``'s ``get_absolute_url``, else ``""``."""
+        """Give the url of ``instance``: its url field, else ``get_absolute_url``."""
+        if self.url_field:
+            return str(getattr(instance, self.url_field)).strip()
         get_absolute_url = getattr(instance, "get_absolute_url", None)
         if get_absolute_url is None:
             return ""
