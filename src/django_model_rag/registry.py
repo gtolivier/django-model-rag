@@ -69,7 +69,7 @@ def _require_models_ready(model: type[Model]) -> None:
     if not apps.models_ready:
         message = (
             f"{model.__name__}: cannot follow relations while models are loading; "
-            "register from a rag.py module imported in ready()"
+            "register from a rag.py module imported in AppConfig.ready()"
         )
         raise ImproperlyConfigured(message)
 
