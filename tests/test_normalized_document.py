@@ -156,6 +156,15 @@ def test_document_refuses_a_bare_string_as_permissions() -> None:
         make_document(permissions="testapp.view_product")
 
 
+def test_document_refuses_permissions_holding_an_item_that_is_not_a_string() -> None:
+    # Each bad item follows a valid one, so checking only the first item, or
+    # only one kind of wrong item, is not enough.
+    with pytest.raises(TypeError, match="permissions"):
+        make_document(permissions=["testapp.view_product", 1])
+    with pytest.raises(TypeError, match="permissions"):
+        make_document(permissions=["testapp.view_product", None])
+
+
 def test_document_source_key_identifies_its_source() -> None:
     document = make_document(
         source_app_label="testapp", source_model="product", source_pk=1
