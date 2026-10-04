@@ -342,6 +342,12 @@ class Registry:
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
+            for name in exclude:
+                if LOOKUP_SEP in name:
+                    message = (
+                        f"{model.__name__}: {name!r} is not an own field of the model"
+                    )
+                    raise ImproperlyConfigured(message)
             _require_distinct_content_fields(model, exclude, "excluded")
             fields = _guessed_fields(model, exclude, follow)
         else:
