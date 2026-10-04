@@ -307,6 +307,18 @@ def test_url_field_wins_over_get_absolute_url_even_when_blank_or_null() -> None:
     }
 
 
+@pytest.mark.django_db
+def test_url_field_is_left_out_of_guessed_text_fields() -> None:
+    Bookmark.objects.create(title="Docs", link="/docs/a/")
+    rag.register(Bookmark, url_field="link")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "Docs": "/docs/a/",
+    }
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
