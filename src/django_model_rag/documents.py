@@ -1,6 +1,6 @@
 """The normalized document: a piece of text and the model instance it comes from."""
 
-from collections.abc import Collection, Mapping
+from collections.abc import Iterable, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -16,14 +16,16 @@ def _short_repr(value: str) -> str:
     return repr(value)
 
 
-def _check_permissions(permissions: Collection[str]) -> None:
-    """Raise TypeError unless ``permissions`` is a collection of strings."""
+def _check_permissions(permissions: Iterable[str]) -> frozenset[str]:
+    """Return ``permissions`` as a frozenset; raise TypeError unless all are strings."""
     if isinstance(permissions, str):
         msg = "permissions must be a collection of strings, not a bare string"
         raise TypeError(msg)
-    if not all(isinstance(item, str) for item in permissions):
+    granted = frozenset(permissions)
+    if not all(isinstance(item, str) for item in granted):
         msg = "permissions must be a collection of strings"
         raise TypeError(msg)
+    return granted
 
 
 @dataclass(frozen=True, kw_only=True, repr=False)
@@ -50,9 +52,9 @@ class NormalizedDocument:
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
-        _check_permissions(self.permissions)
+        permissions = _check_permissions(self.permissions)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
-        object.__setattr__(self, "permissions", frozenset(self.permissions))
+        object.__setattr__(self, "permissions", permissions)
 
     @property
     def source_key(self) -> str:
