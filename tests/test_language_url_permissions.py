@@ -289,6 +289,26 @@ def test_get_absolute_url_gives_each_document_its_instance_url_left_relative() -
 
 
 @pytest.mark.django_db
+def test_get_absolute_url_reads_undeclared_own_columns_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two pages whose url is built from their slug, which is not declared: a
+    # slug left out of the select but read anyway would show as one more query
+    # per page.
+    Page.objects.create(title="About", slug="about")
+    Page.objects.create(title="Contact", slug="contact")
+    rag.register(Page, fields=["title"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "About": "/pages/about/",
+        "Contact": "/pages/contact/",
+    }
+
+
+@pytest.mark.django_db
 def test_run_instance_gives_the_document_the_url_of_its_get_absolute_url() -> None:
     page = Page.objects.create(title="About", slug="about")
     rag.register(Page, fields=["title"])
