@@ -479,6 +479,23 @@ class Excerpt(models.Model):
     )
 
 
+# --- A language held by a related field with choices --------------------
+# A Clipping has no language of its own: it may point to a Leaflet, whose
+# field ``locale`` with choices holds it, or to nothing, its foreign key being
+# nullable.
+
+
+class Clipping(models.Model):
+    title = models.CharField(max_length=200)
+    leaflet = models.ForeignKey(
+        Leaflet,
+        related_name="clippings",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
 # --- A get_absolute_url that fails --------------------------------------
 # A Brochure's get_absolute_url raises NoReverseMatch, as one reversing a URL
 # name the project does not define would: a bug of the project's own.

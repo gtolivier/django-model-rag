@@ -14,6 +14,7 @@ from tests.testapp.models import (
     Category,
     Circular,
     Citation,
+    Clipping,
     Dispatch,
     Excerpt,
     Flyer,
@@ -204,6 +205,22 @@ def test_language_field_lookup_path_is_read_with_its_instances_in_a_single_query
         "Bonjour": "fr",
         "Hello": "en",
         "Hallo": "de",
+    }
+
+
+@pytest.mark.django_db
+def test_language_field_lookup_path_gives_the_stored_code_not_a_choice_label() -> None:
+    french = Leaflet.objects.create(title="Dépliant", locale="fr")
+    english = Leaflet.objects.create(title="Leaflet", locale="en")
+    Clipping.objects.create(title="Bonjour", leaflet=french)
+    Clipping.objects.create(title="Hello", leaflet=english)
+    rag.register(Clipping, fields=["title"], language_field="leaflet__locale")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour": "fr",
+        "Hello": "en",
     }
 
 
