@@ -133,6 +133,49 @@ def _selected_path_prefixes(
     return [LOOKUP_SEP.join(run) for run in runs if run]
 
 
+def _read_by_prefix(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> dict[str, tuple[type[Model], set[str]]]:
+    """Map each selected relation prefix of the lookup paths to what is read there.
+
+    The value is the related model, and the names of its fields the paths read.
+    """
+    followed = set(_followed(extractor))
+    read: dict[str, tuple[type[Model], set[str]]] = {}
+    for path in _lookup_paths(extractor):
+        names = path.split(LOOKUP_SEP)
+        run: list[str] = []
+        owner = model
+        # a ``fields`` attribute of a custom extractor need not be paths
+        with suppress(FieldDoesNotExist):
+            for link in path_links(model, path):
+                if (
+                    not _is_selected(link.relation)
+                    or link.relation.related_model is None
+                ):
+                    break
+                run.append(link.query_name)
+                owner = link.relation.related_model
+                prefix = LOOKUP_SEP.join(run)
+                # a followed relation is read in full
+                if link.accessor in followed and len(run) == 1:
+                    break
+                read.setdefault(prefix, (owner, set()))[1].add(names[len(run)])
+    return read
+
+
+def _unread_related_columns(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> list[str]:
+    """Return the lookup names of the related columns no lookup path reads."""
+    return [
+        f"{prefix}{LOOKUP_SEP}{field.name}"
+        for prefix, (owner, names) in _read_by_prefix(model, extractor).items()
+        for field in owner._meta.concrete_fields
+        if not field.primary_key and not {field.name, field.attname} & names
+    ]
+
+
 def _reads_only_named_columns(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> bool:
@@ -181,6 +224,8 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     # foreign key, followed or not
     if selected:
         queryset = queryset.select_related(*selected)
+        if unread := _unread_related_columns(model, extractor):
+            queryset = queryset.defer(*unread)
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)
     hooked = _checked_queryset(extractor.get_queryset(queryset), extractor)
