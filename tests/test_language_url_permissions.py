@@ -25,6 +25,7 @@ from tests.testapp.models import (
     Notice,
     Page,
     Pamphlet,
+    Shortcut,
 )
 
 
@@ -345,6 +346,20 @@ def test_url_field_wins_over_get_absolute_url_even_when_blank_or_null() -> None:
         "Filled": "https://example.com/p",
         "Blank": "",
         "Null": "",
+    }
+
+
+@pytest.mark.django_db
+def test_url_field_with_choices_gives_the_stored_value_not_the_label() -> None:
+    Shortcut.objects.create(title="Docs", link="/docs/")
+    Shortcut.objects.create(title="Questions", link="/faq/")
+    rag.register(Shortcut, fields=["title"], url_field="link")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "Docs": "/docs/",
+        "Questions": "/faq/",
     }
 
 

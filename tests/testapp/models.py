@@ -561,3 +561,17 @@ class Citation(models.Model):
         null=True,
         blank=True,
     )
+
+
+# --- A URL held in an own field with choices ----------------------------
+# A Shortcut has no get_absolute_url: its URL is stored in its own CharField
+# named ``link``, which has choices: its stored URL, such as "/docs/", and its
+# label, such as "Documentation", differ.
+
+
+class Shortcut(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(
+        max_length=200,
+        choices=[("/docs/", "Documentation"), ("/faq/", "FAQ")],
+    )
