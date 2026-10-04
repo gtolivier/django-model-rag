@@ -293,6 +293,15 @@ def test_lookup_path_through_a_many_valued_relation_fails_at_registration(
     assert "several" in message
 
 
+def test_lookup_path_declared_twice_fails_at_registration_naming_it() -> None:
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(Product, fields=["name", "category__name", "category__name"])
+
+    message = str(excinfo.value)
+    assert "category__name" in message
+    assert "twice" in message
+
+
 def test_lookup_path_through_a_generic_foreign_key_fails_at_registration() -> None:
     # Tag.content_object may point to an instance of any model: its related
     # model changes from one row to the next, so the path cannot be resolved.
