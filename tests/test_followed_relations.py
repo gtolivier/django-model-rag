@@ -424,6 +424,49 @@ def test_followed_reverse_foreign_key_is_read_in_one_query_for_all_instances(
 
 
 @pytest.mark.django_db
+def test_followed_reverse_foreign_key_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two categories with two products each: the product's price is not text,
+    # so it is never read, and a text column left out of the prefetch but read
+    # anyway would show as one more query per product.
+    furniture = Category.objects.create(name="Furniture")
+    lighting = Category.objects.create(name="Lighting")
+    _create_chair(furniture)
+    Product.objects.create(
+        name="Lamp",
+        description="Dimmable.",
+        price="19.90",
+        category=lighting,
+        condition="new",
+    )
+    Product.objects.create(
+        name="Table",
+        description="Extendable.",
+        price="199.00",
+        category=furniture,
+        condition="new",
+    )
+    Product.objects.create(
+        name="Bulb",
+        description="Warm white.",
+        price="4.50",
+        category=lighting,
+        condition="used",
+    )
+    rag.register(Category, follow=["products"])
+
+    with django_assert_num_queries(2) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Furniture\n\nChair\n\nAdjustable.\n\nNew\n\nTable\n\nExtendable.\n\nNew",
+        "Lighting\n\nLamp\n\nDimmable.\n\nNew\n\nBulb\n\nWarm white.\n\nSecond-hand",
+    ]
+    assert '"testapp_product"."price"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
 def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> None:
     Page.objects.create(title="About us", slug="about-us")
     rag.register(Page, follow=["text_plugins"])
