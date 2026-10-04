@@ -460,3 +460,19 @@ class Announcement(models.Model):
     language = models.ForeignKey(
         Language, related_name="announcements", on_delete=models.CASCADE
     )
+
+
+# --- A language held by a related model ---------------------------------
+# An Excerpt has no language of its own: it may point to a Notice, whose own
+# field ``language`` holds it, or to nothing, its foreign key being nullable.
+
+
+class Excerpt(models.Model):
+    title = models.CharField(max_length=200)
+    notice = models.ForeignKey(
+        Notice,
+        related_name="excerpts",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )

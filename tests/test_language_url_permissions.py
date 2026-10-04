@@ -7,6 +7,7 @@ from tests.testapp.models import (
     Category,
     Circular,
     Dispatch,
+    Excerpt,
     Gazette,
     Language,
     Leaflet,
@@ -153,4 +154,22 @@ def test_language_field_is_left_out_of_guessed_text_fields_not_declared_ones() -
         "Bonjour": "fr",
         "Hello": "en",
         "Hallo\n\nde": "de",
+    }
+
+
+@pytest.mark.django_db
+def test_language_field_lookup_path_reads_the_language_of_the_related_object() -> None:
+    french = Notice.objects.create(title="Avis", language="  fr  ")
+    english = Notice.objects.create(title="Notice", language="en")
+    Excerpt.objects.create(title="Bonjour", notice=french)
+    Excerpt.objects.create(title="Hello", notice=english)
+    Excerpt.objects.create(title="Orphan", notice=None)
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour": "fr",
+        "Hello": "en",
+        "Orphan": None,
     }
