@@ -92,6 +92,61 @@ foreign key, a path that ends on a relation, a path declared twice, a path
 in `exclude` (which only names the model's own guessed fields), and a path
 registered while models are still loading.
 
+## Language, URL and permissions
+
+```python
+rag.register(Product, language_field="locale", url_field="permalink")
+rag.register(Review, language_field="product__language")
+rag.register(Article, language="fr", permissions=["blog.view_article"])
+```
+
+**Language.** Each document's `language` comes from, in this order:
+
+- `language="fr"`: the same language, stripped, for every document of the
+  model;
+- `language_field`: the field it names, an own field or a lookup path;
+- otherwise a guessed field: the model's own non-relation field named
+  `language`, else `language_code`, else `lang` — chosen once per model, by
+  name only;
+- otherwise `None`.
+
+The language is the stored value, stripped — a field with choices gives its
+code, not its label. A configured or guessed field that is blank or null,
+or a null foreign key along a path, gives `None`: there is no fallback to
+the next source. The own field read as the language is left out of the
+guessed text fields (name it in `fields=` to extract it too); with
+`language="fr"`, a field named `language` stays a guessed text field.
+
+**URL.** Each document's `url` is `url_field`'s value, stripped, when it is
+given — an own field or a lookup path —, else the result of the model's
+`get_absolute_url()`, else `""`. The URL is kept as stored or returned,
+relative or absolute: nothing turns it into an absolute URL. A blank
+`url_field`, or a null foreign key along its path, gives `""` without
+falling back to `get_absolute_url()`; a `get_absolute_url()` that returns
+`None` gives `""`, and one that raises lets its exception propagate out of
+the pipeline. An own `url_field` is left out of the guessed text fields.
+
+**Queries.** A `language_field` or `url_field` path is read in the same
+query as the instances, like a path in `fields`.
+
+**Permissions.** `permissions=["app_label.codename", ...]` puts the same
+permission names, as a `frozenset`, on every document of the model, for the
+retrieval side to filter on; without them, documents have an empty
+`frozenset`. Nothing checks that the permissions exist: they are passed
+through. A custom extractor gives each document its own with
+`build_document(instance, text=..., permissions=[...])`; a bare string, or
+an item that is not a string, raises `TypeError` there. A document's
+`permissions` is typed as a set of strings (`collections.abc.Set[str]`), so
+the retrieval side can compare it with set operators such as
+`document.permissions <= user_permissions`.
+
+Errors are raised at registration, with `ImproperlyConfigured`: a
+`language_field` or `url_field` naming an unknown field — a method name
+included — or a relation, a path refused for the same reasons as in
+`fields`, `language` combined with `language_field`, a `language` that is
+blank or not a string, `permissions` that is not a list or a tuple, and a
+permission that is not a string of the form `app_label.codename`.
+
 ## Where to register
 
 Register your models in a `rag.py` module of your app, imported from the

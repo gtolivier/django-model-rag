@@ -15,6 +15,7 @@ from django_model_rag.extractors import (
     M,
     PathLink,
     accessor_name,
+    guessed_language_field,
     path_links,
     text_fields,
 )
@@ -22,11 +23,32 @@ from django_model_rag.extractors import (
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
+PermissionNames: TypeAlias = list[str] | tuple[str, ...]
+"""The ``app_label.codename`` permissions a model's documents require."""
+
+
+def _language_field(
+    model: type[Model], language_field: str | None, language: str | None
+) -> str | None:
+    """Name the field ``model``'s documents read their language from, if any.
+
+    It is the declared ``language_field``; without it, an own field guessed
+    by name, unless the language is the constant ``language``.
+    """
+    if language_field is not None or language is not None:
+        return language_field
+    return guessed_language_field(model)
+
 
 def _guessed_fields(
-    model: type[Model], exclude: FieldNames, follow: FieldNames
+    model: type[Model],
+    exclude: FieldNames,
+    follow: FieldNames,
+    metadata_fields: tuple[str | None, ...],
 ) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
+
+    The ``metadata_fields`` are left out too.
 
     A model that follows relations may be left with no text field of its
     own: their text is enough to make a document.
@@ -35,7 +57,7 @@ def _guessed_fields(
         ImproperlyConfigured: ``model`` follows no relation and has no text
             field, or none left once ``exclude`` is applied.
     """
-    names = text_fields(model)
+    names = [name for name in text_fields(model) if name not in metadata_fields]
     if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
@@ -247,6 +269,61 @@ def _require_fields_or_exclude(
         raise ImproperlyConfigured(message)
 
 
+def _require_single_language_source(
+    language: str | None, language_field: str | None
+) -> None:
+    """Fail if both a constant ``language`` and a ``language_field`` are given.
+
+    Raises:
+        ImproperlyConfigured: ``language`` is combined with ``language_field``.
+    """
+    if language is not None and language_field is not None:
+        message = "language and language_field cannot be combined"
+        raise ImproperlyConfigured(message)
+
+
+def _require_text_language(language: object) -> None:
+    """Fail if a constant ``language`` is given but is not a non-blank string.
+
+    Raises:
+        ImproperlyConfigured: ``language`` is blank or not a string.
+    """
+    if language is not None and (not isinstance(language, str) or not language.strip()):
+        message = "language must be a non-blank string"
+        raise ImproperlyConfigured(message)
+
+
+def _require_permission_names(permissions: object) -> None:
+    """Fail unless ``permissions`` is a list or a tuple of permission names.
+
+    Raises:
+        ImproperlyConfigured: ``permissions`` is not a list or a tuple (a
+            bare string or a set, say), or one of its items is not a
+            permission name.
+    """
+    if not isinstance(permissions, list | tuple):
+        message = "permissions must be a list or a tuple of strings"
+        raise ImproperlyConfigured(message)
+    for permission in permissions:
+        _require_permission_name(permission)
+
+
+def _require_permission_name(permission: object) -> None:
+    """Fail unless ``permission`` is a string of the form ``app_label.codename``.
+
+    Raises:
+        ImproperlyConfigured: ``permission`` is not a string, or its dot,
+            app label or codename is missing.
+    """
+    if not isinstance(permission, str):
+        message = f"permissions must be strings, not {permission!r}"
+        raise ImproperlyConfigured(message)
+    app_label, dot, codename = permission.partition(".")
+    if not (app_label and dot and codename):
+        message = f"permission {permission!r} is not of the form 'app_label.codename'"
+        raise ImproperlyConfigured(message)
+
+
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
 
@@ -320,7 +397,7 @@ class Registry:
         self._require_registered(model)
         return self._registrations[model]()
 
-    def register(
+    def register(  # noqa: PLR0913  # one keyword per registration option
         self,
         model: type[Model],
         *,
@@ -328,6 +405,10 @@ class Registry:
         title_field: str | None = None,
         exclude: FieldNames = (),
         follow: FieldNames = (),
+        language_field: str | None = None,
+        language: str | None = None,
+        url_field: str | None = None,
+        permissions: PermissionNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -335,39 +416,62 @@ class Registry:
         those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
         The text of the relations named in ``follow`` comes after the fields.
+        ``language_field`` names the field whose value is the document
+        language: an own field, or a lookup path such as ``page__language``.
+        ``language`` gives every document of the model that language.
+        ``url_field`` names the field whose stripped value is the document
+        url: an own field, or a lookup path such as ``bookmark__link``.
+        ``permissions`` are given to every document of the model.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields``, ``exclude`` or ``follow`` is not
-                a list or a tuple; no field is declared, a field is declared
-                or excluded twice, or a field (``title_field`` and ``exclude``
-                included) is not one of the model's or is a relation;
-                ``exclude`` is combined with ``fields``; without ``fields``
-                and ``follow``, the model has no text field, or none left once
-                ``exclude`` is applied; a name in ``follow`` is not one of the
-                model's relation accessors, is given twice, or leads to a
-                model with no text field; a name in ``exclude`` is a lookup
-                path; or relations are followed while models are loading.
+            ImproperlyConfigured: ``fields``, ``exclude``, ``follow`` or
+                ``permissions`` is not a list or a tuple; no field is
+                declared, a field is declared or excluded twice, or a field
+                (``title_field``, ``language_field``, ``url_field`` and
+                ``exclude`` included) is not one of the model's or is a
+                relation;
+                ``exclude`` is combined with ``fields``, or ``language`` with
+                ``language_field``; ``language`` is blank or not a string;
+                without ``fields`` and ``follow``, the model has no text
+                field, or none left once ``exclude`` is applied; a name in
+                ``follow`` is not one of the model's relation accessors, is
+                given twice, or leads to a model with no text field; a name
+                in ``exclude`` is a lookup path; or relations are followed
+                while models are loading.
         """
         self._require_unregistered(model)
+        _require_single_language_source(language, language_field)
+        _require_text_language(language)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
+        read_language_field = _language_field(model, language_field, language)
         if fields is None:
             _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(model, exclude, follow)
+            metadata_fields = (read_language_field, url_field)
+            fields = _guessed_fields(model, exclude, follow, metadata_fields)
         else:
             _require_content_fields(model, fields)
-        if title_field is not None:
-            _require_content_field(model, title_field)
+        for single_field in (title_field, language_field, url_field):
+            if single_field is not None:
+                _require_content_field(model, single_field)
         if follow:
             _require_models_ready(model, "follow relations")
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
+        _require_permission_names(permissions)
+        granted = tuple(permissions)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field, followed
+            declared,
+            title_field,
+            followed,
+            read_language_field,
+            language,
+            url_field,
+            granted,
         )
 
     def register_extractor(

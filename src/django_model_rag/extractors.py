@@ -1,9 +1,10 @@
 """The extractors: the base class of custom ones, and the one of declared fields."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Collection, Iterable, Iterator, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import CharField, Field, Model, TextField
@@ -72,6 +73,7 @@ class BaseExtractor(ABC, Generic[M]):
         url: str = "",
         language: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        permissions: Collection[str] = (),
     ) -> NormalizedDocument:
         """Build a document with ``text``, its source taken from ``instance``."""
         return NormalizedDocument(
@@ -83,6 +85,8 @@ class BaseExtractor(ABC, Generic[M]):
             url=url,
             language=language,
             metadata=metadata or {},
+            # The document accepts any collection and stores a frozenset.
+            permissions=cast("AbstractSet[str]", permissions),
         )
 
 
@@ -167,6 +171,11 @@ def _field_text(instance: Model, name: str) -> str:
     # Django adds get_<name>_display only to fields that have choices
     if getattr(instance._meta.get_field(name), "choices", None):
         value = getattr(instance, f"get_{name}_display")()
+    return _stripped_text(value)
+
+
+def _stripped_text(value: object) -> str:
+    """Read a stored ``value`` as stripped text, empty when it is unset."""
     return "" if value is None else str(value).strip()
 
 
@@ -175,23 +184,56 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
+_GUESSED_LANGUAGE_FIELDS = ("language", "language_code", "lang")
+"""The names of an own field read as the language when none is declared.
+
+The first name the model has wins.
+"""
+
+
+def guessed_language_field(model: type[Model]) -> str | None:
+    """Name the own field of ``model`` guessed, by its name, as the language."""
+    # concrete_fields, not get_fields(): it needs no loaded app registry
+    own_fields = {
+        field.name for field in model._meta.concrete_fields if not field.is_relation
+    }
+    return next((name for name in _GUESSED_LANGUAGE_FIELDS if name in own_fields), None)
+
+
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913, PLR0917  # one argument per registration option
         self,
         fields: tuple[str, ...],
         title_field: str | None,
         follow: tuple[str, ...] = (),
+        language_field: str | None = None,
+        language: str | None = None,
+        url_field: str | None = None,
+        permissions: tuple[str, ...] = (),
     ) -> None:
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
         The text of the relations in ``follow`` comes after the fields.
+        ``language_field`` (if any) names the field holding the language,
+        declared or guessed: an own field, or a lookup path such as
+        ``page__language``.
+        ``language`` (if any), stripped, is the constant language of every
+        document.
+        ``url_field`` (if any) names the field whose stripped value is the
+        document url: an own field, or a lookup path such as
+        ``bookmark__link``.
+        ``permissions`` are given to every document.
         """
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
-        # guessed once per related model, and resolved once per lookup path;
+        self.language_field = language_field
+        self.language = None if language is None else language.strip()
+        self.url_field = url_field
+        self.permissions = permissions
+        # listed once per related model, and resolved once per lookup path;
         # the registry builds a fresh extractor for each run, so a redefined
         # model is never served stale
         self._related_text_fields: dict[type[Model], list[str]] = {}
@@ -208,8 +250,34 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         if not text:
             return None
         return self.build_document(
-            instance, text=text, title=self._title(instance, field_texts)
+            instance,
+            text=text,
+            title=self._title(instance, field_texts),
+            url=self._url(instance),
+            language=self._language(instance),
+            permissions=self.permissions,
         )
+
+    def _url(self, instance: Model) -> str:
+        """Give the url of ``instance``: its url field, else ``get_absolute_url``."""
+        if self.url_field:
+            return self._stored_text(instance, self.url_field)
+        get_absolute_url = getattr(instance, "get_absolute_url", None)
+        if get_absolute_url is None:
+            return ""
+        url = get_absolute_url()
+        return "" if url is None else str(url)
+
+    def _language(self, instance: Model) -> str | None:
+        """Give the constant language, else read ``instance``'s language field.
+
+        That field is the declared one, or the one the registry guessed by name.
+        """
+        if self.language is not None:
+            return self.language
+        if self.language_field is None:
+            return None
+        return self._stored_text(instance, self.language_field) or None
 
     def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
@@ -217,13 +285,36 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         ``path`` may be a lookup path, such as ``category__name``, to read a
         field of a related instance.
         """
+        path_end = self._path_end(instance, path)
+        if path_end is None:
+            return ""
+        owner, name = path_end
+        return _field_text(owner, name)
+
+    def _stored_text(self, instance: Model, path: str) -> str:
+        """Read the stored value at ``path`` from ``instance`` as stripped text.
+
+        Unlike ``_declared_text``, a field with choices reads as its stored
+        value, not its label. Empty when a link of ``path`` is unset.
+        """
+        path_end = self._path_end(instance, path)
+        if path_end is None:
+            return ""
+        owner, name = path_end
+        return _stripped_text(getattr(owner, name))
+
+    def _path_end(self, instance: Model, path: str) -> tuple[Model, str] | None:
+        """Give the instance holding the last field of ``path``, and its name.
+
+        ``None`` when a link of ``path`` from ``instance`` is unset.
+        """
         *_, name = path.split(LOOKUP_SEP)
         for accessor in self._accessors(type(instance), path):
             related = _related_instance(instance, accessor)
             if related is None:
-                return ""
+                return None
             instance = related
-        return _field_text(instance, name)
+        return instance, name
 
     def _accessors(self, model: type[Model], path: str) -> list[str]:
         """List the attributes crossing the links of ``path`` from ``model``.

@@ -558,6 +558,61 @@ def test_build_document_passes_on_title_url_language_and_metadata() -> None:
 
 
 @pytest.mark.django_db
+def test_build_document_gives_the_permissions_it_is_passed_or_none_as_frozenset() -> (
+    None
+):
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    public = Category.objects.create(name="Public")
+
+    @rag.register_extractor(Category)
+    class RestrictedCategoryExtractor(BaseExtractor[Category]):
+        # Permissions derived from each instance, and left out for one: a
+        # single value given to every document would not match.
+        def extract(self, instance: Category) -> NormalizedDocument:
+            if instance.name == "Public":
+                return self.build_document(instance, text=instance.name)
+            return self.build_document(
+                instance,
+                text=instance.name,
+                permissions=[
+                    f"testapp.view_{instance.name.lower()}",
+                    "testapp.view_category",
+                ],
+            )
+
+    documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.permissions) for document in documents] == [
+        (tools.pk, frozenset({"testapp.view_tools", "testapp.view_category"})),
+        (garden.pk, frozenset({"testapp.view_garden", "testapp.view_category"})),
+        (public.pk, frozenset()),
+    ]
+    assert all(type(document.permissions) is frozenset for document in documents)
+
+
+@pytest.mark.django_db
+def test_build_document_refuses_a_bare_string_as_permissions() -> None:
+    tools = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class SinglePermissionProductExtractor(BaseExtractor[Product]):
+        # One permission given as a bare string instead of a collection is
+        # the slip under test: read as an iterable, it would grant its
+        # characters.
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=instance.name, permissions="testapp.view_product"
+            )
+
+    with pytest.raises(TypeError, match="permissions"):
+        SyncPipeline().run()
+
+
+@pytest.mark.django_db
 def test_extractor_keeping_fields_of_its_own_that_resolve_to_nothing_runs() -> None:
     tools = Category.objects.create(name="Tools")
     hammer = Product.objects.create(

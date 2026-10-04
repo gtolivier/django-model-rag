@@ -9,6 +9,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelatio
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models.manager import BaseManager
+from django.urls import NoReverseMatch
 
 # --- Simple case: an ordinary Django model -----------------------------
 
@@ -362,3 +363,215 @@ class Tag(models.Model):
 class Photo(models.Model):
     title = models.CharField(max_length=200)
     tags = GenericRelation(Tag)
+
+
+# --- A language held under a name of its own ----------------------------
+# A Bulletin keeps its language code, such as "fr", in a field named
+# ``locale``: not one of the names a language field would be guessed by.
+
+
+class Bulletin(models.Model):
+    title = models.CharField(max_length=200)
+    locale = models.CharField(max_length=10)
+
+
+# --- A language held in a field with choices ----------------------------
+# A Leaflet keeps its language code in a field with choices, under a name of
+# its own like Bulletin's: its stored code, such as "fr", and its label, such
+# as "Français", differ.
+
+
+class Leaflet(models.Model):
+    title = models.CharField(max_length=200)
+    locale = models.CharField(
+        max_length=10,
+        choices=[("fr", "Français"), ("en", "English")],
+    )
+
+
+# --- An optional language -----------------------------------------------
+# A Memo keeps its language code under a name of its own like Bulletin's, but
+# in a nullable field: its language may be unknown, stored as None.
+
+
+class Memo(models.Model):
+    title = models.CharField(max_length=200)
+    locale = models.CharField(max_length=10, blank=True, null=True)  # noqa: DJ001 -- the test bench needs a language field whose value can be None
+
+
+# --- A language held under the conventional name ------------------------
+# A Notice keeps its language code, such as "fr", in its own field named
+# ``language``: the name a language field would be guessed by.
+
+
+class Notice(models.Model):
+    title = models.CharField(max_length=200)
+    language = models.CharField(max_length=10)
+
+
+# --- A language held under the other conventional name ------------------
+# A Circular keeps its language code, such as "fr", in its own field named
+# ``language_code``, and has no field named ``language``: the other name a
+# language field would be guessed by.
+
+
+class Circular(models.Model):
+    title = models.CharField(max_length=200)
+    language_code = models.CharField(max_length=10)
+
+
+# --- A language held under the short conventional name ------------------
+# A Dispatch keeps its language code, such as "fr", in its own field named
+# ``lang``, and has no field named ``language`` or ``language_code``: the
+# short name a language field would be guessed by.
+
+
+class Dispatch(models.Model):
+    title = models.CharField(max_length=200)
+    lang = models.CharField(max_length=10)
+
+
+# --- A language held under two conventional names -----------------------
+# A Gazette has both a field named ``language`` and one named
+# ``language_code``: only an order of names can say which one is its language,
+# whichever of the two an instance fills.
+
+
+class Gazette(models.Model):
+    title = models.CharField(max_length=200)
+    language = models.CharField(max_length=10, blank=True)
+    language_code = models.CharField(max_length=10, blank=True)
+
+
+# --- A relation under the conventional name -----------------------------
+# An Announcement's field named ``language`` is a foreign key to a Language,
+# whose string form is its code, such as "fr": the name a language field
+# would be guessed by, but held by a relation, not by an own value.
+
+
+class Language(models.Model):
+    code = models.CharField(max_length=10)
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class Announcement(models.Model):
+    title = models.CharField(max_length=200)
+    language = models.ForeignKey(
+        Language, related_name="announcements", on_delete=models.CASCADE
+    )
+
+
+# --- A language held by a related model ---------------------------------
+# An Excerpt has no language of its own: it may point to a Notice, whose own
+# field ``language`` holds it, or to nothing, its foreign key being nullable.
+
+
+class Excerpt(models.Model):
+    title = models.CharField(max_length=200)
+    notice = models.ForeignKey(
+        Notice,
+        related_name="excerpts",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
+# --- A language held by a related field with choices --------------------
+# A Clipping has no language of its own: it may point to a Leaflet, whose
+# field ``locale`` with choices holds it, or to nothing, its foreign key being
+# nullable.
+
+
+class Clipping(models.Model):
+    title = models.CharField(max_length=200)
+    leaflet = models.ForeignKey(
+        Leaflet,
+        related_name="clippings",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
+# --- A get_absolute_url that fails --------------------------------------
+# A Brochure's get_absolute_url raises NoReverseMatch, as one reversing a URL
+# name the project does not define would: a bug of the project's own.
+
+
+class Brochure(models.Model):
+    title = models.CharField(max_length=200)
+
+    def get_absolute_url(self) -> str:
+        message = "Reverse for 'brochure-detail' not found."
+        raise NoReverseMatch(message)
+
+
+# --- A get_absolute_url that gives nothing ------------------------------
+# A Flyer's get_absolute_url returns None, as one for an instance with no page
+# of its own might: a URL that is not there.
+
+
+class Flyer(models.Model):
+    title = models.CharField(max_length=200)
+
+    def get_absolute_url(self) -> str | None:
+        return None
+
+
+# --- A URL held in an own field -----------------------------------------
+# A Bookmark has no get_absolute_url: its URL, relative such as "/docs/a/" or
+# absolute such as "https://example.com/b", is stored in its own plain
+# CharField named ``link``, not one a URL would be guessed by.
+
+
+class Bookmark(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(max_length=200)
+
+
+# --- A URL held in an own field, next to a get_absolute_url -------------
+# A Pamphlet has both a get_absolute_url and its own nullable CharField named
+# ``link``: its link may be filled, blank or unknown, stored as None, while
+# get_absolute_url always gives a URL.
+
+
+class Pamphlet(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(max_length=200, blank=True, null=True)  # noqa: DJ001 -- the test bench needs a url field whose value can be None
+
+    def get_absolute_url(self) -> str:
+        return f"/pamphlets/{self.pk}/"
+
+
+# --- A URL held by a related model --------------------------------------
+# A Citation has no URL of its own and no get_absolute_url: it may point to a
+# Bookmark, whose own field ``link`` holds it, or to nothing, its foreign key
+# being nullable.
+
+
+class Citation(models.Model):
+    title = models.CharField(max_length=200)
+    bookmark = models.ForeignKey(
+        Bookmark,
+        related_name="citations",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
+# --- A URL held in an own field with choices ----------------------------
+# A Shortcut has no get_absolute_url: its URL is stored in its own CharField
+# named ``link``, which has choices: its stored URL, such as "/docs/", and its
+# label, such as "Documentation", differ.
+
+
+class Shortcut(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(
+        max_length=200,
+        choices=[("/docs/", "Documentation"), ("/faq/", "FAQ")],
+    )
