@@ -79,7 +79,10 @@ def _require_content_field(model: type[Model], path: str) -> None:
         message = f"{model.__name__} has no field {path!r}"
         raise ImproperlyConfigured(message) from error
     if field.is_relation:
-        message = f"{model.__name__}.{field_name} is a relation, not a content field"
+        message = (
+            f"{path!r} ends on {model.__name__}.{field_name}, "
+            "a relation, not a content field"
+        )
         raise ImproperlyConfigured(message)
 
 
