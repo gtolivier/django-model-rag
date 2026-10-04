@@ -20,8 +20,10 @@ from tests.testapp.models import (
     Page,
     PageIntro,
     Product,
+    Recipe,
     Remark,
     Review,
+    Step,
     StockLevel,
     TextPlugin,
     Topic,
@@ -413,6 +415,26 @@ def test_followed_reverse_foreign_key_without_related_name_uses_its_accessor() -
 
     assert [document.text for document in documents] == [
         "Workshop rules\n\nWear goggles.\n\nGloves too.\n\nSweep the floor after use."
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_to_a_model_whose_manager_is_not_a_manager() -> (
+    None
+):
+    # Step's default manager comes from BaseManager.from_queryset(): Django
+    # builds the reverse relation's manager from that class, so it derives from
+    # BaseManager, not from Manager, and its steps are still the related text.
+    recipe = Recipe.objects.create(title="Wood glue")
+    # save(), not Step.objects.create(): the type stubs give a manager built
+    # from BaseManager none of QuerySet's own methods.
+    Step(recipe=recipe, body="Warm the hide glue.").save()
+    rag.register(Recipe, follow=["steps"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Wood glue\n\nWarm the hide glue."
     ]
 
 

@@ -6,6 +6,7 @@ as in the prototype.
 """
 
 from django.db import models
+from django.db.models.manager import BaseManager
 
 # --- Simple case: an ordinary Django model -----------------------------
 
@@ -287,3 +288,24 @@ class PageIntro(models.Model):
 
 class FeaturedProduct(Product):
     tagline = models.CharField(max_length=200)
+
+
+# --- A related model whose manager is not a Manager ---------------------
+# A Step's default manager is built with BaseManager.from_queryset(), as some
+# third-party apps do: its class derives from BaseManager, not from Manager. A
+# Recipe reaches its Steps by the reverse foreign key ``steps``.
+
+
+class StepQuerySet(models.QuerySet["Step"]):
+    """Stand in for a third-party app's own queryset."""
+
+
+class Recipe(models.Model):
+    title = models.CharField(max_length=200)
+
+
+class Step(models.Model):
+    recipe = models.ForeignKey(Recipe, related_name="steps", on_delete=models.CASCADE)
+    body = models.TextField()
+
+    objects = BaseManager.from_queryset(StepQuerySet)()
