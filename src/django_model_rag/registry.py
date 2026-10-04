@@ -29,10 +29,12 @@ def _guessed_fields(
     exclude: FieldNames,
     follow: FieldNames,
     language_field: str | None,
+    language: str | None,
 ) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
-    The own field read as the language is left out too.
+    The own field read as the language is left out too, unless the language
+    is a constant.
 
     A model that follows relations may be left with no text field of its
     own: their text is enough to make a document.
@@ -41,7 +43,9 @@ def _guessed_fields(
         ImproperlyConfigured: ``model`` follows no relation and has no text
             field, or none left once ``exclude`` is applied.
     """
-    resolved_language_field = language_field_name(model, language_field)
+    resolved_language_field = (
+        language_field_name(model, language_field) if language is None else None
+    )
     names = [name for name in text_fields(model) if name != resolved_language_field]
     if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
@@ -336,6 +340,7 @@ class Registry:
         exclude: FieldNames = (),
         follow: FieldNames = (),
         language_field: str | None = None,
+        language: str | None = None,
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -345,6 +350,7 @@ class Registry:
         The text of the relations named in ``follow`` comes after the fields.
         ``language_field`` names the field whose value is the document
         language: an own field, or a lookup path such as ``page__language``.
+        ``language`` gives every document of the model that language.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -367,7 +373,7 @@ class Registry:
         if fields is None:
             _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(model, exclude, follow, language_field)
+            fields = _guessed_fields(model, exclude, follow, language_field, language)
         else:
             _require_content_fields(model, fields)
         if title_field is not None:
@@ -380,7 +386,7 @@ class Registry:
         declared = tuple(fields)
         followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field, followed, language_field
+            declared, title_field, followed, language_field, language
         )
 
     def register_extractor(

@@ -209,17 +209,20 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         title_field: str | None,
         follow: tuple[str, ...] = (),
         language_field: str | None = None,
+        language: str | None = None,
     ) -> None:
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
         The text of the relations in ``follow`` comes after the fields.
         ``language_field`` (if any) names the field holding the language: an
         own field, or a lookup path such as ``page__language``.
+        ``language`` (if any) is the constant language of every document.
         """
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
         self.language_field = language_field
+        self.language = language
         # guessed once per related model, and resolved once per lookup path;
         # the registry builds a fresh extractor for each run, so a redefined
         # model is never served stale
@@ -245,6 +248,8 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
 
     def _language(self, instance: Model) -> str | None:
         """Read the language field of ``instance``, declared or guessed by name."""
+        if self.language is not None:
+            return self.language
         if self.language_field and LOOKUP_SEP in self.language_field:
             return self._declared_text(instance, self.language_field) or None
         name = language_field_name(type(instance), self.language_field)
