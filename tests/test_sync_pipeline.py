@@ -10,6 +10,7 @@ from tests.testapp.models import (
     Digest,
     Listing,
     Notice,
+    Offer,
     Panel,
     Product,
 )
@@ -671,6 +672,30 @@ def test_foreign_key_the_default_manager_selects_stays_loaded_and_joined(
     ] == [
         (hammer.pk, "Hammer", "/hammer/"),
         (rake.pk, "Rake", "/rake/"),
+    ]
+
+
+@pytest.mark.django_db
+def test_relation_the_default_manager_selects_past_a_lookup_path_stays_joined(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # The default manager of Offer joins its product, then the product's
+    # category, with select_related(): deferring the product's category, though
+    # the lookup path reads only the product's name, would make Django refuse
+    # the query, and losing a join, or a column the documents read, would show
+    # as more than one query.
+    hammer = create_product(name="Hammer", description="Steel.", price="9.90")
+    rake = create_product(name="Rake", description="Wooden.", price="14.50")
+    spring = Offer.objects.create(title="Spring sale", product=hammer)
+    autumn = Offer.objects.create(title="Autumn sale", product=rake)
+    rag.register(Offer, fields=["title", "product__name"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (spring.pk, "Spring sale\n\nHammer"),
+        (autumn.pk, "Autumn sale\n\nRake"),
     ]
 
 

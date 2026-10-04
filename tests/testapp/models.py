@@ -621,3 +621,24 @@ class Listing(models.Model):
     )
 
     objects = ListingManager()
+
+
+# --- A default manager that follows a foreign key two links deep -------
+# An Offer's default manager follows its foreign key ``product``, then the
+# Product's own foreign key ``category``, with select_related(), as a project
+# may do so that every offer it shows comes with its product and the product's
+# category: whatever loads Offers through it joins both.
+
+
+class OfferManager(models.Manager["Offer"]):
+    def get_queryset(self) -> models.QuerySet["Offer"]:
+        return super().get_queryset().select_related("product__category")
+
+
+class Offer(models.Model):
+    title = models.CharField(max_length=200)
+    product = models.ForeignKey(
+        Product, related_name="offers", on_delete=models.CASCADE
+    )
+
+    objects = OfferManager()
