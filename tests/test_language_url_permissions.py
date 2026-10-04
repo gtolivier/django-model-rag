@@ -242,3 +242,12 @@ def test_constant_language_with_language_field_fails_at_registration_naming_both
     assert "language_field" in message
     # "language" alone, not as the start of "language_field"
     assert re.search(r"\blanguage\b", message)
+
+
+def test_blank_or_non_string_constant_language_fails_at_registration() -> None:
+    with pytest.raises(ImproperlyConfigured):
+        rag.register(Notice, fields=["title"], language="   ")
+
+    with pytest.raises(ImproperlyConfigured):
+        # A number is the slip under test: the type checker rightly rejects it.
+        rag.register(Notice, fields=["title"], language=42)  # type: ignore[arg-type]
