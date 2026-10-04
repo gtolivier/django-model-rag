@@ -599,3 +599,25 @@ class Shelf(models.Model):
         related_name="shelves",
         on_delete=models.CASCADE,
     )
+
+
+# --- A default manager that already follows a foreign key --------------
+# A Listing's default manager follows its foreign key ``category`` with
+# select_related(), as a project may do so that every listing it shows comes
+# with its category: whatever loads Listings through it joins the category.
+# Its URL is stored in its own CharField named ``link``.
+
+
+class ListingManager(models.Manager["Listing"]):
+    def get_queryset(self) -> models.QuerySet["Listing"]:
+        return super().get_queryset().select_related("category")
+
+
+class Listing(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(max_length=200)
+    category = models.ForeignKey(
+        Category, related_name="listings", on_delete=models.CASCADE
+    )
+
+    objects = ListingManager()

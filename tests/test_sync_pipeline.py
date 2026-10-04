@@ -8,6 +8,7 @@ from tests.testapp.models import (
     Bulletin,
     Category,
     Digest,
+    Listing,
     Notice,
     Panel,
     Product,
@@ -645,6 +646,31 @@ def test_own_url_field_is_loaded_with_the_instances(
     ] == [
         (docs.pk, "Docs", "/docs/a/"),
         (example.pk, "Example", "https://example.com/b"),
+    ]
+
+
+@pytest.mark.django_db
+def test_foreign_key_the_default_manager_selects_stays_loaded_and_joined(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # The default manager of Listing joins its category with select_related():
+    # deferring that foreign key, though no declared field reads it, would make
+    # Django refuse the query, and losing the join, or a column the documents
+    # read, would show as more than one query.
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    hammer = Listing.objects.create(title="Hammer", link="/hammer/", category=tools)
+    rake = Listing.objects.create(title="Rake", link="/rake/", category=garden)
+    rag.register(Listing, fields=["title"], url_field="link")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.url) for document in documents
+    ] == [
+        (hammer.pk, "Hammer", "/hammer/"),
+        (rake.pk, "Rake", "/rake/"),
     ]
 
 
