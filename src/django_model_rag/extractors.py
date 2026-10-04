@@ -160,14 +160,15 @@ def _related_instance(instance: Model, accessor: str) -> Model | None:
     return related
 
 
-def _field_text(instance: Model, name: str) -> str:
+def _field_text(instance: Model, name: str, *, stored: bool = False) -> str:
     """Read the own field ``name`` of ``instance`` as stripped text.
 
-    A field with choices reads as its label.
+    A field with choices reads as its label, unless ``stored`` asks for the
+    stored value.
     """
     value = getattr(instance, name)
     # Django adds get_<name>_display only to fields that have choices
-    if getattr(instance._meta.get_field(name), "choices", None):
+    if not stored and getattr(instance._meta.get_field(name), "choices", None):
         value = getattr(instance, f"get_{name}_display")()
     return _stripped_text(value)
 
@@ -276,14 +277,20 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         if self.language is not None:
             return self.language
         if self.language_field and LOOKUP_SEP in self.language_field:
-            return self._declared_text(instance, self.language_field) or None
+            return (
+                self._declared_text(instance, self.language_field, stored=True) or None
+            )
         name = language_field_name(type(instance), self.language_field)
         if name is None:
             return None
         return _stripped_text(getattr(instance, name)) or None
 
-    def _declared_text(self, instance: Model, path: str) -> str:
+    def _declared_text(
+        self, instance: Model, path: str, *, stored: bool = False
+    ) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
+
+        ``stored`` reads a field with choices as its stored value.
 
         ``path`` may be a lookup path, such as ``category__name``, to read a
         field of a related instance.
@@ -294,7 +301,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
             if related is None:
                 return ""
             instance = related
-        return _field_text(instance, name)
+        return _field_text(instance, name, stored=stored)
 
     def _accessors(self, model: type[Model], path: str) -> list[str]:
         """List the attributes crossing the links of ``path`` from ``model``.
