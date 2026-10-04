@@ -48,9 +48,17 @@ def _model_through(model: type[Model], step: str, path: str) -> type[Model]:
 
     Raises:
         FieldDoesNotExist: ``model`` has no field ``step``.
-        ImproperlyConfigured: ``step`` is not a relation.
+        ImproperlyConfigured: ``step`` is not a relation, or holds several
+            objects.
     """
-    related_model = model._meta.get_field(step).related_model
+    relation = model._meta.get_field(step)
+    related_model = relation.related_model
+    if related_model is not None and (relation.many_to_many or relation.one_to_many):
+        message = (
+            f"{model.__name__}.{step} holds several objects, "
+            f"so {path!r} has no single value"
+        )
+        raise ImproperlyConfigured(message)
     if related_model is None:
         message = (
             f"{model.__name__}.{step} is not a relation, "
