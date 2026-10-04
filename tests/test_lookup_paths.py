@@ -196,3 +196,30 @@ def test_lookup_path_and_follow_through_the_same_relation_combine() -> None:
     assert [document.text for document in documents] == [
         "Intro\n\nbasics\n\nBasics\n\nThe very start"
     ]
+
+
+@pytest.mark.django_db
+def test_lookup_path_and_follow_on_its_first_relation_are_read_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three reviews, each of a product in its own category: one query per
+    # review or per product would show as more than one query.
+    for title, product_name, category_name in [
+        ("Sturdy", "Chair", "Furniture"),
+        ("Heavy", "Hammer", "Tools"),
+        ("Bright", "Lamp", "Lighting"),
+    ]:
+        product = _create_product(name=product_name, category_name=category_name)
+        Review.objects.create(title=title, product=product)
+    rag.register(
+        Review, fields=["title", "product__category__name"], follow=["product"]
+    )
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Sturdy\n\nFurniture\n\nChair\n\nNew",
+        "Heavy\n\nTools\n\nHammer\n\nNew",
+        "Bright\n\nLighting\n\nLamp\n\nNew",
+    ]
