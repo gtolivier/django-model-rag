@@ -26,11 +26,19 @@ def _followed_foreign_keys(
     followed = _followed(extractor)
     # a followed name may be a reverse accessor, which is no field name:
     # look among the concrete fields instead of calling get_field()
-    return [
+    forward = [
         field.name
         for field in model._meta.concrete_fields
         if (field.many_to_one or field.one_to_one) and field.name in followed
     ]
+    reverse = [
+        accessor
+        for relation in model._meta.related_objects
+        if relation.one_to_one
+        and (accessor := relation.get_accessor_name()) in followed
+        and accessor is not None
+    ]
+    return [*forward, *reverse]
 
 
 def _followed_reverse_foreign_keys(
