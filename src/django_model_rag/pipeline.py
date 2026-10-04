@@ -3,6 +3,7 @@
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
+from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Field, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 
@@ -90,7 +91,11 @@ def _selected_run(model: type[Model], path: str) -> list[str]:
     relation_names: list[str] = []
     for step in path.split(LOOKUP_SEP)[:-1]:
         # a lookup path names a reverse relation by its query name
-        relation = current_model._meta.get_field(step)
+        try:
+            relation = current_model._meta.get_field(step)
+        except FieldDoesNotExist:
+            # a ``fields`` attribute of a custom extractor need not be paths
+            break
         if not relation.is_relation or not _is_selected(relation):
             break
         relation_names.append(relation.name)
