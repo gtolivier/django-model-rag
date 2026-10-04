@@ -3,7 +3,7 @@ from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
-from tests.testapp.models import Bulletin, Category, Digest, Panel, Product
+from tests.testapp.models import Bulletin, Category, Digest, Notice, Panel, Product
 
 
 def create_product(*, name: str, description: str, price: str) -> Product:
@@ -588,6 +588,27 @@ def test_own_language_field_is_loaded_with_the_instances(
     french = Bulletin.objects.create(title="Bonjour", locale="fr")
     english = Bulletin.objects.create(title="Hello", locale="en")
     rag.register(Bulletin, fields=["title"], language_field="locale")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.language) for document in documents
+    ] == [
+        (french.pk, "Bonjour", "fr"),
+        (english.pk, "Hello", "en"),
+    ]
+
+
+@pytest.mark.django_db
+def test_guessed_language_field_is_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two notices: a language column left out of the select but read anyway
+    # would show as one more query per notice.
+    french = Notice.objects.create(title="Bonjour", language="fr")
+    english = Notice.objects.create(title="Hello", language="en")
+    rag.register(Notice, fields=["title"])
 
     with django_assert_num_queries(1):
         documents = SyncPipeline().run()
