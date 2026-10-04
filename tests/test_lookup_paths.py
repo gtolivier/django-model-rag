@@ -16,6 +16,7 @@ from tests.testapp.models import (
     Review,
     Supplier,
     SupplierProfile,
+    Tag,
     Topic,
     Workshop,
 )
@@ -290,3 +291,16 @@ def test_lookup_path_through_a_many_valued_relation_fails_at_registration(
     message = str(excinfo.value)
     assert path in message
     assert "several" in message
+
+
+def test_lookup_path_through_a_generic_foreign_key_fails_at_registration() -> None:
+    # Tag.content_object may point to an instance of any model: its related
+    # model changes from one row to the next, so the path cannot be resolved.
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(Tag, fields=["label", "content_object__name"])
+
+    message = str(excinfo.value)
+    assert "content_object__name" in message
+    assert "generic foreign key" in message
+    # A generic foreign key is a relation, only one without a single model.
+    assert "not a relation" not in message
