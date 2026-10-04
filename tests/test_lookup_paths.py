@@ -65,3 +65,16 @@ def test_lookup_path_crossing_several_relations_adds_the_last_field_text() -> No
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Sturdy\n\nFurniture"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_ending_on_a_field_with_choices_gives_its_display_label() -> None:
+    product = _create_product(name="Chair", category_name="Furniture")
+    product.condition = "used"
+    product.save()
+    Review.objects.create(title="Sturdy", product=product)
+    rag.register(Review, fields=["title", "product__condition"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Sturdy\n\nSecond-hand"]
