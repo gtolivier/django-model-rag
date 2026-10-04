@@ -134,7 +134,11 @@ permission names, as a `frozenset`, on every document of the model, for the
 retrieval side to filter on; without them, documents have an empty
 `frozenset`. Nothing checks that the permissions exist: they are passed
 through. A custom extractor gives each document its own with
-`build_document(instance, text=..., permissions=[...])`.
+`build_document(instance, text=..., permissions=[...])`; a bare string, or
+an item that is not a string, raises `TypeError` there. A document's
+`permissions` is typed as a set of strings (`collections.abc.Set[str]`), so
+the retrieval side can compare it with set operators such as
+`document.permissions <= user_permissions`.
 
 Errors are raised at registration, with `ImproperlyConfigured`: a
 `language_field` or `url_field` naming an unknown field — a method name
