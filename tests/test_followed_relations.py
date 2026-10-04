@@ -729,7 +729,7 @@ def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
         rag.register(Product, follow="category")  # type: ignore[arg-type]
 
 
-def test_following_a_relation_from_a_models_module_fails_and_points_to_ready(
+def test_following_a_relation_from_a_models_module_fails_and_points_to_appconfig_ready(
     tmp_path: Path,
 ) -> None:
     # Following a relation needs every model loaded, which is not the case
@@ -789,4 +789,4 @@ def test_following_a_relation_from_a_models_module_fails_and_points_to_ready(
 
     assert result.stdout, f"no ImproperlyConfigured raised; stderr:\n{result.stderr}"
     assert "rag.py" in result.stdout, result.stdout
-    assert "ready()" in result.stdout, result.stdout
+    assert "AppConfig.ready()" in result.stdout, result.stdout
