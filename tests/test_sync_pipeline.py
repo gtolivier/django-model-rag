@@ -544,6 +544,41 @@ def test_several_declared_own_fields_load_only_their_columns(
     assert [column for column in ("title", "heading", "name") if column in sql] == []
 
 
+@pytest.mark.django_db
+def test_own_title_field_outside_the_declared_fields_is_loaded_with_them(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two panels: a heading column left out of the select but read anyway
+    # would show as one more query per panel.
+    faq = Panel.objects.create(
+        body="Answers to common questions.",
+        label="FAQ",
+        heading="Frequently asked",
+        name="faq",
+        title="Questions",
+    )
+    help_panel = Panel.objects.create(
+        body="Where to get support.",
+        label="Help",
+        heading="Getting help",
+        name="help",
+        title="Support",
+    )
+    rag.register(Panel, fields=["body"], title_field="heading")
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.title) for document in documents
+    ] == [
+        (faq.pk, "Answers to common questions.", "Frequently asked"),
+        (help_panel.pk, "Where to get support.", "Getting help"),
+    ]
+    sql = queries.captured_queries[0]["sql"]
+    assert [column for column in ("label", "name", "title") if column in sql] == []
+
+
 def test_unregistering_a_model_that_is_not_registered_fails() -> None:
     with pytest.raises(NotRegistered):
         rag.unregister(Product)
