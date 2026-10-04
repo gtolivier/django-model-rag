@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import suppress
-from typing import Any
+from typing import Any, TypeAlias
 
 from django.core.exceptions import FieldDoesNotExist
 from django.db.models import Field, ForeignObjectRel, Model, QuerySet
@@ -23,6 +23,9 @@ _CHUNK_SIZE = 1000
 
 # the extractor options that each name one field, possibly a lookup path
 _SINGLE_FIELD_OPTIONS = ("title_field", "language_field", "url_field")
+
+# a select_related() lookup, mapped to the related model and its fields read
+_ReadByPrefix: TypeAlias = dict[str, tuple[type[Model], set[str]]]
 
 
 def _option(extractor: BaseExtractor[Any], name: str, default: Any) -> Any:
@@ -140,26 +143,26 @@ def _selected_path_prefixes(
     return [_query_path(run) for run in runs if run]
 
 
-def _followed_read(
-    model: type[Model], extractor: BaseExtractor[Any]
-) -> dict[str, tuple[type[Model], set[str]]]:
+def _followed_read(model: type[Model], extractor: BaseExtractor[Any]) -> _ReadByPrefix:
     """Map each followed selected relation to its model and its text fields."""
     relations = relations_by_accessor(model)
-    read: dict[str, tuple[type[Model], set[str]]] = {}
+    read: _ReadByPrefix = {}
     for accessor in _followed(extractor):
         relation = relations.get(accessor)
-        owner = relation.related_model if relation is not None else None
-        if relation is not None and owner is not None and _is_selected(relation):
+        if relation is None or not _is_selected(relation):
+            continue
+        owner = relation.related_model
+        # for the type checker only: a selected relation leads to a model
+        if owner is not None:
             read[relation.name] = (owner, set(text_fields(owner)))
     return read
 
 
-def _read_by_prefix(
-    model: type[Model], extractor: BaseExtractor[Any]
-) -> dict[str, tuple[type[Model], set[str]]]:
-    """Map each selected relation prefix of the lookup paths to what is read there.
+def _read_by_prefix(model: type[Model], extractor: BaseExtractor[Any]) -> _ReadByPrefix:
+    """Map each selected relation followed or prefixing a lookup path to its reads.
 
-    The value is the related model, and the names of its fields the paths read.
+    The value is the related model, and the names of its fields read: its text
+    fields for a followed relation, those the paths name for a prefix.
     """
     read = _followed_read(model, extractor)
     for path in _lookup_paths(extractor):
@@ -178,7 +181,7 @@ def _read_by_prefix(
 def _unread_related_columns(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
-    """Return the lookup names of the related columns no lookup path reads."""
+    """Return the lookup names of the selected related columns never read."""
     return [
         f"{prefix}{LOOKUP_SEP}{name}"
         for prefix, (owner, read) in _read_by_prefix(model, extractor).items()
