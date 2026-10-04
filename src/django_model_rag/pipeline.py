@@ -77,8 +77,9 @@ def _sorted_relations(
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    The followed foreign keys and one-to-one relations come with each instance,
-    in the same query, and the followed reverse foreign keys, many-to-many
+    The relations read are the followed ones and the first relation of each
+    lookup path. Their foreign keys and one-to-one relations come with each
+    instance, in the same query, and their reverse foreign keys, many-to-many
     relations, forward or reverse, and generic relations, in one more query
     each for all the instances.
     """
