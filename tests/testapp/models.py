@@ -9,6 +9,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelatio
 from django.contrib.contenttypes.models import ContentType
 from django.db import models
 from django.db.models.manager import BaseManager
+from django.urls import NoReverseMatch
 
 # --- Simple case: an ordinary Django model -----------------------------
 
@@ -476,3 +477,16 @@ class Excerpt(models.Model):
         null=True,
         blank=True,
     )
+
+
+# --- A get_absolute_url that fails --------------------------------------
+# A Brochure's get_absolute_url raises NoReverseMatch, as one reversing a URL
+# name the project does not define would: a bug of the project's own.
+
+
+class Brochure(models.Model):
+    title = models.CharField(max_length=200)
+
+    def get_absolute_url(self) -> str:
+        message = "Reverse for 'brochure-detail' not found."
+        raise NoReverseMatch(message)

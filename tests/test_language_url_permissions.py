@@ -2,11 +2,13 @@ import re
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.urls import NoReverseMatch
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     Announcement,
+    Brochure,
     Bulletin,
     Category,
     Circular,
@@ -249,6 +251,15 @@ def test_run_instance_gives_the_document_the_url_of_its_get_absolute_url() -> No
     documents = SyncPipeline().run_instance(page)
 
     assert [document.url for document in documents] == ["/pages/about/"]
+
+
+@pytest.mark.django_db
+def test_exception_raised_by_get_absolute_url_propagates_unchanged() -> None:
+    Brochure.objects.create(title="Spring catalogue")
+    rag.register(Brochure, fields=["title"])
+
+    with pytest.raises(NoReverseMatch, match="brochure-detail"):
+        SyncPipeline().run()
 
 
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
