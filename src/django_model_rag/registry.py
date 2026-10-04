@@ -7,11 +7,15 @@ from typing import Any, TypeAlias
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Field, ForeignObjectRel, Model
+from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.extractors import (
     BaseExtractor,
     DeclaredFieldsExtractor,
     M,
+    PathLink,
+    accessor_name,
+    path_links,
     text_fields,
 )
 
@@ -42,25 +46,59 @@ def _guessed_fields(
     return guessed
 
 
-def _require_content_field(model: type[Model], name: str) -> None:
-    """Fail unless ``model`` has a non-relation field called ``name``.
+def _model_through(link: PathLink, path: str) -> type[Model]:
+    """Return the model ``link``, a link of ``path``, leads to.
+
+    Raises:
+        ImproperlyConfigured: ``link`` is not a relation, is a generic
+            foreign key, or holds several objects.
+    """
+    relation = link.relation
+    related_model = relation.related_model
+    origin = f"{link.model.__name__}.{link.name}"
+    if related_model is None:
+        # A generic foreign key is a relation, only one without a single model.
+        kind = "a generic foreign key" if relation.is_relation else "not a relation"
+        message = f"{origin} is {kind}, so {path!r} cannot go through it"
+        raise ImproperlyConfigured(message)
+    if relation.many_to_many or relation.one_to_many:
+        message = f"{origin} holds several objects, so {path!r} has no single value"
+        raise ImproperlyConfigured(message)
+    return related_model
+
+
+def _require_content_field(model: type[Model], path: str) -> None:
+    """Fail unless ``model`` has a non-relation field at ``path``.
+
+    ``path`` is a field name, or a lookup path such as ``category__name``:
+    the field is then looked up on the related model it leads to.
 
     Raises:
         ImproperlyConfigured: ``model`` has no such field, or it is a
-            relation.
+            relation; or a link of ``path`` is not a relation; or ``path``
+            goes through a relation while models are loading.
     """
+    *steps, field_name = path.split(LOOKUP_SEP)
+    if steps:
+        _require_models_ready(model, f"resolve the lookup path {path!r}")
+    target = model
     try:
-        field = model._meta.get_field(name)
+        for link in path_links(model, path):
+            target = _model_through(link, path)
+        field = target._meta.get_field(field_name)
     except FieldDoesNotExist as error:
-        message = f"{model.__name__} has no field {name!r}"
+        message = f"{model.__name__} has no field {path!r}"
         raise ImproperlyConfigured(message) from error
     if field.is_relation:
-        message = f"{model.__name__}.{name} is a relation, not a content field"
+        message = (
+            f"{path!r} ends on {target.__name__}.{field_name}, "
+            "a relation, not a content field"
+        )
         raise ImproperlyConfigured(message)
 
 
-def _require_models_ready(model: type[Model]) -> None:
-    """Fail unless every model is loaded, as following ``model``'s relations needs.
+def _require_models_ready(model: type[Model], action: str) -> None:
+    """Fail unless every model is loaded, as ``action`` on ``model`` needs.
 
     Raises:
         ImproperlyConfigured: models are still loading (``model`` is
@@ -68,7 +106,7 @@ def _require_models_ready(model: type[Model]) -> None:
     """
     if not apps.models_ready:
         message = (
-            f"{model.__name__}: cannot follow relations while models are loading; "
+            f"{model.__name__}: cannot {action} while models are loading; "
             "register from a rag.py module imported in AppConfig.ready()"
         )
         raise ImproperlyConfigured(message)
@@ -86,11 +124,7 @@ def relations_by_accessor(
     """
     relations: dict[str, Field[Any, Any] | ForeignObjectRel] = {}
     for field in model._meta.get_fields():
-        if not field.is_relation:
-            continue
-        if not isinstance(field, ForeignObjectRel):
-            relations[field.name] = field
-        elif (accessor := field.get_accessor_name()) is not None:
+        if field.is_relation and (accessor := accessor_name(field)) is not None:
             relations[accessor] = field
     return relations
 
@@ -186,6 +220,18 @@ def _require_distinct_content_fields(
             raise ImproperlyConfigured(message)
         seen.add(name)
         _require_content_field(model, name)
+
+
+def _require_own_fields(model: type[Model], names: FieldNames) -> None:
+    """Fail unless each of ``names`` is a field of ``model`` itself.
+
+    Raises:
+        ImproperlyConfigured: a name is a lookup path through a relation.
+    """
+    for name in names:
+        if LOOKUP_SEP in name:
+            message = f"{model.__name__}: {name!r} is not an own field of the model"
+            raise ImproperlyConfigured(message)
 
 
 def _require_fields_or_exclude(
@@ -300,14 +346,15 @@ class Registry:
                 and ``follow``, the model has no text field, or none left once
                 ``exclude`` is applied; a name in ``follow`` is not one of the
                 model's relation accessors, is given twice, or leads to a
-                model with no text field; or relations are followed while
-                models are loading.
+                model with no text field; a name in ``exclude`` is a lookup
+                path; or relations are followed while models are loading.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
+            _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
             fields = _guessed_fields(model, exclude, follow)
         else:
@@ -315,7 +362,7 @@ class Registry:
         if title_field is not None:
             _require_content_field(model, title_field)
         if follow:
-            _require_models_ready(model)
+            _require_models_ready(model, "follow relations")
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)

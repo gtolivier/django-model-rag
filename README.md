@@ -25,6 +25,7 @@ an earlier prototype as its behavioral specification. See the
 from django_model_rag import SyncPipeline, rag
 
 rag.register(Product, fields=["name", "description"], title_field="name")
+rag.register(Review, fields=["title", "product__name", "product__category__name"])
 rag.register(Article)  # fields guessed
 rag.register(Note, exclude=["internal_remarks"])
 
@@ -54,9 +55,42 @@ from all its editable fields; both start from an implicit set, and here
 that set is the guessed text fields. A model with nothing to guess, or whose
 `exclude` leaves nothing, fails at registration with `ImproperlyConfigured`.
 
-A model without `follow` can be registered in its own `models.py`: guessing
-reads only that model's fields, not the app registry, which Django is still
-loading then. Following relations needs every model loaded (see below).
+A model without `follow` or lookup paths can be registered in its own
+`models.py`: guessing reads only that model's fields, not the app registry,
+which Django is still loading then. Following relations and lookup paths
+need every model loaded (see below).
+
+## Fields of related objects
+
+A name in `fields` — or `title_field` — can be a lookup path to one field of
+a related object, as in `values()` or `list_display`:
+`fields=["title", "product__name", "product__category__name"]`.
+
+- **Links** go through foreign keys and one-to-one relations, forward or
+  reverse, as many as needed. A reverse one-to-one is named by its query
+  name, as in `values()` and `select_related` — its `related_query_name`, or
+  its `related_name` when it has none, or else the model name in lower case.
+  This differs from `follow`, which takes accessors. A foreign key may also
+  be named by its column, as in `values()`: `category_id__name` reads like
+  `category__name`.
+- **The last name** is a content field of the model reached: its stripped
+  text, or its label when it has choices.
+- **Order and title.** A path keeps its place among the declared fields, and
+  gives the title when it is declared first or named in `title_field`. A
+  `title_field` path need not be in `fields`: it gives the title, not text.
+- **Nothing to read adds nothing:** a null foreign key or a missing reverse
+  one-to-one along the way.
+- **With `follow`.** The two combine: a path picks one field of a related
+  object, `follow` brings all its guessed text, and both can go through the
+  same relation.
+
+Errors are raised at registration, with `ImproperlyConfigured`, naming the
+path: an unknown name along it, a link that is not a relation, a link that
+holds several objects (a reverse foreign key, a many-to-many relation or a
+generic relation: a path reads one value, use `follow` for those), a generic
+foreign key, a path that ends on a relation, a path declared twice, a path
+in `exclude` (which only names the model's own guessed fields), and a path
+registered while models are still loading.
 
 ## Where to register
 
@@ -110,8 +144,8 @@ model's own fields:
 - **Nothing to follow adds nothing:** a null foreign key, a missing reverse
   one-to-one, an empty relation, or related objects whose text fields are
   blank.
-- **One level only.** A path such as `category__name` is refused: only
-  relations of the model itself are followed.
+- **One level only.** Only relations of the model itself are followed; to
+  read further, name a field of a related object in `fields` (see above).
 - **Title.** A model with no text field of its own — or whose `exclude`
   leaves none — can be registered when it follows relations; its document
   title is `str(instance)`. A model whose own fields are blank but whose
@@ -127,13 +161,16 @@ included.** `follow=["author"]` towards Django's `User` brings its
 `password` field — the hash is a plain `CharField` — along with the name and
 the e-mail address. `exclude` cannot leave it out, since it only applies to
 the model's own fields. Follow only relations to models whose whole text you
-want indexed; for the others, write a custom extractor.
+want indexed; for the others, pick their fields with lookup paths
+(`fields=["title", "author__first_name", "author__last_name"]`), or write a
+custom extractor.
 
-**Queries.** `SyncPipeline().run()` reads foreign keys and one-to-one
-relations in the same query as the instances (`select_related`), and each
-reverse foreign key, many-to-many or generic relation in one more query
+**Queries.** `SyncPipeline().run()` reads followed foreign keys and
+one-to-one relations, and every relation along a lookup path, in the same
+query as the instances (`select_related`), and each followed reverse foreign
+key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
-in chunks of 1000. `run_instance` makes one query per followed relation.
+in chunks of 1000. `run_instance` makes at most one query per relation it crosses.
 
 ## Requirements
 

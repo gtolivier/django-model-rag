@@ -85,12 +85,19 @@ refactoring, not from the prototype.
   registrations go in a `rag.py` imported from `AppConfig.ready()`.
   `run()` reads the relations with `select_related` / `prefetch_related`,
   in a fixed number of queries.
-- [ ] **6. Lookup paths in `fields`** — `fields=["name", "category__name"]`,
+- [x] **6. Lookup paths in `fields`** — `fields=["name", "category__name"]`,
   as in `list_display` or `values()`: one field of a related object, in a
   chosen order, where `follow=` takes all its text — and a way to leave out
   a related object's sensitive field, such as `User.password`, which
-  `follow=` brings along. The two coexist. Until then, a relation in
-  `fields` is an error.
+  `follow=` brings along. The two coexist. Links go through foreign keys and
+  one-to-one relations, reverse ones by their query name; `title_field` can
+  be a path too. `run()` reads every link in the same query as the
+  instances. Open: a path through a reverse foreign key or a many-to-many
+  relation (`text_plugins__body`) is refused, since it has no single value;
+  `values()` gives one row per related object and `search_fields` searches
+  them all. For a document, joining their texts in primary key order would
+  be the natural reading — decide whether to allow it, and how it then
+  differs from `follow`.
 - [ ] **7. Language, URL and permissions** — from configured fields
   (`language_field`, `url_field`) or guessed (common attribute names,
   `get_absolute_url`), with their fallbacks; permissions passed through.
