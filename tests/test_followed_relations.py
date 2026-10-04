@@ -324,6 +324,28 @@ def test_model_without_text_field_that_follows_a_relation_takes_its_str_as_title
 
 
 @pytest.mark.django_db
+def test_title_from_str_loads_the_own_columns_str_reads_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two deliveries, each with a __str__ built from its quantity and date: a
+    # column __str__ reads left out of the select would show as one more query
+    # per delivery.
+    category = Category.objects.create(name="Furniture")
+    product = _create_chair(category)
+    Delivery.objects.create(quantity=12, delivered_on=date(2026, 3, 1), product=product)
+    Delivery.objects.create(quantity=5, delivered_on=date(2026, 4, 2), product=product)
+    rag.register(Delivery, follow=["product"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.title for document in documents] == [
+        "12 delivered on 2026-03-01",
+        "5 delivered on 2026-04-02",
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_that_is_null_adds_nothing_to_the_own_fields() -> None:
     Workshop.objects.create(title="Open bench", topic=None)
     rag.register(Workshop, follow=["topic"])
