@@ -263,7 +263,11 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
     def _url(self, instance: Model) -> str:
         """Give the url of ``instance``: its url field, else ``get_absolute_url``."""
         if self.url_field:
-            return self._declared_text(instance, self.url_field)
+            path_end = self._path_end(instance, self.url_field)
+            if path_end is None:
+                return ""
+            owner, name = path_end
+            return _stripped_text(getattr(owner, name))
         get_absolute_url = getattr(instance, "get_absolute_url", None)
         if get_absolute_url is None:
             return ""
