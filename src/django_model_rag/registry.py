@@ -320,7 +320,7 @@ class Registry:
         self._require_registered(model)
         return self._registrations[model]()
 
-    def register(
+    def register(  # noqa: PLR0913  # one keyword per registration option
         self,
         model: type[Model],
         *,
@@ -328,6 +328,7 @@ class Registry:
         title_field: str | None = None,
         exclude: FieldNames = (),
         follow: FieldNames = (),
+        language_field: str | None = None,
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -335,6 +336,8 @@ class Registry:
         those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
         The text of the relations named in ``follow`` comes after the fields.
+        ``language_field`` names the own field whose value is the document
+        language.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -367,7 +370,7 @@ class Registry:
         declared = tuple(fields)
         followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field, followed
+            declared, title_field, followed, language_field
         )
 
     def register_extractor(

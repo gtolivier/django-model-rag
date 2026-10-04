@@ -183,14 +183,17 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         fields: tuple[str, ...],
         title_field: str | None,
         follow: tuple[str, ...] = (),
+        language_field: str | None = None,
     ) -> None:
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
         The text of the relations in ``follow`` comes after the fields.
+        ``language_field`` (if any) names the own field holding the language.
         """
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
+        self.language_field = language_field
         # guessed once per related model, and resolved once per lookup path;
         # the registry builds a fresh extractor for each run, so a redefined
         # model is never served stale
@@ -208,8 +211,17 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         if not text:
             return None
         return self.build_document(
-            instance, text=text, title=self._title(instance, field_texts)
+            instance,
+            text=text,
+            title=self._title(instance, field_texts),
+            language=self._language(instance),
         )
+
+    def _language(self, instance: Model) -> str | None:
+        """Read the language field of ``instance``, if one is declared."""
+        if self.language_field is None:
+            return None
+        return _field_text(instance, self.language_field)
 
     def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
