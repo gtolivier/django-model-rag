@@ -22,11 +22,13 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     ``extractor``'s get_queryset() shapes how they are loaded.
     """
     queryset = model._default_manager.order_by(_DOCUMENT_ORDER)
-    hooked = _checked_queryset(extractor.get_queryset(queryset), extractor)
+    hooked = _checked_queryset(extractor.get_queryset(queryset), extractor, model)
     return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
 
 
-def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet[Model]:
+def _checked_queryset(
+    hooked: object, extractor: BaseExtractor[Any], model: type[Model]
+) -> QuerySet[Model]:
     """Return what ``extractor``'s get_queryset() hooked.
 
     Raises:
@@ -42,6 +44,11 @@ def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet
         raise TypeError(
             f"{type(extractor).__name__}.get_queryset() must return a QuerySet "
             "of model instances, not of values"
+        )
+    if hooked.model is not model:
+        raise TypeError(
+            f"{type(extractor).__name__}.get_queryset() must return a QuerySet "
+            f"of {model.__name__}, not of {hooked.model.__name__}"
         )
     return hooked
 
