@@ -675,6 +675,33 @@ def test_followed_many_to_many_is_read_in_one_query_for_all_instances(
 
 @pytest.mark.django_db
 @pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_many_to_many_loads_only_the_text_columns_of_the_related(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two courses with two topics each: the topic's slug is not text, so it is
+    # never read, and a text column left out of the prefetch but read anyway
+    # would show as one more query per topic.
+    joinery, turning, carving = _create_woodworking_topics()
+    basics = Course.objects.create(title="Woodworking basics")
+    furniture = Course.objects.create(title="Furniture making")
+    basics.topics.add(turning, joinery)
+    furniture.topics.add(carving, joinery)
+    rag.register(Course, follow=["topics"])
+
+    with django_assert_num_queries(2) as queries:
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Woodworking basics\n\nJoinery\n\nJoints and finishes."
+        "\n\nTurning\n\nBowls and spindles.",
+        "Furniture making\n\nJoinery\n\nJoints and finishes."
+        "\n\nCarving\n\nSpoons and reliefs.",
+    ]
+    assert '"testapp_topic"."slug"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
 def test_followed_reverse_many_to_many_appends_the_related_texts_in_pk_order() -> None:
     # The courses are linked in an order other than their primary keys', so
     # neither the link order nor the reversed selects can give pk order.
