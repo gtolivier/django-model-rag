@@ -527,3 +527,20 @@ class Pamphlet(models.Model):
 
     def get_absolute_url(self) -> str:
         return f"/pamphlets/{self.pk}/"
+
+
+# --- A URL held by a related model --------------------------------------
+# A Citation has no URL of its own and no get_absolute_url: it may point to a
+# Bookmark, whose own field ``link`` holds it, or to nothing, its foreign key
+# being nullable.
+
+
+class Citation(models.Model):
+    title = models.CharField(max_length=200)
+    bookmark = models.ForeignKey(
+        Bookmark,
+        related_name="citations",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )

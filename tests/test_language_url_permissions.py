@@ -13,6 +13,7 @@ from tests.testapp.models import (
     Bulletin,
     Category,
     Circular,
+    Citation,
     Dispatch,
     Excerpt,
     Flyer,
@@ -316,6 +317,21 @@ def test_url_field_is_left_out_of_guessed_text_fields() -> None:
 
     assert {document.text: document.url for document in documents} == {
         "Docs": "/docs/a/",
+    }
+
+
+@pytest.mark.django_db
+def test_url_field_lookup_path_reads_the_url_of_the_related_object() -> None:
+    bookmark = Bookmark.objects.create(title="Docs", link="  /docs/a/  ")
+    Citation.objects.create(title="Linked", bookmark=bookmark)
+    Citation.objects.create(title="Orphan", bookmark=None)
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "Linked": "/docs/a/",
+        "Orphan": "",
     }
 
 
