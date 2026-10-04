@@ -51,8 +51,9 @@ features 9 and 10 need.
   `source_key` to the complete sequence of that source's documents: each
   group replaces everything the output holds for its source, and an empty
   sequence removes the source. `prune(model_label, kept_keys)` removes the
-  sources of a model (`app_label.model_name`, the start of their
-  `source_key`) that are not in `kept_keys`. Groups go in batches, so that
+  sources of a model (`app_label.model_name`: the whole part of their
+  `source_key` before the colon, so that `app.note` never matches
+  `app.notebook:3`) that are not in `kept_keys`. Groups go in batches, so that
   django-minimal-rag can batch its embedding calls. The exact signatures are
   settled by the tests of feature 8; the name of `prune`'s first argument
   should stay meaningful for a django-minimal-rag used without this package.
