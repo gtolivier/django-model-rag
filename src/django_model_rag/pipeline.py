@@ -195,8 +195,5 @@ class SyncPipeline:
             TypeError: its extractor returned a document of another source.
         """
         extractor = rag.new_extractor(type(instance))
-        groups = _groups([instance], extractor)
-        source_key = _source_key(instance)
-        # an empty group still replaces what the output holds for the instance
-        groups.setdefault(source_key, [])
-        self._output.replace(groups)
+        documents = list(_own_documents(instance, extractor))
+        self._output.replace({_source_key(instance): documents})
