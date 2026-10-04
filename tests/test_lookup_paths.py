@@ -251,3 +251,13 @@ def test_lookup_path_through_a_non_relation_fails_at_registration() -> None:
     assert "Product" in message
     assert "description__name" in message
     assert "not a relation" in message
+
+
+def test_lookup_path_ending_on_a_relation_fails_at_registration() -> None:
+    # category is a foreign key of Product: the path ends on a relation, not text.
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(Review, fields=["title", "product__category"])
+
+    message = str(excinfo.value)
+    assert "product__category" in message
+    assert "a relation" in message
