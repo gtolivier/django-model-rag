@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
@@ -228,3 +230,15 @@ def test_language_field_naming_a_relation_fails_at_registration_naming_it() -> N
 
     with pytest.raises(ImproperlyConfigured, match="language"):
         rag.register(Announcement, fields=["title"], language_field="language")
+
+
+def test_constant_language_with_language_field_fails_at_registration_naming_both() -> (
+    None
+):
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(Notice, fields=["title"], language="fr", language_field="language")
+
+    message = str(excinfo.value)
+    assert "language_field" in message
+    # "language" alone, not as the start of "language_field"
+    assert re.search(r"\blanguage\b", message)
