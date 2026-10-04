@@ -8,6 +8,7 @@ from pytest_django import DjangoAssertNumQueries
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     Announcement,
+    Bookmark,
     Brochure,
     Bulletin,
     Category,
@@ -271,6 +272,22 @@ def test_get_absolute_url_returning_none_gives_an_empty_url_not_none() -> None:
     documents = SyncPipeline().run()
 
     assert [document.url for document in documents] == [""]
+
+
+@pytest.mark.django_db
+def test_url_field_gives_each_document_its_stripped_value_relative_or_absolute() -> (
+    None
+):
+    Bookmark.objects.create(title="Docs", link="  /docs/a/  ")
+    Bookmark.objects.create(title="Example", link="https://example.com/b")
+    rag.register(Bookmark, fields=["title"], url_field="link")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "Docs": "/docs/a/",
+        "Example": "https://example.com/b",
+    }
 
 
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:

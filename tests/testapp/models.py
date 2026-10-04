@@ -502,3 +502,14 @@ class Flyer(models.Model):
 
     def get_absolute_url(self) -> str | None:
         return None
+
+
+# --- A URL held in an own field -----------------------------------------
+# A Bookmark has no get_absolute_url: its URL, relative such as "/docs/a/" or
+# absolute such as "https://example.com/b", is stored in its own plain
+# CharField named ``link``, not one a URL would be guessed by.
+
+
+class Bookmark(models.Model):
+    title = models.CharField(max_length=200)
+    link = models.CharField(max_length=200)
