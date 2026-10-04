@@ -454,6 +454,30 @@ def test_followed_reverse_one_to_one_without_related_object_adds_nothing() -> No
 
 
 @pytest.mark.django_db
+def test_followed_forward_one_to_one_is_read_with_its_instances_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three intros, each on its own page: one query per intro, or per page,
+    # would show as more than one query.
+    about = Page.objects.create(title="About us", slug="about-us")
+    contact = Page.objects.create(title="Contact", slug="contact")
+    visits = Page.objects.create(title="Visits", slug="visits")
+    PageIntro.objects.create(page=about, body="We build chairs by hand.")
+    PageIntro.objects.create(page=contact, body="Write to us.")
+    PageIntro.objects.create(page=visits, body="Visits on Saturdays.")
+    rag.register(PageIntro, follow=["page"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "We build chairs by hand.\n\nAbout us",
+        "Write to us.\n\nContact",
+        "Visits on Saturdays.\n\nVisits",
+    ]
+
+
+@pytest.mark.django_db
 @pytest.mark.usefixtures("unordered_selects_reversed")
 def test_followed_many_to_many_appends_the_related_texts_in_pk_order() -> None:
     # The topics are linked in an order other than their primary keys', so
