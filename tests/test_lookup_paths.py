@@ -240,3 +240,14 @@ def test_lookup_path_with_an_unknown_link_fails_at_registration_naming_the_path(
 ) -> None:
     with pytest.raises(ImproperlyConfigured, match=re.escape(path)):
         rag.register(Product, fields=["name", path])
+
+
+def test_lookup_path_through_a_non_relation_fails_at_registration() -> None:
+    # description is a text field of Product: it leads to no related model.
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        rag.register(Product, fields=["name", "description__name"])
+
+    message = str(excinfo.value)
+    assert "Product" in message
+    assert "description__name" in message
+    assert "not a relation" in message
