@@ -162,6 +162,31 @@ def test_title_field_lookup_path_outside_fields_gives_the_title_not_text() -> No
 
 
 @pytest.mark.django_db
+def test_title_field_lookup_path_outside_fields_is_read_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three reviews, each of a product in its own category: one query per
+    # review or per product would show as more than one query.
+    for title, product_name, category_name in [
+        ("Sturdy", "Chair", "Furniture"),
+        ("Heavy", "Hammer", "Tools"),
+        ("Bright", "Lamp", "Lighting"),
+    ]:
+        product = _create_product(name=product_name, category_name=category_name)
+        Review.objects.create(title=title, product=product)
+    rag.register(Review, fields=["title"], title_field="product__category__name")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [(document.title, document.text) for document in documents] == [
+        ("Furniture", "Sturdy"),
+        ("Tools", "Heavy"),
+        ("Lighting", "Bright"),
+    ]
+
+
+@pytest.mark.django_db
 def test_lookup_path_through_a_null_foreign_key_adds_nothing() -> None:
     Workshop.objects.create(title="Pottery", topic=None)
     rag.register(Workshop, fields=["title", "topic__title"])
