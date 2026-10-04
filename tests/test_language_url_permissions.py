@@ -2,11 +2,13 @@ import pytest
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
+    Announcement,
     Bulletin,
     Category,
     Circular,
     Dispatch,
     Gazette,
+    Language,
     Leaflet,
     Memo,
     Notice,
@@ -123,3 +125,14 @@ def test_guessed_language_field_is_chosen_per_model_by_name_not_per_instance() -
         "Both": "fr",
         "Code only": None,
     }
+
+
+@pytest.mark.django_db
+def test_relation_named_language_is_not_guessed_as_the_language() -> None:
+    french = Language.objects.create(code="fr")
+    Announcement.objects.create(title="Bonjour", language=french)
+    rag.register(Announcement, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.language for document in documents] == [None]

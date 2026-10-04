@@ -440,3 +440,23 @@ class Gazette(models.Model):
     title = models.CharField(max_length=200)
     language = models.CharField(max_length=10, blank=True)
     language_code = models.CharField(max_length=10, blank=True)
+
+
+# --- A relation under the conventional name -----------------------------
+# An Announcement's field named ``language`` is a foreign key to a Language,
+# whose string form is its code, such as "fr": the name a language field
+# would be guessed by, but held by a relation, not by an own value.
+
+
+class Language(models.Model):
+    code = models.CharField(max_length=10)
+
+    def __str__(self) -> str:
+        return self.code
+
+
+class Announcement(models.Model):
+    title = models.CharField(max_length=200)
+    language = models.ForeignKey(
+        Language, related_name="announcements", on_delete=models.CASCADE
+    )
