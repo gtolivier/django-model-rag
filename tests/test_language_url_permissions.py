@@ -241,6 +241,16 @@ def test_get_absolute_url_gives_each_document_its_instance_url_left_relative() -
     }
 
 
+@pytest.mark.django_db
+def test_run_instance_gives_the_document_the_url_of_its_get_absolute_url() -> None:
+    page = Page.objects.create(title="About", slug="about")
+    rag.register(Page, fields=["title"])
+
+    documents = SyncPipeline().run_instance(page)
+
+    assert [document.url for document in documents] == ["/pages/about/"]
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
