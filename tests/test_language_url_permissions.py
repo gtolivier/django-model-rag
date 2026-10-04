@@ -1,7 +1,15 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Bulletin, Category, Circular, Leaflet, Memo, Notice
+from tests.testapp.models import (
+    Bulletin,
+    Category,
+    Circular,
+    Dispatch,
+    Leaflet,
+    Memo,
+    Notice,
+)
 
 
 @pytest.mark.django_db
@@ -79,6 +87,20 @@ def test_own_field_named_language_code_gives_the_language_without_language_field
     Circular.objects.create(title="Bonjour", language_code="  fr  ")
     Circular.objects.create(title="Hello", language_code="en")
     rag.register(Circular, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour": "fr",
+        "Hello": "en",
+    }
+
+
+@pytest.mark.django_db
+def test_own_field_named_lang_gives_the_language_without_language_field() -> None:
+    Dispatch.objects.create(title="Bonjour", lang="  fr  ")
+    Dispatch.objects.create(title="Hello", lang="en")
+    rag.register(Dispatch, fields=["title"])
 
     documents = SyncPipeline().run()
 

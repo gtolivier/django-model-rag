@@ -417,3 +417,14 @@ class Notice(models.Model):
 class Circular(models.Model):
     title = models.CharField(max_length=200)
     language_code = models.CharField(max_length=10)
+
+
+# --- A language held under the short conventional name ------------------
+# A Dispatch keeps its language code, such as "fr", in its own field named
+# ``lang``, and has no field named ``language`` or ``language_code``: the
+# short name a language field would be guessed by.
+
+
+class Dispatch(models.Model):
+    title = models.CharField(max_length=200)
+    lang = models.CharField(max_length=10)
