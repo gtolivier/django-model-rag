@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Product, Review
+from tests.testapp.models import Category, Product, Review, Workshop
 
 
 def _create_product(*, name: str, category_name: str) -> Product:
@@ -78,3 +78,13 @@ def test_lookup_path_ending_on_a_field_with_choices_gives_its_display_label() ->
     documents = SyncPipeline().run()
 
     assert [document.text for document in documents] == ["Sturdy\n\nSecond-hand"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_through_a_null_foreign_key_adds_nothing() -> None:
+    Workshop.objects.create(title="Pottery", topic=None)
+    rag.register(Workshop, fields=["title", "topic__title"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Pottery"]
