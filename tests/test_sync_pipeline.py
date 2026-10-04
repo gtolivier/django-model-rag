@@ -2,7 +2,8 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
-from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
+from django_model_rag import AlreadyRegistered, NotRegistered, rag
+from tests.recording import run_documents, run_instance_documents
 from tests.testapp.models import (
     Bookmark,
     Bulletin,
@@ -49,7 +50,7 @@ def create_faq_and_help_panels() -> tuple[Panel, Panel]:
 
 
 def test_pipeline_without_registered_model_produces_no_document() -> None:
-    assert SyncPipeline().run() == []
+    assert run_documents() == []
 
 
 @pytest.mark.django_db
@@ -58,7 +59,7 @@ def test_unregistered_model_produces_no_document() -> None:
     rag.register(Product, fields=["name"])
     rag.unregister(Product)
 
-    assert SyncPipeline().run() == []
+    assert run_documents() == []
 
 
 @pytest.mark.django_db
@@ -66,7 +67,7 @@ def test_registered_model_produces_a_document_from_its_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Hammer"]
 
@@ -76,7 +77,7 @@ def test_document_text_joins_declared_fields_with_a_blank_line() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer\n\nDrives nails."
 
@@ -86,7 +87,7 @@ def test_document_text_follows_the_declared_field_order() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["description", "name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Drives nails.\n\nHammer"
 
@@ -96,7 +97,7 @@ def test_document_text_leaves_out_a_declared_field_with_an_empty_value() -> None
     create_product(name="Hammer", description="", price="9.90")
     rag.register(Product, fields=["name", "description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer"
 
@@ -106,7 +107,7 @@ def test_document_text_leaves_out_a_declared_field_with_a_blank_value() -> None:
     create_product(name="Hammer", description="  \n ", price="9.90")
     rag.register(Product, fields=["name", "description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer"
 
@@ -116,7 +117,7 @@ def test_document_text_strips_the_surrounding_whitespace_of_each_value() -> None
     create_product(name="  Hammer\n", description="\nDrives nails.  ", price="9.90")
     rag.register(Product, fields=["name", "description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer\n\nDrives nails."
 
@@ -126,7 +127,7 @@ def test_document_text_leaves_out_a_declared_field_whose_value_is_none() -> None
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "subtitle"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer"
 
@@ -137,7 +138,7 @@ def test_instance_without_text_in_its_declared_fields_produces_no_document() -> 
     Category.objects.create(name="")
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.source_pk for document in documents] == [named.pk]
 
@@ -150,7 +151,7 @@ def test_documents_come_in_ascending_primary_key_order() -> None:
     kitchen = Category.objects.create(name="Kitchen")
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.source_pk for document in documents] == [
         tools.pk,
@@ -172,7 +173,7 @@ def test_documents_of_several_models_come_grouped_in_registration_order() -> Non
     rag.register(Product, fields=["name"])
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.source_model, document.source_pk) for document in documents] == [
         ("product", hammer.pk),
@@ -192,7 +193,7 @@ def test_pipeline_given_models_produces_only_the_documents_of_those_models() -> 
     rag.register(Product, fields=["name"])
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run(models=[Category])
+    documents = run_documents(models=[Category])
 
     assert [(document.source_model, document.source_pk) for document in documents] == [
         ("category", tools.pk),
@@ -209,7 +210,7 @@ def test_pipeline_given_models_follows_their_order_not_registration_order() -> N
     rag.register(Product, fields=["name"])
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run(models=[Category, Product])
+    documents = run_documents(models=[Category, Product])
 
     assert [(document.source_model, document.source_pk) for document in documents] == [
         ("category", tools.pk),
@@ -222,7 +223,7 @@ def test_pipeline_given_an_empty_list_of_models_produces_no_document() -> None:
     Category.objects.create(name="Tools")
     rag.register(Category, fields=["name"])
 
-    assert SyncPipeline().run(models=[]) == []
+    assert run_documents(models=[]) == []
 
 
 @pytest.mark.django_db
@@ -232,7 +233,7 @@ def test_pipeline_given_models_is_typed_as_an_ordered_sequence() -> None:
 
     # The run follows the order of the given models, which a set does not
     # have: the type checker rightly rejects it.
-    documents = SyncPipeline().run(models={Category})  # type: ignore[arg-type]
+    documents = run_documents(models={Category})  # type: ignore[arg-type]
 
     assert [document.source_pk for document in documents] == [tools.pk]
 
@@ -242,7 +243,7 @@ def test_pipeline_given_an_unregistered_model_fails_naming_that_model() -> None:
     rag.register(Category, fields=["name"])
 
     with pytest.raises(NotRegistered, match=r"\bProduct\b"):
-        SyncPipeline().run(models=[Product])
+        run_documents(models=[Product])
 
 
 @pytest.mark.django_db
@@ -251,7 +252,7 @@ def test_run_instance_produces_the_documents_of_that_instance_only() -> None:
     create_product(name="Rake", description="Gathers leaves.", price="14.50")
     rag.register(Product, fields=["name"])
 
-    documents = SyncPipeline().run_instance(hammer)
+    documents = run_instance_documents(hammer)
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (hammer.pk, "Hammer"),
@@ -264,7 +265,7 @@ def test_run_instance_of_an_unregistered_model_fails_naming_that_model() -> None
     rag.register(Category, fields=["name"])
 
     with pytest.raises(NotRegistered, match=r"\bProduct\b"):
-        SyncPipeline().run_instance(hammer)
+        run_instance_documents(hammer)
 
 
 @pytest.mark.django_db
@@ -272,7 +273,7 @@ def test_document_title_is_the_value_of_the_first_declared_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == "Hammer"
 
@@ -282,7 +283,7 @@ def test_document_title_follows_the_declared_field_order() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["description", "name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == "Drives nails."
 
@@ -292,7 +293,7 @@ def test_document_title_is_empty_when_the_first_declared_field_is_blank() -> Non
     create_product(name="Hammer", description="   ", price="9.90")
     rag.register(Product, fields=["description", "name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == ""
 
@@ -302,7 +303,7 @@ def test_document_title_is_empty_when_the_first_declared_field_is_none() -> None
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["subtitle", "name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == ""
 
@@ -312,7 +313,7 @@ def test_document_title_strips_the_surrounding_whitespace_of_its_value() -> None
     create_product(name="  Hammer\n", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name", "description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == "Hammer"
 
@@ -322,7 +323,7 @@ def test_document_title_is_the_value_of_the_declared_title_field() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["description", "name"], title_field="name")
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == "Hammer"
 
@@ -332,7 +333,7 @@ def test_title_field_outside_the_declared_fields_gives_the_title_not_the_text() 
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["description"], title_field="name")
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert (document.title, document.text) == ("Hammer", "Drives nails.")
 
@@ -342,7 +343,7 @@ def test_document_title_is_empty_when_the_declared_title_field_is_none() -> None
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name"], title_field="subtitle")
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.title == ""
 
@@ -352,7 +353,7 @@ def test_document_carries_the_source_of_its_product() -> None:
     product = create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert (
         document.source_app_label,
@@ -366,7 +367,7 @@ def test_document_carries_the_source_of_its_own_model() -> None:
     category = Category.objects.create(pk=42, name="Tools")
     rag.register(Category, fields=["name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert (
         document.source_app_label,
@@ -380,7 +381,7 @@ def test_document_text_holds_the_string_form_of_a_non_text_field() -> None:
     create_product(name="Drill", description="Bores holes.", price="149.00")
     rag.register(Product, fields=["name", "price"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Drill\n\n149.00"
 
@@ -390,7 +391,7 @@ def test_document_text_keeps_a_declared_field_whose_value_is_zero() -> None:
     create_product(name="Sticker", description="A free gift.", price="0")
     rag.register(Product, fields=["name", "price"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Sticker\n\n0.00"
 
@@ -402,7 +403,7 @@ def test_document_text_holds_the_label_of_a_field_with_choices() -> None:
     product.save()
     rag.register(Product, fields=["name", "condition"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer\n\nSecond-hand"
 
@@ -413,7 +414,7 @@ def test_document_text_ignores_a_display_method_of_a_field_without_choices() -> 
     Category.objects.create(name="Tools")
     rag.register(Category, fields=["name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Tools"
 
@@ -488,7 +489,7 @@ def test_declared_fields_given_as_a_tuple_give_the_same_text_as_a_list() -> None
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=("name", "description"))
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert document.text == "Hammer\n\nDrives nails."
 
@@ -501,7 +502,7 @@ def test_registering_a_model_twice_fails_and_keeps_the_first_registration() -> N
     with pytest.raises(AlreadyRegistered):
         rag.register(Product, fields=["description"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
     assert document.text == "Hammer"
 
 
@@ -513,7 +514,7 @@ def test_changing_the_declared_fields_list_after_registering_has_no_effect() -> 
 
     fields.append("description")
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
     assert document.text == "Hammer"
 
 
@@ -532,7 +533,7 @@ def test_declared_own_fields_load_only_their_columns(
     rag.register(Digest, fields=["title"])
 
     with django_assert_num_queries(1) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.title) for document in documents
@@ -553,7 +554,7 @@ def test_several_declared_own_fields_load_only_their_columns(
     rag.register(Panel, fields=["label", "body"])
 
     with django_assert_num_queries(1) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.title) for document in documents
@@ -575,7 +576,7 @@ def test_own_title_field_outside_the_declared_fields_is_loaded_with_them(
     rag.register(Panel, fields=["body"], title_field="heading")
 
     with django_assert_num_queries(1) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.title) for document in documents
@@ -598,7 +599,7 @@ def test_own_language_field_is_loaded_with_the_instances(
     rag.register(Bulletin, fields=["title"], language_field="locale")
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.language) for document in documents
@@ -619,7 +620,7 @@ def test_guessed_language_field_is_loaded_with_the_instances(
     rag.register(Notice, fields=["title"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.language) for document in documents
@@ -640,7 +641,7 @@ def test_own_url_field_is_loaded_with_the_instances(
     rag.register(Bookmark, fields=["title"], url_field="link")
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.url) for document in documents
@@ -665,7 +666,7 @@ def test_foreign_key_the_default_manager_selects_stays_loaded_and_joined(
     rag.register(Listing, fields=["title"], url_field="link")
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [
         (document.source_pk, document.text, document.url) for document in documents
@@ -691,7 +692,7 @@ def test_relation_the_default_manager_selects_past_a_lookup_path_stays_joined(
     rag.register(Offer, fields=["title", "product__name"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (spring.pk, "Spring sale\n\nHammer"),

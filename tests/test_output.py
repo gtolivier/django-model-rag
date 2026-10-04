@@ -1,20 +1,16 @@
 from collections.abc import Mapping, Sequence
 
-from django_model_rag import DocumentOutput, NormalizedDocument
+import pytest
 
-
-class RecordingOutput:
-    """An output that records what the pipeline hands it."""
-
-    def __init__(self) -> None:
-        self.replaced: list[Mapping[str, Sequence[NormalizedDocument]]] = []
-        self.pruned: list[tuple[str, set[str]]] = []
-
-    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
-        self.replaced.append(groups)
-
-    def prune(self, model_label: str, kept_keys: set[str]) -> None:
-        self.pruned.append((model_label, kept_keys))
+from django_model_rag import (
+    BaseExtractor,
+    DocumentOutput,
+    NormalizedDocument,
+    SyncPipeline,
+    rag,
+)
+from tests.recording import RecordingOutput
+from tests.testapp.models import AccordionItem, Page
 
 
 def test_a_class_with_replace_and_prune_is_a_document_output() -> None:
@@ -67,3 +63,76 @@ def test_a_class_whose_replace_takes_a_flat_sequence_is_not_a_document_output() 
     output: DocumentOutput = FlatReplaceOutput()  # type: ignore[assignment]
 
     assert hasattr(output, "prune")
+
+
+@pytest.mark.django_db
+def test_pipeline_hands_each_instance_documents_to_its_output_by_source_key() -> None:
+    # Two documents for one page: a group per document, rather than per
+    # source key, would lose one of them.
+    faq = Page.objects.create(title="FAQ", slug="faq")
+    AccordionItem.objects.create(
+        page=faq, title="Shipping", body="We ship within two days."
+    )
+    AccordionItem.objects.create(
+        page=faq, title="Returns", body="Returns are free for thirty days."
+    )
+    about = Page.objects.create(title="About", slug="about")
+    AccordionItem.objects.create(
+        page=about, title="History", body="Founded in a garage."
+    )
+
+    @rag.register_extractor(Page)
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> list[NormalizedDocument]:
+            return [
+                self.build_document(instance, text=item.body)
+                for item in instance.accordion_items.order_by("pk")
+            ]
+
+    run_output = RecordingOutput()
+    SyncPipeline(run_output).run()
+    instance_output = RecordingOutput()
+    SyncPipeline(output=instance_output).run_instance(about)
+
+    # run() may split its groups across several calls: merge them.
+    run_groups = {
+        source_key: group
+        for groups in run_output.replaced
+        for source_key, group in groups.items()
+    }
+    assert run_groups == {
+        f"testapp.page:{faq.pk}": [
+            NormalizedDocument(
+                text="We ship within two days.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=faq.pk,
+            ),
+            NormalizedDocument(
+                text="Returns are free for thirty days.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=faq.pk,
+            ),
+        ],
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="Founded in a garage.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+            ),
+        ],
+    }
+    assert instance_output.replaced == [
+        {
+            f"testapp.page:{about.pk}": [
+                NormalizedDocument(
+                    text="Founded in a garage.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=about.pk,
+                ),
+            ],
+        }
+    ]

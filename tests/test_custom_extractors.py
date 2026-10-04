@@ -9,9 +9,9 @@ from django_model_rag import (
     AlreadyRegistered,
     BaseExtractor,
     NormalizedDocument,
-    SyncPipeline,
     rag,
 )
+from tests.recording import run_documents, run_instance_documents
 from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
 
 
@@ -42,7 +42,7 @@ def test_registered_extractor_builds_the_document_of_its_model() -> None:
                 title=f"The {instance.name} category",
             )
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="Everything filed under Tools.",
             source_app_label="testapp",
@@ -61,7 +61,7 @@ def test_registered_extractor_builds_one_document_per_instance_in_pk_order() -> 
     kitchen = Category.objects.create(name="Kitchen")
     rag.register_extractor(Category)(CategoryExtractor)
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (tools.pk, "Everything filed under Tools."),
@@ -88,8 +88,8 @@ def test_each_run_starts_with_a_fresh_extractor() -> None:
                 instance, text=f"Category {self.built}: {instance.name}."
             )
 
-    first_run = [document.text for document in SyncPipeline().run()]
-    second_run = [document.text for document in SyncPipeline().run()]
+    first_run = [document.text for document in run_documents()]
+    second_run = [document.text for document in run_documents()]
 
     assert first_run == ["Category 1: Tools.", "Category 2: Garden."]
     assert second_run == first_run
@@ -113,7 +113,7 @@ def test_instance_the_extractor_returns_none_for_produces_no_document() -> None:
                 source_pk=instance.pk,
             )
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="Everything filed under Tools.",
             source_app_label="testapp",
@@ -153,7 +153,7 @@ def test_extractor_may_return_several_documents_for_one_instance() -> None:
                 for item in instance.accordion_items.order_by("pk")
             ]
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="We ship within two days.",
             source_app_label="testapp",
@@ -193,7 +193,7 @@ def test_extractor_may_yield_its_documents_for_one_instance() -> None:
                     title=item.title,
                 )
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="We ship within two days.",
             source_app_label="testapp",
@@ -242,7 +242,7 @@ def test_extractor_get_queryset_shapes_the_queryset_its_instances_are_read_from(
             )
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (about.pk, "We build chairs by hand. Our workshop is in Lyon."),
@@ -280,7 +280,7 @@ def test_extractor_get_queryset_may_select_the_related_objects_extract_reads(
             )
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (hammer.pk, "Hammer, filed under Tools."),
@@ -307,7 +307,7 @@ def test_extractor_get_queryset_ordering_otherwise_keeps_documents_in_pk_order()
         def extract(self, instance: Category) -> NormalizedDocument:
             return self.build_document(instance, text=instance.name)
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (tools.pk, "Tools"),
@@ -336,7 +336,7 @@ def test_extractor_attribute_named_like_a_registration_option_shapes_nothing(
             return self.build_document(instance, text=instance.name)
 
     with django_assert_num_queries(1) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
         (hammer.pk, "Hammer")
@@ -366,7 +366,7 @@ def test_run_instance_produces_the_extracted_documents_of_that_instance_only() -
                 for item in instance.accordion_items.order_by("pk")
             ]
 
-    assert SyncPipeline().run_instance(faq) == [
+    assert run_instance_documents(faq) == [
         NormalizedDocument(
             text="We ship within two days.",
             source_app_label="testapp",
@@ -410,8 +410,8 @@ def test_each_run_instance_starts_with_a_fresh_extractor() -> None:
                 )
             return documents
 
-    first_call = [document.text for document in SyncPipeline().run_instance(faq)]
-    second_call = [document.text for document in SyncPipeline().run_instance(faq)]
+    first_call = [document.text for document in run_instance_documents(faq)]
+    second_call = [document.text for document in run_instance_documents(faq)]
 
     assert first_call == ["1. Shipping", "2. Returns"]
     assert second_call == first_call
@@ -429,7 +429,7 @@ def test_extractor_returning_a_string_fails_naming_the_extractor() -> None:
             return f"Everything filed under {instance.name}."
 
     with pytest.raises(TypeError, match="SloppyCategoryExtractor"):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -444,7 +444,7 @@ def test_extractor_returning_a_non_iterable_fails_naming_the_extractor() -> None
             return instance.pk
 
     with pytest.raises(TypeError, match="CountingCategoryExtractor"):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -459,7 +459,7 @@ def test_extractor_yielding_something_else_than_a_document_fails_naming_it() -> 
             return [f"Everything filed under {instance.name}."]
 
     with pytest.raises(TypeError, match="StringListCategoryExtractor"):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -481,7 +481,7 @@ def test_extractor_get_queryset_returning_a_list_fails_naming_the_extractor() ->
     with pytest.raises(
         TypeError, match=r"ListingCategoryExtractor\.get_queryset\(\).*QuerySet"
     ):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -501,7 +501,7 @@ def test_extractor_get_queryset_returning_values_fails_naming_the_extractor() ->
             return self.build_document(instance, text="A category.")
 
     with pytest.raises(TypeError, match=r"ValuesCategoryExtractor\.get_queryset\(\)"):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -524,7 +524,7 @@ def test_extractor_get_queryset_returning_another_model_fails_naming_both() -> N
             return self.build_document(instance, text=instance.name)
 
     with pytest.raises(TypeError, match=r"StrayExtractor\.get_queryset\(\).*Category"):
-        SyncPipeline().run()
+        run_documents()
 
 
 def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
@@ -596,7 +596,7 @@ def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> 
     with pytest.raises(AlreadyRegistered):
         rag.register_extractor(Category)(CategoryExtractor)
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
     assert document.text == "Tools"
 
 
@@ -608,7 +608,7 @@ def test_fields_for_a_model_with_an_extractor_fail_and_keep_the_extractor() -> N
     with pytest.raises(AlreadyRegistered):
         rag.register(Category, fields=["name"])
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
     assert document.text == "Everything filed under Tools."
 
 
@@ -629,7 +629,7 @@ def test_second_extractor_for_a_model_fails_and_keeps_the_first() -> None:
     with pytest.raises(AlreadyRegistered):
         rag.register_extractor(Category)(OtherCategoryExtractor)
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
     assert document.text == "Everything filed under Tools."
 
 
@@ -640,7 +640,7 @@ def test_unregistered_model_with_an_extractor_produces_no_document() -> None:
 
     rag.unregister(Category)
 
-    assert SyncPipeline().run() == []
+    assert run_documents() == []
 
 
 @pytest.mark.django_db
@@ -662,7 +662,7 @@ def test_documents_come_grouped_in_registration_order_whatever_its_kind() -> Non
     rag.register_extractor(Category)(CategoryExtractor)
     rag.register(Page, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.source_model, document.source_pk) for document in documents] == [
         ("product", hammer.pk),
@@ -685,7 +685,7 @@ def test_build_document_takes_the_source_from_the_instance() -> None:
                 instance, text=f"Everything filed under {instance.name}."
             )
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="Everything filed under Tools.",
             source_app_label="testapp",
@@ -710,7 +710,7 @@ def test_build_document_takes_the_source_from_the_instance_of_any_model() -> Non
         def extract(self, instance: TextPlugin) -> NormalizedDocument:
             return self.build_document(instance, text=instance.body)
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="We ship within two days.",
             source_app_label="testapp",
@@ -743,7 +743,7 @@ def test_build_document_passes_on_title_url_language_and_metadata() -> None:
                 metadata={"plugin_type": "text", "page_id": instance.page.pk},
             )
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="We ship within two days.",
             source_app_label="testapp",
@@ -781,7 +781,7 @@ def test_build_document_gives_the_permissions_it_is_passed_or_none_as_frozenset(
                 ],
             )
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.source_pk, document.permissions) for document in documents] == [
         (tools.pk, frozenset({"testapp.view_tools", "testapp.view_category"})),
@@ -809,7 +809,7 @@ def test_build_document_refuses_a_bare_string_as_permissions() -> None:
             )
 
     with pytest.raises(TypeError, match="permissions"):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -828,7 +828,7 @@ def test_extractor_keeping_fields_of_its_own_that_resolve_to_nothing_runs() -> N
         def extract(self, instance: Product) -> NormalizedDocument:
             return self.build_document(instance, text=f"In short: {instance.name}.")
 
-    assert SyncPipeline().run() == [
+    assert run_documents() == [
         NormalizedDocument(
             text="In short: Hammer.",
             source_app_label="testapp",
