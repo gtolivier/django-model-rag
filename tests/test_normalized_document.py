@@ -172,6 +172,28 @@ def test_document_refuses_permissions_holding_an_item_that_is_not_a_string() -> 
         make_document(permissions=["testapp.view_product", None])
 
 
+def test_document_keeps_the_permissions_it_is_given_as_a_one_shot_iterator() -> None:
+    # A generator can be read only once: checking its items must not use it up
+    # before the document stores them.
+    permissions = (
+        codename for codename in ["testapp.view_product", "testapp.change_product"]
+    )
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        # A generator is outside the typed contract (a set of strings), but a
+        # caller without a type checker can pass one and must not silently
+        # lose its permissions.
+        permissions=permissions,  # type: ignore[arg-type]
+    )
+
+    assert document.permissions == frozenset(
+        {"testapp.view_product", "testapp.change_product"}
+    )
+
+
 def test_document_source_key_identifies_its_source() -> None:
     document = make_document(
         source_app_label="testapp", source_model="product", source_pk=1
