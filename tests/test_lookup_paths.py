@@ -24,3 +24,13 @@ def test_foreign_key_lookup_path_adds_each_instance_its_related_field_text() -> 
         "Chair\n\nFurniture",
         "Hammer\n\nTools",
     ]
+
+
+@pytest.mark.django_db
+def test_run_instance_adds_the_related_field_text_of_a_lookup_path() -> None:
+    product = _create_product(name="Chair", category_name="Furniture")
+    rag.register(Product, fields=["name", "category__name"])
+
+    documents = SyncPipeline().run_instance(product)
+
+    assert [document.text for document in documents] == ["Chair\n\nFurniture"]
