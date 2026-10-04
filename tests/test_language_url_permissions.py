@@ -6,6 +6,7 @@ from tests.testapp.models import (
     Category,
     Circular,
     Dispatch,
+    Gazette,
     Leaflet,
     Memo,
     Notice,
@@ -107,4 +108,18 @@ def test_own_field_named_lang_gives_the_language_without_language_field() -> Non
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
         "Hello": "en",
+    }
+
+
+@pytest.mark.django_db
+def test_guessed_language_field_is_chosen_per_model_by_name_not_per_instance() -> None:
+    Gazette.objects.create(title="Both", language="fr", language_code="de")
+    Gazette.objects.create(title="Code only", language="", language_code="en")
+    rag.register(Gazette, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Both": "fr",
+        "Code only": None,
     }

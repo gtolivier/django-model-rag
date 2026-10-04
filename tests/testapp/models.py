@@ -428,3 +428,15 @@ class Circular(models.Model):
 class Dispatch(models.Model):
     title = models.CharField(max_length=200)
     lang = models.CharField(max_length=10)
+
+
+# --- A language held under two conventional names -----------------------
+# A Gazette has both a field named ``language`` and one named
+# ``language_code``: only an order of names can say which one is its language,
+# whichever of the two an instance fills.
+
+
+class Gazette(models.Model):
+    title = models.CharField(max_length=200)
+    language = models.CharField(max_length=10, blank=True)
+    language_code = models.CharField(max_length=10, blank=True)
