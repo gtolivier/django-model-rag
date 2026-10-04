@@ -323,9 +323,14 @@ def _prefetch(
     # for the type checker only: a relation that links back leads to a model
     if link_back is None or not isinstance(related, type):
         return accessor
+    manager_queryset = related._default_manager.all()
+    # a foreign key the manager already joins cannot be deferred
+    joined = _joined_relations(manager_queryset)
     return Prefetch(
         accessor,
-        queryset=related._default_manager.only("pk", *text_fields(related), *link_back),
+        queryset=manager_queryset.only(
+            "pk", *text_fields(related), *link_back, *joined
+        ),
     )
 
 
