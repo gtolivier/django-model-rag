@@ -99,6 +99,18 @@ def _accessor_name(instance: Model, step: str) -> str:
     return step
 
 
+def _related_instance(instance: Model, step: str) -> Model | None:
+    """Cross the relation ``step`` of ``instance``, or ``None`` if unset.
+
+    A missing reverse one-to-one raises instead of returning ``None``.
+    """
+    try:
+        related: Model | None = getattr(instance, _accessor_name(instance, step))
+    except ObjectDoesNotExist:
+        return None
+    return related
+
+
 def _field_text(instance: Model, name: str) -> str:
     """Read the field ``name`` of ``instance`` as stripped text.
 
@@ -107,12 +119,10 @@ def _field_text(instance: Model, name: str) -> str:
     """
     *path, name = name.split(LOOKUP_SEP)
     for step in path:
-        try:
-            instance = getattr(instance, _accessor_name(instance, step))
-        except ObjectDoesNotExist:
+        related = _related_instance(instance, step)
+        if related is None:
             return ""
-        if instance is None:
-            return ""
+        instance = related
     value = getattr(instance, name)
     # Django adds get_<name>_display only to fields that have choices
     if getattr(instance._meta.get_field(name), "choices", None):
