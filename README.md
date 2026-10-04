@@ -70,7 +70,9 @@ a related object, as in `values()` or `list_display`:
   reverse, as many as needed. A reverse one-to-one is named by its query
   name, as in `values()` and `select_related` — its `related_query_name`, or
   its `related_name` when it has none, or else the model name in lower case.
-  This differs from `follow`, which takes accessors.
+  This differs from `follow`, which takes accessors. A foreign key may also
+  be named by its column, as in `values()`: `category_id__name` reads like
+  `category__name`.
 - **The last name** is a content field of the model reached: its stripped
   text, or its label when it has choices.
 - **Order and title.** A path keeps its place among the declared fields, and
