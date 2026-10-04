@@ -8,6 +8,7 @@ from django.db.models.query import ModelIterable
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
+from django_model_rag.output import DocumentOutput
 from django_model_rag.registry import rag
 
 # iterator() prefetches per chunk: this many instances share one query
@@ -93,14 +94,6 @@ def _checked_documents(
         yield item
 
 
-def _model_documents(
-    model: type[Model], extractor: BaseExtractor[Any]
-) -> Iterator[NormalizedDocument]:
-    """Build the documents of ``model``'s instances, in primary key order."""
-    for instance in _instances(model, extractor):
-        yield from _instance_documents(instance, extractor)
-
-
 def _extractors_to_run(
     models: Sequence[type[Model]] | None,
 ) -> list[tuple[type[Model], BaseExtractor[Any]]]:
@@ -116,12 +109,25 @@ def _extractors_to_run(
     return [(model, rag.new_extractor(model)) for model in models]
 
 
-class SyncPipeline:
-    """Turn registered models into normalized documents."""
+def _hand_over(
+    instance: Model, extractor: BaseExtractor[Any], output: DocumentOutput
+) -> None:
+    """Hand the documents of ``instance`` to ``output``, grouped by source key."""
+    groups: dict[str, list[NormalizedDocument]] = {}
+    for document in _instance_documents(instance, extractor):
+        groups.setdefault(document.source_key, []).append(document)
+    if groups:
+        output.replace(groups)
 
-    def run(
-        self, models: Sequence[type[Model]] | None = None
-    ) -> list[NormalizedDocument]:
+
+class SyncPipeline:
+    """Turn registered models into normalized documents, handed to an output."""
+
+    def __init__(self, output: DocumentOutput) -> None:
+        """Hand the documents to ``output``."""
+        self._output = output
+
+    def run(self, models: Sequence[type[Model]] | None = None) -> None:
         """Produce the documents of the registered models.
 
         Only the given ``models`` are run, in their order, or every registered
@@ -130,16 +136,15 @@ class SyncPipeline:
         Raises:
             NotRegistered: one of ``models`` is not registered.
         """
-        documents: list[NormalizedDocument] = []
         for model, extractor in _extractors_to_run(models):
-            documents.extend(_model_documents(model, extractor))
-        return documents
+            for instance in _instances(model, extractor):
+                _hand_over(instance, extractor, self._output)
 
-    def run_instance(self, instance: Model) -> list[NormalizedDocument]:
+    def run_instance(self, instance: Model) -> None:
         """Produce the documents of ``instance`` only.
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
         """
         extractor = rag.new_extractor(type(instance))
-        return list(_instance_documents(instance, extractor))
+        _hand_over(instance, extractor, self._output)
