@@ -381,6 +381,11 @@ def test_url_field_the_model_lacks_fails_at_registration_naming_it() -> None:
         rag.register(Pamphlet, fields=["title"], url_field="get_absolute_url")
 
 
+def test_url_field_naming_a_relation_fails_at_registration_naming_it() -> None:
+    with pytest.raises(ImproperlyConfigured, match="bookmark"):
+        rag.register(Citation, fields=["title"], url_field="bookmark")
+
+
 def test_constant_language_with_language_field_fails_at_registration_naming_both() -> (
     None
 ):
