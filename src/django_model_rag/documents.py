@@ -35,7 +35,7 @@ class NormalizedDocument:
     __hash__: ClassVar[None] = None  # type: ignore[assignment]  # typeshed types object.__hash__ as a method
 
     def __post_init__(self) -> None:
-        """Require a source primary key; copy the metadata so callers can't alter it."""
+        """Require a source_pk; store frozen copies of metadata and permissions."""
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
