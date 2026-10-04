@@ -27,6 +27,7 @@ class NormalizedDocument:
     url: str = ""
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    permissions: frozenset[str] = frozenset()
 
     # Compare by value, but keep documents out of sets and dict keys: a frozen
     # dataclass would otherwise generate a hash. ClassVar[None] lets mypy see
