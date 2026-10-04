@@ -271,6 +271,17 @@ def _require_single_language_source(
         raise ImproperlyConfigured(message)
 
 
+def _require_text_language(language: object) -> None:
+    """Fail if a constant ``language`` is given but is not a non-blank string.
+
+    Raises:
+        ImproperlyConfigured: ``language`` is blank or not a string.
+    """
+    if language is not None and (not isinstance(language, str) or not language.strip()):
+        message = "language must be a non-blank string"
+        raise ImproperlyConfigured(message)
+
+
 def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     """Fail unless ``extractor_class`` is a concrete ``BaseExtractor``.
 
@@ -373,15 +384,17 @@ class Registry:
                 ``language_field`` and ``exclude`` included) is not one of the
                 model's or is a relation;
                 ``exclude`` is combined with ``fields``, or ``language`` with
-                ``language_field``; without ``fields``
-                and ``follow``, the model has no text field, or none left once
-                ``exclude`` is applied; a name in ``follow`` is not one of the
-                model's relation accessors, is given twice, or leads to a
-                model with no text field; a name in ``exclude`` is a lookup
-                path; or relations are followed while models are loading.
+                ``language_field``; ``language`` is blank or not a string;
+                without ``fields`` and ``follow``, the model has no text
+                field, or none left once ``exclude`` is applied; a name in
+                ``follow`` is not one of the model's relation accessors, is
+                given twice, or leads to a model with no text field; a name
+                in ``exclude`` is a lookup path; or relations are followed
+                while models are loading.
         """
         self._require_unregistered(model)
         _require_single_language_source(language, language_field)
+        _require_text_language(language)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
