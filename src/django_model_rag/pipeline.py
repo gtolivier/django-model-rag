@@ -77,6 +77,11 @@ def _foreign_source(extractor: BaseExtractor[Any], source_key: str) -> TypeError
     )
 
 
+def _source_key(instance: Model) -> str:
+    """Return the source key of ``instance``'s documents."""
+    return build_source_key(instance._meta.label_lower, instance.pk)
+
+
 def _instance_documents(
     instance: Model, extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
@@ -104,6 +109,17 @@ def _checked_documents(
         yield item
 
 
+def _own_documents(
+    instance: Model, extractor: BaseExtractor[Any]
+) -> Iterator[NormalizedDocument]:
+    """Yield the documents of ``instance``, failing on the first of another source."""
+    source_key = _source_key(instance)
+    for document in _instance_documents(instance, extractor):
+        if document.source_key != source_key:
+            raise _foreign_source(extractor, source_key)
+        yield document
+
+
 def _extractors_to_run(
     models: Sequence[type[Model]] | None,
 ) -> list[tuple[type[Model], BaseExtractor[Any]]]:
@@ -125,10 +141,7 @@ def _groups(
     """Group the documents of ``instances`` by source key."""
     groups: dict[str, list[NormalizedDocument]] = {}
     for instance in instances:
-        source_key = build_source_key(instance._meta.label_lower, instance.pk)
-        for document in _instance_documents(instance, extractor):
-            if document.source_key != source_key:
-                raise _foreign_source(extractor, source_key)
+        for document in _own_documents(instance, extractor):
             groups.setdefault(document.source_key, []).append(document)
     return groups
 
@@ -178,7 +191,7 @@ class SyncPipeline:
         """
         extractor = rag.new_extractor(type(instance))
         groups = _groups([instance], extractor)
-        source_key = build_source_key(instance._meta.label_lower, instance.pk)
+        source_key = _source_key(instance)
         # an empty group still replaces what the output holds for the instance
         groups.setdefault(source_key, [])
         self._output.replace(groups)
