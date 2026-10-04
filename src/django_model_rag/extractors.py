@@ -494,6 +494,17 @@ def _prefetch_match_column(
     # the reverse foreign key itself, or the through model's for a many-to-many
     if _is_reverse_foreign_key(relation):
         return relation.field.target_field.name
+    key = _through_key_to_parent(relation)
+    return key.target_field.name if isinstance(key, ForeignKey) else None
+
+
+def _through_key_to_parent(
+    relation: "Field[Any, Any] | ForeignObjectRel | None",
+) -> "Field[Any, Any] | ForeignObjectRel | None":
+    """Return the field of ``relation``'s through model that links to the parent.
+
+    None when ``relation`` is not a many-to-many, from either side.
+    """
     if isinstance(relation, ManyToManyRel):
         # reached from the other side: the through model's key to the parent is
         # the declaring field's reverse one
@@ -503,8 +514,7 @@ def _prefetch_match_column(
     else:
         return None
     through = field.remote_field.through
-    key = through._meta.get_field(key_name) if through else None
-    return key.target_field.name if isinstance(key, ForeignKey) else None
+    return through._meta.get_field(key_name) if through else None
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
