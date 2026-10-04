@@ -293,6 +293,21 @@ def test_lookup_path_through_a_many_valued_relation_fails_at_registration(
     assert "several" in message
 
 
+@pytest.mark.parametrize(
+    ("model", "fields", "path"),
+    [
+        pytest.param(Product, ["name"], "categroy__name", id="unknown-link"),
+        pytest.param(Review, ["title"], "product__category", id="ending-on-relation"),
+        pytest.param(Category, ["name"], "products__name", id="many-valued-link"),
+    ],
+)
+def test_title_field_invalid_lookup_path_fails_at_registration_naming_the_path(
+    model: type[Model], fields: list[str], path: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=re.escape(path)):
+        rag.register(model, fields=fields, title_field=path)
+
+
 def test_lookup_path_declared_twice_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured) as excinfo:
         rag.register(Product, fields=["name", "category__name", "category__name"])
