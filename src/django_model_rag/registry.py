@@ -24,17 +24,18 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
-def _guessed_fields(
+def _guessed_fields(  # noqa: PLR0913, PLR0917  # one argument per left-out field source
     model: type[Model],
     exclude: FieldNames,
     follow: FieldNames,
     language_field: str | None,
     language: str | None,
+    url_field: str | None,
 ) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
     The own field read as the language is left out too, unless the language
-    is a constant.
+    is a constant, and so is the ``url_field``.
 
     A model that follows relations may be left with no text field of its
     own: their text is enough to make a document.
@@ -46,7 +47,11 @@ def _guessed_fields(
     resolved_language_field = (
         language_field_name(model, language_field) if language is None else None
     )
-    names = [name for name in text_fields(model) if name != resolved_language_field]
+    names = [
+        name
+        for name in text_fields(model)
+        if name not in (resolved_language_field, url_field)
+    ]
     if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
@@ -403,7 +408,9 @@ class Registry:
         if fields is None:
             _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(model, exclude, follow, language_field, language)
+            fields = _guessed_fields(
+                model, exclude, follow, language_field, language, url_field
+            )
         else:
             _require_content_fields(model, fields)
         if title_field is not None:
