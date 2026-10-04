@@ -20,10 +20,19 @@ def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
     return followed
 
 
+def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
+    """Return the fields ``extractor`` declares, lookup paths included, if any."""
+    fields: Sequence[str] = getattr(extractor, "fields", ())
+    return fields
+
+
 def _lookup_path_relations(extractor: BaseExtractor[Any]) -> list[str]:
     """Return the first relation of each lookup path ``extractor`` declares."""
-    fields: Sequence[str] = getattr(extractor, "fields", ())
-    return [name.split(LOOKUP_SEP)[0] for name in fields if LOOKUP_SEP in name]
+    return [
+        name.split(LOOKUP_SEP)[0]
+        for name in _declared_fields(extractor)
+        if LOOKUP_SEP in name
+    ]
 
 
 # quoted: Django's Field is generic for the type checker only, and before
@@ -74,35 +83,42 @@ def _sorted_relations(
     return selected, prefetched
 
 
+def _selected_run(model: type[Model], path: str) -> list[str]:
+    """Return the query names of the single-object relations ``path`` starts with."""
+    current_model = model
+    relation_names: list[str] = []
+    for accessor in path.split(LOOKUP_SEP)[:-1]:
+        relation = relations_by_accessor(current_model).get(accessor)
+        if relation is None or not _is_selected(relation):
+            break
+        relation_names.append(relation.name)
+        current_model = relation.related_model  # type: ignore[assignment]  # a selected relation leads to a model
+    return relation_names
+
+
 def _selected_path_prefixes(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
     """Return the longest run of single-object relations of each lookup path."""
-    fields: Sequence[str] = getattr(extractor, "fields", ())
     prefixes: list[str] = []
-    for name in fields:
-        hops = name.split(LOOKUP_SEP)[:-1]
-        current = model
-        names: list[str] = []
-        for hop in hops:
-            relation = relations_by_accessor(current).get(hop)
-            if relation is None or not _is_selected(relation):
-                break
-            names.append(relation.name)
-            current = relation.related_model  # type: ignore[assignment]  # a selected relation leads to a model
-        if len(names) > 1:
-            prefixes.append(LOOKUP_SEP.join(names))
+    for path in _declared_fields(extractor):
+        relation_names = _selected_run(model, path)
+        # a run of one relation is already among the first relations of the
+        # lookup paths
+        if len(relation_names) > 1:
+            prefixes.append(LOOKUP_SEP.join(relation_names))
     return prefixes
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    The relations read are the followed ones and the first relation of each
-    lookup path. Their foreign keys and one-to-one relations come with each
-    instance, in the same query, and their reverse foreign keys, many-to-many
-    relations, forward or reverse, and generic relations, in one more query
-    each for all the instances.
+    The relations read are the followed ones, the first relation of each
+    lookup path and, past it, the run of foreign keys and one-to-one relations
+    the path goes on with. Their foreign keys and one-to-one relations come
+    with each instance, in the same query, and their reverse foreign keys,
+    many-to-many relations, forward or reverse, and generic relations, in one
+    more query each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
     selected, prefetched = _sorted_relations(
