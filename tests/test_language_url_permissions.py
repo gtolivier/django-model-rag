@@ -408,6 +408,26 @@ def test_permissions_given_as_a_set_fails_at_registration_naming_it() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "permission",
+    [
+        pytest.param("view_category", id="no-dot"),
+        pytest.param(".view_category", id="empty-app-label"),
+        pytest.param("testapp.", id="empty-codename"),
+    ],
+)
+def test_permission_not_of_the_form_app_label_codename_fails_naming_it(
+    permission: str,
+) -> None:
+    # After a well-formed one: every permission is checked, not only the first.
+    with pytest.raises(ImproperlyConfigured, match=re.escape(permission)):
+        rag.register(
+            Category,
+            fields=["name"],
+            permissions=["testapp.view_category", permission],
+        )
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
