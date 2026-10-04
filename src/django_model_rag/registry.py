@@ -81,16 +81,17 @@ def _require_content_field(model: type[Model], path: str) -> None:
     *steps, field_name = path.split(LOOKUP_SEP)
     if steps:
         _require_models_ready(model)
+    target = model
     try:
         for step in steps:
-            model = _model_through(model, step, path)
-        field = model._meta.get_field(field_name)
+            target = _model_through(target, step, path)
+        field = target._meta.get_field(field_name)
     except FieldDoesNotExist as error:
         message = f"{model.__name__} has no field {path!r}"
         raise ImproperlyConfigured(message) from error
     if field.is_relation:
         message = (
-            f"{path!r} ends on {model.__name__}.{field_name}, "
+            f"{path!r} ends on {target.__name__}.{field_name}, "
             "a relation, not a content field"
         )
         raise ImproperlyConfigured(message)
