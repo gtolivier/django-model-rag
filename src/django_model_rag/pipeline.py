@@ -32,25 +32,30 @@ def _checked_queryset(
     """Return what ``extractor``'s get_queryset() hooked.
 
     Raises:
-        TypeError: it is not a QuerySet of model instances.
+        TypeError: it is not a QuerySet of ``model``'s instances.
     """
     if not isinstance(hooked, QuerySet):
-        raise TypeError(
-            f"{type(extractor).__name__}.get_queryset() must return a QuerySet, "
-            f"not a {type(hooked).__name__}"
-        )
+        raise _wrong_queryset(extractor, "a QuerySet", f"a {type(hooked).__name__}")
     # No public API tells a values() queryset from one of instances.
     if not issubclass(hooked._iterable_class, ModelIterable):
-        raise TypeError(
-            f"{type(extractor).__name__}.get_queryset() must return a QuerySet "
-            "of model instances, not of values"
-        )
+        raise _wrong_queryset(extractor, "a QuerySet of model instances", "of values")
     if hooked.model is not model:
-        raise TypeError(
-            f"{type(extractor).__name__}.get_queryset() must return a QuerySet "
-            f"of {model.__name__}, not of {hooked.model.__name__}"
+        raise _wrong_queryset(
+            extractor,
+            f"a QuerySet of {model.__name__}",
+            f"of {hooked.model.__name__}",
         )
     return hooked
+
+
+def _wrong_queryset(
+    extractor: BaseExtractor[Any], expected: str, returned: str
+) -> TypeError:
+    """Build the error for an ``extractor``'s get_queryset() not ``expected``."""
+    return TypeError(
+        f"{type(extractor).__name__}.get_queryset() must return {expected}, "
+        f"not {returned}"
+    )
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
