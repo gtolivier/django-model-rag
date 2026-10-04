@@ -311,6 +311,32 @@ def test_run_instance_rejects_a_document_whose_source_is_another_instance() -> N
 
 
 @pytest.mark.django_db
+def test_pipeline_rejects_a_document_whose_source_is_another_model() -> None:
+    # A document attributed to the FAQ page would make the output replace the
+    # page's documents while running Category, outside the model being run and
+    # pruned: each instance's documents must come from that instance.
+    faq = Page.objects.create(title="FAQ", slug="faq")
+    Category.objects.create(name="Lighting")
+
+    @rag.register_extractor(Category)
+    class MisattributingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return NormalizedDocument(
+                text=instance.name,
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=faq.pk,
+            )
+
+    output = RecordingOutput()
+    with pytest.raises(TypeError, match="MisattributingCategoryExtractor"):
+        SyncPipeline(output).run()
+
+    received_keys = {key for groups in output.replaced for key in groups}
+    assert f"testapp.page:{faq.pk}" not in received_keys
+
+
+@pytest.mark.django_db
 def test_pipeline_hands_over_each_chunk_before_extracting_the_next() -> None:
     # The failure is on the first instance of the second chunk: a pipeline
     # extracting the whole model before handing anything over would lose the
