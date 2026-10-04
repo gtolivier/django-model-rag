@@ -24,18 +24,32 @@ FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
-def _guessed_fields(  # noqa: PLR0913, PLR0917  # one argument per left-out field source
+def _metadata_fields(
     model: type[Model],
-    exclude: FieldNames,
-    follow: FieldNames,
     language_field: str | None,
     language: str | None,
     url_field: str | None,
+) -> tuple[str | None, ...]:
+    """Return the own fields of ``model`` read as document metadata.
+
+    They are the field read as the language, unless the language is a
+    constant, and the ``url_field``.
+    """
+    resolved_language_field = (
+        language_field_name(model, language_field) if language is None else None
+    )
+    return (resolved_language_field, url_field)
+
+
+def _guessed_fields(
+    model: type[Model],
+    exclude: FieldNames,
+    follow: FieldNames,
+    metadata_fields: tuple[str | None, ...],
 ) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
-    The own field read as the language is left out too, unless the language
-    is a constant, and so is the ``url_field``.
+    The ``metadata_fields`` are left out too.
 
     A model that follows relations may be left with no text field of its
     own: their text is enough to make a document.
@@ -44,14 +58,7 @@ def _guessed_fields(  # noqa: PLR0913, PLR0917  # one argument per left-out fiel
         ImproperlyConfigured: ``model`` follows no relation and has no text
             field, or none left once ``exclude`` is applied.
     """
-    resolved_language_field = (
-        language_field_name(model, language_field) if language is None else None
-    )
-    names = [
-        name
-        for name in text_fields(model)
-        if name not in (resolved_language_field, url_field)
-    ]
+    names = [name for name in text_fields(model) if name not in metadata_fields]
     if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
@@ -408,9 +415,10 @@ class Registry:
         if fields is None:
             _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(
-                model, exclude, follow, language_field, language, url_field
+            metadata_fields = _metadata_fields(
+                model, language_field, language, url_field
             )
+            fields = _guessed_fields(model, exclude, follow, metadata_fields)
         else:
             _require_content_fields(model, fields)
         if title_field is not None:
