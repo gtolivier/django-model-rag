@@ -17,6 +17,7 @@ from tests.testapp.models import (
     Leaflet,
     Memo,
     Notice,
+    Page,
 )
 
 
@@ -224,6 +225,20 @@ def test_model_without_get_absolute_url_or_url_field_gives_an_empty_url() -> Non
     documents = SyncPipeline().run()
 
     assert [document.url for document in documents] == [""]
+
+
+@pytest.mark.django_db
+def test_get_absolute_url_gives_each_document_its_instance_url_left_relative() -> None:
+    Page.objects.create(title="About", slug="about")
+    Page.objects.create(title="Contact", slug="contact")
+    rag.register(Page, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.url for document in documents} == {
+        "About": "/pages/about/",
+        "Contact": "/pages/contact/",
+    }
 
 
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
