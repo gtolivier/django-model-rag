@@ -100,6 +100,31 @@ def test_lookup_path_crossing_several_relations_adds_the_last_field_text() -> No
 
 
 @pytest.mark.django_db
+def test_several_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three reviews, each of a product in its own category: one query per
+    # review or per product would show as more than one query.
+    for title, product_name, category_name in [
+        ("Sturdy", "Chair", "Furniture"),
+        ("Heavy", "Hammer", "Tools"),
+        ("Bright", "Lamp", "Lighting"),
+    ]:
+        product = _create_product(name=product_name, category_name=category_name)
+        Review.objects.create(title=title, product=product)
+    rag.register(Review, fields=["title", "product__category__name"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Sturdy\n\nFurniture",
+        "Heavy\n\nTools",
+        "Bright\n\nLighting",
+    ]
+
+
+@pytest.mark.django_db
 def test_lookup_path_ending_on_a_field_with_choices_gives_its_display_label() -> None:
     product = _create_product(name="Chair", category_name="Furniture")
     product.condition = "used"
