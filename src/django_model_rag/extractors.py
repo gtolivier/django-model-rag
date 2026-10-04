@@ -263,11 +263,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
     def _url(self, instance: Model) -> str:
         """Give the url of ``instance``: its url field, else ``get_absolute_url``."""
         if self.url_field:
-            path_end = self._path_end(instance, self.url_field)
-            if path_end is None:
-                return ""
-            owner, name = path_end
-            return _stripped_text(getattr(owner, name))
+            return self._stored_text(instance, self.url_field)
         get_absolute_url = getattr(instance, "get_absolute_url", None)
         if get_absolute_url is None:
             return ""
@@ -284,11 +280,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         path = self.language_field or self._guessed_language_field(type(instance))
         if path is None:
             return None
-        path_end = self._path_end(instance, path)
-        if path_end is None:
-            return None
-        owner, name = path_end
-        return _stripped_text(getattr(owner, name)) or None
+        return self._stored_text(instance, path) or None
 
     def _guessed_language_field(self, model: type[Model]) -> str | None:
         """Name the own field of ``model`` guessed as the language, on first use."""
@@ -307,6 +299,18 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
             return ""
         owner, name = path_end
         return _field_text(owner, name)
+
+    def _stored_text(self, instance: Model, path: str) -> str:
+        """Read the stored value at ``path`` from ``instance`` as stripped text.
+
+        Unlike ``_declared_text``, a field with choices reads as its stored
+        value, not its label. Empty when a link of ``path`` is unset.
+        """
+        path_end = self._path_end(instance, path)
+        if path_end is None:
+            return ""
+        owner, name = path_end
+        return _stripped_text(getattr(owner, name))
 
     def _path_end(self, instance: Model, path: str) -> tuple[Model, str] | None:
         """Give the instance holding the last field of ``path``, and its name.
