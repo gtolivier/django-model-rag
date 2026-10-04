@@ -4,6 +4,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
 from django.db.models import Model, QuerySet
+from django.db.models.query import ModelIterable
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
@@ -31,6 +32,12 @@ def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet
         raise TypeError(
             f"{type(extractor).__name__}.get_queryset() must return a QuerySet, "
             f"not a {type(hooked).__name__}"
+        )
+    # No public API tells a values() queryset from one of instances.
+    if not issubclass(hooked._iterable_class, ModelIterable):
+        raise TypeError(
+            f"{type(extractor).__name__}.get_queryset() must return a QuerySet "
+            "of model instances, not of values"
         )
     return hooked
 
