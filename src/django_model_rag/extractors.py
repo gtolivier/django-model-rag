@@ -247,7 +247,10 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         )
 
     def _language(self, instance: Model) -> str | None:
-        """Read the language field of ``instance``, declared or guessed by name."""
+        """Give the constant language, else read ``instance``'s language field.
+
+        That field is the declared one, or one guessed by name.
+        """
         if self.language is not None:
             return self.language
         if self.language_field and LOOKUP_SEP in self.language_field:
