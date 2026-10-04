@@ -75,7 +75,8 @@ def _require_content_field(model: type[Model], path: str) -> None:
 
     Raises:
         ImproperlyConfigured: ``model`` has no such field, or it is a
-            relation; or a link of ``path`` is not a relation.
+            relation; or a link of ``path`` is not a relation; or ``path``
+            goes through a relation while models are loading.
     """
     *steps, field_name = path.split(LOOKUP_SEP)
     if steps:
