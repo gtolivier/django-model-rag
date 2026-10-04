@@ -16,7 +16,7 @@ def _short_repr(value: str) -> str:
     return repr(value)
 
 
-def _check_permissions(permissions: Iterable[str]) -> frozenset[str]:
+def _frozen_permissions(permissions: Iterable[str]) -> frozenset[str]:
     """Return ``permissions`` as a frozenset; raise TypeError unless all are strings."""
     if isinstance(permissions, str):
         msg = "permissions must be a collection of strings, not a bare string"
@@ -52,7 +52,7 @@ class NormalizedDocument:
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
-        permissions = _check_permissions(self.permissions)
+        permissions = _frozen_permissions(self.permissions)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
         object.__setattr__(self, "permissions", permissions)
 
