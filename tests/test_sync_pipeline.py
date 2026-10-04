@@ -3,7 +3,7 @@ from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, SyncPipeline, rag
-from tests.testapp.models import Category, Digest, Panel, Product
+from tests.testapp.models import Bulletin, Category, Digest, Panel, Product
 
 
 def create_product(*, name: str, description: str, price: str) -> Product:
@@ -577,6 +577,27 @@ def test_own_title_field_outside_the_declared_fields_is_loaded_with_them(
     ]
     sql = queries.captured_queries[0]["sql"]
     assert [column for column in ("label", "name", "title") if column in sql] == []
+
+
+@pytest.mark.django_db
+def test_own_language_field_is_loaded_with_the_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two bulletins: a locale column left out of the select but read anyway
+    # would show as one more query per bulletin.
+    french = Bulletin.objects.create(title="Bonjour", locale="fr")
+    english = Bulletin.objects.create(title="Hello", locale="en")
+    rag.register(Bulletin, fields=["title"], language_field="locale")
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [
+        (document.source_pk, document.text, document.language) for document in documents
+    ] == [
+        (french.pk, "Bonjour", "fr"),
+        (english.pk, "Hello", "en"),
+    ]
 
 
 def test_unregistering_a_model_that_is_not_registered_fails() -> None:
