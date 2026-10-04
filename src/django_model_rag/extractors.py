@@ -167,6 +167,11 @@ def _field_text(instance: Model, name: str) -> str:
     # Django adds get_<name>_display only to fields that have choices
     if getattr(instance._meta.get_field(name), "choices", None):
         value = getattr(instance, f"get_{name}_display")()
+    return _stripped_text(value)
+
+
+def _stripped_text(value: object) -> str:
+    """Read a stored ``value`` as stripped text, empty when it is unset."""
     return "" if value is None else str(value).strip()
 
 
@@ -221,8 +226,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         """Read the language field of ``instance``, if one is declared."""
         if self.language_field is None:
             return None
-        value = getattr(instance, self.language_field)
-        return "" if value is None else str(value).strip()
+        return _stripped_text(getattr(instance, self.language_field))
 
     def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
