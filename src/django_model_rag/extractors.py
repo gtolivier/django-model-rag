@@ -231,7 +231,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
 
     def _language(self, instance: Model) -> str | None:
         """Read the language field of ``instance``, declared or guessed by name."""
-        own_fields = {field.name for field in instance._meta.get_fields()}
+        own_fields = {
+            field.name for field in instance._meta.get_fields() if not field.is_relation
+        }
         candidates = (
             (self.language_field,) if self.language_field else _GUESSED_LANGUAGE_FIELDS
         )
