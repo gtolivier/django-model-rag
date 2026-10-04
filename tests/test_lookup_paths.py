@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Category, Product
+from tests.testapp.models import Category, Product, Review
 
 
 def _create_product(*, name: str, category_name: str) -> Product:
@@ -54,3 +54,14 @@ def test_lookup_path_declared_first_gives_the_title() -> None:
     documents = SyncPipeline().run()
 
     assert [document.title for document in documents] == ["Furniture"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_crossing_several_relations_adds_the_last_field_text() -> None:
+    product = _create_product(name="Chair", category_name="Furniture")
+    Review.objects.create(title="Sturdy", product=product)
+    rag.register(Review, fields=["title", "product__category__name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Sturdy\n\nFurniture"]
