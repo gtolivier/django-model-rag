@@ -406,3 +406,14 @@ class Memo(models.Model):
 class Notice(models.Model):
     title = models.CharField(max_length=200)
     language = models.CharField(max_length=10)
+
+
+# --- A language held under the other conventional name ------------------
+# A Circular keeps its language code, such as "fr", in its own field named
+# ``language_code``, and has no field named ``language``: the other name a
+# language field would be guessed by.
+
+
+class Circular(models.Model):
+    title = models.CharField(max_length=200)
+    language_code = models.CharField(max_length=10)
