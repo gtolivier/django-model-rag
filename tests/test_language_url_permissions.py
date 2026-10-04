@@ -387,6 +387,17 @@ def test_permissions_option_gives_every_document_those_permissions() -> None:
     assert all(isinstance(document.permissions, frozenset) for document in documents)
 
 
+def test_permissions_given_as_a_bare_string_fails_at_registration_naming_it() -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bpermissions\b"):
+        # A bare string is the slip under test: the type checker rightly
+        # rejects it.
+        rag.register(
+            Category,
+            fields=["name"],
+            permissions="testapp.view_category",  # type: ignore[arg-type]
+        )
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
