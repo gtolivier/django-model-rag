@@ -425,6 +425,15 @@ def _unread_columns(
     return _unread_field_names(model, read)
 
 
+def _joined_relations(queryset: QuerySet[Model]) -> list[str]:
+    """Return the relations ``queryset`` already select_related() by name.
+
+    A select_related() without a field names none.
+    """
+    joined = queryset.query.select_related
+    return list(joined) if isinstance(joined, dict) else []
+
+
 def _reverse_foreign_key_targets(
     model: type[Model], followed: Sequence[str]
 ) -> set[str]:
@@ -510,8 +519,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         read_fields = [*self.fields, *self.single_fields]
         if self._reads_only_named_columns(model):
             # a foreign key the queryset already joins cannot be deferred
-            joined = queryset.query.select_related
-            kept = [*read_fields, *(joined if isinstance(joined, dict) else ())]
+            kept = [*read_fields, *_joined_relations(queryset)]
             queryset = queryset.defer(*_unread_columns(model, kept, self.follow))
         selected, prefetched = _sorted_relations(model, self.follow)
         paths = _lookup_paths(read_fields)
