@@ -74,6 +74,27 @@ def _sorted_relations(
     return selected, prefetched
 
 
+def _selected_path_prefixes(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> list[str]:
+    """Return the longest run of single-object relations of each lookup path."""
+    fields: Sequence[str] = getattr(extractor, "fields", ())
+    prefixes: list[str] = []
+    for name in fields:
+        hops = name.split(LOOKUP_SEP)[:-1]
+        current = model
+        names: list[str] = []
+        for hop in hops:
+            relation = relations_by_accessor(current).get(hop)
+            if relation is None or not _is_selected(relation):
+                break
+            names.append(relation.name)
+            current = relation.related_model  # type: ignore[assignment]  # a selected relation leads to a model
+        if len(names) > 1:
+            prefixes.append(LOOKUP_SEP.join(names))
+    return prefixes
+
+
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
@@ -87,6 +108,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     selected, prefetched = _sorted_relations(
         model, [*_followed(extractor), *_lookup_path_relations(extractor)]
     )
+    selected.extend(_selected_path_prefixes(model, extractor))
     # never select_related() without a field: it would follow every non-null
     # foreign key, followed or not
     if selected:
