@@ -230,3 +230,30 @@ def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> 
     SyncPipeline(output).run()
 
     assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
+
+
+class ExtractionFailedError(Exception):
+    """Raised by an extractor in the middle of a run."""
+
+
+@pytest.mark.django_db
+def test_pipeline_does_not_prune_a_model_whose_extractor_raises() -> None:
+    # The failure comes after the first instance: a prune at that point would
+    # keep only the keys extracted so far and delete every other document the
+    # output holds for the model.
+    Category.objects.create(name="Lamps")
+    broken = Category.objects.create(name="Broken")
+
+    @rag.register_extractor(Category)
+    class FailingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            if instance.pk == broken.pk:
+                raise ExtractionFailedError(instance.name)
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    with pytest.raises(ExtractionFailedError, match="Broken"):
+        SyncPipeline(output).run()
+
+    assert output.pruned == []
+    assert "prune" not in output.calls
