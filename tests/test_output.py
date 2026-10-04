@@ -10,7 +10,7 @@ from django_model_rag import (
     rag,
 )
 from tests.recording import RecordingOutput
-from tests.testapp.models import AccordionItem, Page
+from tests.testapp.models import AccordionItem, Category, Page
 
 
 def test_a_class_with_replace_and_prune_is_a_document_output() -> None:
@@ -136,3 +136,19 @@ def test_pipeline_hands_each_instance_documents_to_its_output_by_source_key() ->
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
+    # An empty group would tell the output to replace that instance's
+    # documents with nothing: deleting them is prune's job, not replace's.
+    empty = Category.objects.create(name="")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    received_keys = {key for groups in output.replaced for key in groups}
+    assert f"testapp.category:{lighting.pk}" in received_keys
+    assert f"testapp.category:{empty.pk}" not in received_keys
