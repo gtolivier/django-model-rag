@@ -242,8 +242,8 @@ of the model's instances: a `values()` queryset, or another model's, raises
 `TypeError`. The documents stay in primary key order whatever order the hook
 sets. `run_instance` does not go through it, so a hook that filters
 instances out makes `run()` skip documents that `run_instance` still
-hands to the output, where they stay until the next `run()` prunes them: leave an instance out by returning `None` from `extract()`
-instead.
+hands to the output, where they stay until the next `run()` prunes them:
+leave an instance out by returning `None` from `extract()` instead.
 
 ## The output
 
