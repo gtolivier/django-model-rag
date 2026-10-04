@@ -14,6 +14,7 @@ from tests.testapp.models import (
     Circular,
     Dispatch,
     Excerpt,
+    Flyer,
     Gazette,
     Language,
     Leaflet,
@@ -260,6 +261,16 @@ def test_exception_raised_by_get_absolute_url_propagates_unchanged() -> None:
 
     with pytest.raises(NoReverseMatch, match="brochure-detail"):
         SyncPipeline().run()
+
+
+@pytest.mark.django_db
+def test_get_absolute_url_returning_none_gives_an_empty_url_not_none() -> None:
+    Flyer.objects.create(title="Spring sale")
+    rag.register(Flyer, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.url for document in documents] == [""]
 
 
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:

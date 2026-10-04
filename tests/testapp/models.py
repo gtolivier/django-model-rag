@@ -490,3 +490,15 @@ class Brochure(models.Model):
     def get_absolute_url(self) -> str:
         message = "Reverse for 'brochure-detail' not found."
         raise NoReverseMatch(message)
+
+
+# --- A get_absolute_url that gives nothing ------------------------------
+# A Flyer's get_absolute_url returns None, as one for an instance with no page
+# of its own might: a URL that is not there.
+
+
+class Flyer(models.Model):
+    title = models.CharField(max_length=200)
+
+    def get_absolute_url(self) -> str | None:
+        return None
