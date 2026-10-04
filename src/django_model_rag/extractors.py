@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
-from typing import Any, Generic, TypeAlias, TypeVar, cast
+from typing import Any, Generic, TypeAlias, TypeGuard, TypeVar, cast
 
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import CharField, Field, Model, Prefetch, QuerySet, TextField
@@ -257,6 +257,13 @@ def _is_prefetched(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
     return bool(relation.one_to_many or relation.many_to_many)
 
 
+def _is_reverse_foreign_key(
+    relation: "Field[Any, Any] | ForeignObjectRel | None",
+) -> TypeGuard[ForeignObjectRel]:
+    """Tell whether ``relation`` is a reverse foreign key, to the related objects."""
+    return isinstance(relation, ForeignObjectRel) and bool(relation.one_to_many)
+
+
 def _sorted_relations(
     model: type[Model], followed: Sequence[str]
 ) -> "tuple[list[str], list[str | Prefetch[Any]]]":
@@ -293,7 +300,7 @@ def _link_back_fields(
     # and this module is imported from models modules
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
-    if isinstance(relation, ForeignObjectRel) and relation.one_to_many:
+    if _is_reverse_foreign_key(relation):
         return [relation.field.name]
     if isinstance(relation, GenericRelation):
         return [relation.object_id_field_name, relation.content_type_field_name]
@@ -410,17 +417,26 @@ def _unread_columns(
     """Return the names of ``model``'s own columns never read.
 
     The first link of each lookup path among the ``read_fields``, and each
-    relation ``followed``, are read: they stay, with the own fields named.
+    relation ``followed``, are read: they stay, with the own fields named and
+    the columns the followed reverse foreign keys target.
     """
     read = {name.split(LOOKUP_SEP)[0] for name in (*read_fields, *followed)}
-    relations = relations_by_accessor(model)
-    for accessor in followed:
-        relation = relations.get(accessor)
-        # the prefetch matches a reverse foreign key to its parent by the column
-        # the key targets, which may not be the primary key
-        if isinstance(relation, ForeignObjectRel) and relation.one_to_many:
-            read.add(relation.field.target_field.name)
+    read |= _reverse_foreign_key_targets(model, followed)
     return _unread_field_names(model, read)
+
+
+def _reverse_foreign_key_targets(
+    model: type[Model], followed: Sequence[str]
+) -> set[str]:
+    """Return the names of the columns the ``followed`` reverse foreign keys target."""
+    relations = relations_by_accessor(model)
+    # the prefetch matches a reverse foreign key to its parent by the column
+    # the key targets, which may not be the primary key
+    return {
+        relation.field.target_field.name
+        for accessor in followed
+        if _is_reverse_foreign_key(relation := relations.get(accessor))
+    }
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
