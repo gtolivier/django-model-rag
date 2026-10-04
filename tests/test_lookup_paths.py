@@ -210,6 +210,32 @@ def test_lookup_path_crossing_a_reverse_one_to_one_by_its_query_name() -> None:
 
 
 @pytest.mark.django_db
+def test_reverse_one_to_one_lookup_path_by_query_name_is_read_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three suppliers, each with its own profile: one query per supplier would
+    # show as more than one query. The path names the relation by its query
+    # name (supplier_profile), which differs from its accessor (profile).
+    for name, body in [
+        ("Acme", "Fine tools since 1920"),
+        ("Globex", "Lamps for every room"),
+        ("Initech", "Chairs built to last"),
+    ]:
+        supplier = Supplier.objects.create(name=name)
+        SupplierProfile.objects.create(supplier=supplier, body=body)
+    rag.register(Supplier, fields=["name", "supplier_profile__body"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Acme\n\nFine tools since 1920",
+        "Globex\n\nLamps for every room",
+        "Initech\n\nChairs built to last",
+    ]
+
+
+@pytest.mark.django_db
 def test_lookup_path_through_a_missing_reverse_one_to_one_adds_nothing() -> None:
     Page.objects.create(title="Home", slug="home")
     rag.register(Page, fields=["title", "intro__body"])
