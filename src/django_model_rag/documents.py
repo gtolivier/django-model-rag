@@ -39,6 +39,9 @@ class NormalizedDocument:
         if self.source_pk is None:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
+        if isinstance(self.permissions, str):
+            msg = "permissions must be a collection of strings, not a bare string"
+            raise TypeError(msg)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
         object.__setattr__(self, "permissions", frozenset(self.permissions))
 
