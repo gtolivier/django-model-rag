@@ -97,7 +97,14 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             message = f"{model.__name__}: relation {name!r} is followed twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
-        _require_related_text(model, name, accessors[name].related_model)
+        related = accessors[name].related_model
+        if related is None:
+            message = (
+                f"{model.__name__}: cannot follow {name!r}, "
+                "a generic foreign key has no single related model"
+            )
+            raise ImproperlyConfigured(message)
+        _require_related_text(model, name, related)
 
 
 def _require_related_text(
