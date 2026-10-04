@@ -88,12 +88,13 @@ class BaseExtractor(ABC, Generic[M]):
 _FIELD_SEPARATOR = "\n\n"
 
 
-def _accessor_name(instance: Model, step: str) -> str:
-    """Name the attribute of ``instance`` that crosses the relation ``step``.
+def accessor_name(model: type[Model], step: str) -> str:
+    """Name the attribute of ``model`` that crosses the relation ``step``.
 
-    A reverse relation is reached by its accessor, not its query name.
+    A lookup path names a reverse relation by its query name; it is reached
+    by its accessor.
     """
-    relation = instance._meta.get_field(step)
+    relation = model._meta.get_field(step)
     if isinstance(relation, ForeignObjectRel):
         return relation.get_accessor_name() or step
     return step
@@ -105,7 +106,7 @@ def _related_instance(instance: Model, step: str) -> Model | None:
     A missing reverse one-to-one raises instead of returning ``None``.
     """
     try:
-        related: Model | None = getattr(instance, _accessor_name(instance, step))
+        related: Model | None = getattr(instance, accessor_name(type(instance), step))
     except ObjectDoesNotExist:
         return None
     return related

@@ -7,7 +7,7 @@ from django.db.models import Field, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor
+from django_model_rag.extractors import BaseExtractor, accessor_name
 from django_model_rag.registry import rag, relations_by_accessor
 
 # iterator() prefetches per chunk: this many instances share one query
@@ -32,23 +32,12 @@ def _read_paths(extractor: BaseExtractor[Any]) -> list[str]:
     return [*_declared_fields(extractor), *([title_field] if title_field else [])]
 
 
-def _accessor(model: type[Model], step: str) -> str:
-    """Return the accessor of the relation a lookup path names ``step``.
-
-    A lookup path names a reverse relation by its query name.
-    """
-    relation = model._meta.get_field(step)
-    if isinstance(relation, ForeignObjectRel):
-        return relation.get_accessor_name() or step
-    return step
-
-
 def _lookup_path_relations(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> list[str]:
     """Return the accessor of the first relation of each lookup path read."""
     return [
-        _accessor(model, name.split(LOOKUP_SEP)[0])
+        accessor_name(model, name.split(LOOKUP_SEP)[0])
         for name in _read_paths(extractor)
         if LOOKUP_SEP in name
     ]
