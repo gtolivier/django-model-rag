@@ -435,8 +435,8 @@ class Registry:
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
-        if isinstance(permissions, str):
-            msg = "permissions must be a list or a tuple of strings, not a bare string"
+        if not isinstance(permissions, list | tuple):
+            msg = "permissions must be a list or a tuple of strings"
             raise ImproperlyConfigured(msg)
         granted = tuple(permissions)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
