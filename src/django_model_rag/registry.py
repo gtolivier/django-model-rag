@@ -43,27 +43,26 @@ def _guessed_fields(
     return guessed
 
 
-def _require_content_field(model: type[Model], name: str) -> None:
-    """Fail unless ``model`` has a non-relation field called ``name``.
+def _require_content_field(model: type[Model], path: str) -> None:
+    """Fail unless ``model`` has a non-relation field at ``path``.
 
-    ``name`` may be a lookup path, such as ``category__name``: the field is
-    then looked up on the related model it leads to.
+    ``path`` is a field name, or a lookup path such as ``category__name``:
+    the field is then looked up on the related model it leads to.
 
     Raises:
         ImproperlyConfigured: ``model`` has no such field, or it is a
             relation.
     """
-    path = name
-    *steps, name = path.split(LOOKUP_SEP)
+    *steps, field_name = path.split(LOOKUP_SEP)
     try:
         for step in steps:
             model = model._meta.get_field(step).related_model  # type: ignore[assignment]  # related_model is typed as optional
-        field = model._meta.get_field(name)
+        field = model._meta.get_field(field_name)
     except FieldDoesNotExist as error:
         message = f"{model.__name__} has no field {path!r}"
         raise ImproperlyConfigured(message) from error
     if field.is_relation:
-        message = f"{model.__name__}.{name} is a relation, not a content field"
+        message = f"{model.__name__}.{field_name} is a relation, not a content field"
         raise ImproperlyConfigured(message)
 
 
