@@ -32,3 +32,18 @@ def test_a_class_with_replace_and_prune_is_a_document_output() -> None:
 
     assert recorder.replaced == [{"testapp.product:1": [document]}]
     assert recorder.pruned == [("testapp.product", {"testapp.product:1"})]
+
+
+class ReplaceOnlyOutput:
+    """An output that can replace documents but not prune them."""
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        pass
+
+
+def test_a_class_without_prune_is_not_a_document_output() -> None:
+    # The type checker must reject the assignment: if the protocol ever
+    # accepted a class without prune, warn_unused_ignores would flag this line.
+    output: DocumentOutput = ReplaceOnlyOutput()  # type: ignore[assignment]
+
+    assert not hasattr(output, "prune")
