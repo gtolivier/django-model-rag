@@ -290,6 +290,33 @@ def test_extractor_get_queryset_may_select_the_related_objects_extract_reads(
 
 
 @pytest.mark.django_db
+def test_extractor_get_queryset_ordering_otherwise_keeps_documents_in_pk_order() -> (
+    None
+):
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    kitchen = Category.objects.create(name="Kitchen")
+
+    @rag.register_extractor(Category)
+    class NewestFirstCategoryExtractor(BaseExtractor[Category]):
+        # An ordering of the extractor's own is the slip under test:
+        # get_queryset() shapes how the instances load, not their order.
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.order_by("-pk")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (tools.pk, "Tools"),
+        (garden.pk, "Garden"),
+        (kitchen.pk, "Kitchen"),
+    ]
+
+
+@pytest.mark.django_db
 def test_extractor_attribute_named_like_a_registration_option_shapes_nothing(
     django_assert_num_queries: DjangoAssertNumQueries,
 ) -> None:
