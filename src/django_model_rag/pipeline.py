@@ -1,4 +1,4 @@
-"""The pipeline that turns registered models into normalized documents."""
+"""The pipeline that turns registered models into normalized documents for an output."""
 
 from collections.abc import Iterable, Iterator, Sequence
 from itertools import islice
@@ -167,23 +167,28 @@ class SyncPipeline:
         self._output = output
 
     def run(self, models: Sequence[type[Model]] | None = None) -> None:
-        """Produce the documents of the registered models.
+        """Hand the documents of the registered models to the output.
 
         Only the given ``models`` are run, in their order, or every registered
-        model by default.
+        model by default. Each model is then pruned down to the source keys
+        that produced documents.
 
         Raises:
             NotRegistered: one of ``models`` is not registered.
         """
         for model, extractor in _extractors_to_run(models):
-            kept_keys: set[str] = set()
-            instances = _instances(model, extractor)
-            while chunk := list(islice(instances, _CHUNK_SIZE)):
-                kept_keys |= _hand_over(chunk, extractor, self._output)
-            self._output.prune(model._meta.label_lower, kept_keys)
+            self._run_model(model, extractor)
+
+    def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
+        """Hand ``model``'s documents over chunk by chunk, then prune the model."""
+        kept_keys: set[str] = set()
+        instances = _instances(model, extractor)
+        while chunk := list(islice(instances, _CHUNK_SIZE)):
+            kept_keys |= _hand_over(chunk, extractor, self._output)
+        self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
-        """Produce the documents of ``instance`` only.
+        """Hand the documents of ``instance`` only to the output, as one group.
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
