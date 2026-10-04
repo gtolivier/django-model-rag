@@ -432,10 +432,10 @@ def _unread_columns(
 
     The first link of each lookup path among the ``read_fields``, and each
     relation ``followed``, are read: they stay, with the own fields named and
-    the columns the followed reverse foreign keys target.
+    the columns the followed relations' prefetches match by.
     """
     read = {name.split(LOOKUP_SEP)[0] for name in (*read_fields, *followed)}
-    read |= _reverse_foreign_key_targets(model, followed)
+    read |= _prefetch_match_columns(model, followed)
     return _unread_field_names(model, read)
 
 
@@ -472,27 +472,33 @@ def _deferrable_related_columns(
     return [name for name in unread if name not in joined]
 
 
-def _reverse_foreign_key_targets(
-    model: type[Model], followed: Sequence[str]
-) -> set[str]:
-    """Return the names of the columns the ``followed`` reverse foreign keys target."""
+def _prefetch_match_columns(model: type[Model], followed: Sequence[str]) -> set[str]:
+    """Return the names of the columns the ``followed`` prefetches match by."""
     relations = relations_by_accessor(model)
-    # the prefetch matches a reverse foreign key to its parent by the column
-    # the key targets, which may not be the primary key
-    targets = {
-        relation.field.target_field.name
+    return {
+        column
         for accessor in followed
-        if _is_reverse_foreign_key(relation := relations.get(accessor))
+        if (column := _prefetch_match_column(relations.get(accessor))) is not None
     }
-    # likewise a many-to-many matches its through model's foreign key to the parent
-    for accessor in followed:
-        field = relations.get(accessor)
-        if isinstance(field, ManyToManyField):
-            through = field.remote_field.through
-            key = through._meta.get_field(field.m2m_field_name()) if through else None
-            if isinstance(key, ForeignKey):
-                targets.add(key.target_field.name)
-    return targets
+
+
+def _prefetch_match_column(
+    relation: "Field[Any, Any] | ForeignObjectRel | None",
+) -> str | None:
+    """Return the name of the parent's column a prefetch of ``relation`` matches by.
+
+    None when ``relation`` is not a reverse foreign key or a many-to-many.
+    """
+    # the prefetch matches the related objects to their parent by the column
+    # the foreign key to the parent targets, which may not be the primary key:
+    # the reverse foreign key itself, or the through model's for a many-to-many
+    if _is_reverse_foreign_key(relation):
+        return relation.field.target_field.name
+    if not isinstance(relation, ManyToManyField):
+        return None
+    through = relation.remote_field.through
+    key = through._meta.get_field(relation.m2m_field_name()) if through else None
+    return key.target_field.name if isinstance(key, ForeignKey) else None
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
