@@ -198,6 +198,22 @@ def test_language_field_lookup_path_is_read_with_its_instances_in_a_single_query
     }
 
 
+@pytest.mark.django_db
+def test_constant_language_is_every_document_language_and_frees_the_guessed_field() -> (
+    None
+):
+    Notice.objects.create(title="Bonjour", language="fr")
+    Notice.objects.create(title="Hello", language="en")
+    rag.register(Notice, language="de")
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour\n\nfr": "de",
+        "Hello\n\nen": "de",
+    }
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
