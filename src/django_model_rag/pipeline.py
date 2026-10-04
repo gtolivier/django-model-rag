@@ -33,9 +33,11 @@ def _followed_to_one_relations(
         for field in model._meta.concrete_fields
         if (field.many_to_one or field.one_to_one) and field.name in followed
     ]
+    # select_related() names a reverse relation by its query name, which
+    # related_query_name may set apart from its accessor
     reverse = [
-        accessor
-        for relation, accessor in _followed_reverse_relations(model, followed)
+        relation.name
+        for relation, _ in _followed_reverse_relations(model, followed)
         if relation.one_to_one
     ]
     return [*forward, *reverse]
