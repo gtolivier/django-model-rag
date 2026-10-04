@@ -362,3 +362,13 @@ class Tag(models.Model):
 class Photo(models.Model):
     title = models.CharField(max_length=200)
     tags = GenericRelation(Tag)
+
+
+# --- A language held under a name of its own ----------------------------
+# A Bulletin keeps its language code, such as "fr", in a field named
+# ``locale``: not one of the names a language field would be guessed by.
+
+
+class Bulletin(models.Model):
+    title = models.CharField(max_length=200)
+    locale = models.CharField(max_length=10)
