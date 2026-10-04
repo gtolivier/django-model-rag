@@ -290,6 +290,34 @@ def test_extractor_get_queryset_may_select_the_related_objects_extract_reads(
 
 
 @pytest.mark.django_db
+def test_extractor_attribute_named_like_a_registration_option_shapes_nothing(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        # An attribute of the extractor's own that happens to be called
+        # ``follow``: only get_queryset() may shape the queryset, and extract()
+        # reads nothing of the category it names.
+        follow = ("category",)
+
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with django_assert_num_queries(1) as queries:
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (hammer.pk, "Hammer")
+    ]
+    assert Category._meta.db_table not in queries.captured_queries[0]["sql"]
+
+
+@pytest.mark.django_db
 def test_run_instance_produces_the_extracted_documents_of_that_instance_only() -> None:
     faq = Page.objects.create(title="FAQ", slug="faq")
     AccordionItem.objects.create(
