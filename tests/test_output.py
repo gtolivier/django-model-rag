@@ -152,3 +152,16 @@ def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
     received_keys = {key for groups in output.replaced for key in groups}
     assert f"testapp.category:{lighting.pk}" in received_keys
     assert f"testapp.category:{empty.pk}" not in received_keys
+
+
+@pytest.mark.django_db
+def test_pipeline_prunes_a_model_without_instances_keeping_no_key() -> None:
+    # No instance left: every document the output still holds for the model
+    # is stale, and only prune can delete them.
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert output.replaced == []
+    assert output.pruned == [("testapp.category", set())]
