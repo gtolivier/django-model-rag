@@ -34,3 +34,13 @@ def test_run_instance_adds_the_related_field_text_of_a_lookup_path() -> None:
     documents = SyncPipeline().run_instance(product)
 
     assert [document.text for document in documents] == ["Chair\n\nFurniture"]
+
+
+@pytest.mark.django_db
+def test_lookup_path_keeps_its_place_in_the_declared_field_order() -> None:
+    _create_product(name="Chair", category_name="Furniture")
+    rag.register(Product, fields=["category__name", "name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Furniture\n\nChair"]
