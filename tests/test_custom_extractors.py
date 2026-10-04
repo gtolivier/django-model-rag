@@ -555,3 +555,29 @@ def test_build_document_passes_on_title_url_language_and_metadata() -> None:
             metadata={"plugin_type": "text", "page_id": page.pk},
         )
     ]
+
+
+@pytest.mark.django_db
+def test_extractor_keeping_fields_of_its_own_that_resolve_to_nothing_runs() -> None:
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class SummaryProductExtractor(BaseExtractor[Product]):
+        # An attribute of the extractor's own that happens to be called
+        # ``fields``: Product has no field ``summary`` for it to resolve to.
+        fields = ("summary__short",)
+
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=f"In short: {instance.name}.")
+
+    assert SyncPipeline().run() == [
+        NormalizedDocument(
+            text="In short: Hammer.",
+            source_app_label="testapp",
+            source_model="product",
+            source_pk=hammer.pk,
+        )
+    ]
