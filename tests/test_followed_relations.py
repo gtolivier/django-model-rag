@@ -25,6 +25,7 @@ from tests.testapp.models import (
     Recipe,
     Remark,
     Review,
+    Shelf,
     Step,
     StockLevel,
     Supplier,
@@ -32,6 +33,7 @@ from tests.testapp.models import (
     Tag,
     TextPlugin,
     Topic,
+    Warehouse,
     Workshop,
 )
 
@@ -486,6 +488,31 @@ def test_followed_reverse_foreign_key_loads_only_the_text_columns_of_the_related
         "Lighting\n\nLamp\n\nDimmable.\n\nNew\n\nBulb\n\nWarm white.\n\nSecond-hand",
     ]
     assert '"testapp_product"."price"' not in queries.captured_queries[1]["sql"]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_to_a_unique_column_keeps_that_column_loaded(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two warehouses with two shelves each: Shelf.warehouse points to the
+    # warehouse's code, not its primary key, so the prefetch matches the
+    # shelves to their warehouse by that code. It is not declared, yet left
+    # out of the select it would show as one more query per warehouse.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(label="Timber", warehouse=north)
+    Shelf.objects.create(label="Glue", warehouse=south)
+    Shelf.objects.create(label="Screws", warehouse=north)
+    Shelf.objects.create(label="Varnish", warehouse=south)
+    rag.register(Warehouse, fields=["name"], follow=["shelves"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "North depot\n\nTimber\n\nScrews",
+        "South depot\n\nGlue\n\nVarnish",
+    ]
 
 
 @pytest.mark.django_db

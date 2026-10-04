@@ -578,3 +578,24 @@ class Shortcut(models.Model):
         max_length=200,
         choices=[("/docs/", "Documentation"), ("/faq/", "FAQ")],
     )
+
+
+# --- A foreign key to a unique column other than the primary key --------
+# A Shelf points to a Warehouse by the Warehouse's unique code, a slug, not by
+# its primary key: the Warehouse reaches its Shelves by the reverse foreign key
+# ``shelves``, matched to it by that code.
+
+
+class Warehouse(models.Model):
+    name = models.CharField(max_length=200)
+    code = models.SlugField(unique=True)
+
+
+class Shelf(models.Model):
+    label = models.CharField(max_length=100)
+    warehouse = models.ForeignKey(
+        Warehouse,
+        to_field="code",
+        related_name="shelves",
+        on_delete=models.CASCADE,
+    )
