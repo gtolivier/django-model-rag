@@ -1,6 +1,6 @@
 """The normalized document: a piece of text and the model instance it comes from."""
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
@@ -27,7 +27,7 @@ class NormalizedDocument:
     url: str = ""
     language: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    permissions: frozenset[str] = frozenset()
+    permissions: Collection[str] = frozenset()
 
     # Compare by value, but keep documents out of sets and dict keys: a frozen
     # dataclass would otherwise generate a hash. ClassVar[None] lets mypy see
@@ -40,6 +40,7 @@ class NormalizedDocument:
             msg = "source_pk cannot be None"
             raise ValueError(msg)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(self, "permissions", frozenset(self.permissions))
 
     @property
     def source_key(self) -> str:
