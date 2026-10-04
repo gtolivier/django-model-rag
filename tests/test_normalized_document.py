@@ -129,6 +129,26 @@ def test_document_metadata_cannot_be_modified_through_the_document() -> None:
     assert document.metadata == {"category": "Lighting"}
 
 
+def test_document_stores_the_permissions_it_is_given_as_a_frozenset() -> None:
+    # Built without make_document so the type checker sees the list argument.
+    document = NormalizedDocument(
+        text="A desk lamp",
+        source_app_label="testapp",
+        source_model="product",
+        source_pk=1,
+        permissions=[
+            "testapp.view_product",
+            "testapp.change_product",
+            "testapp.view_product",
+        ],
+    )
+
+    assert isinstance(document.permissions, frozenset)
+    assert document.permissions == frozenset(
+        {"testapp.view_product", "testapp.change_product"}
+    )
+
+
 def test_document_source_key_identifies_its_source() -> None:
     document = make_document(
         source_app_label="testapp", source_model="product", source_pk=1
