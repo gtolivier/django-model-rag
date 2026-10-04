@@ -761,6 +761,17 @@ def test_following_a_relation_whose_model_has_no_text_field_fails() -> None:
         rag.register(Product, follow=["stock_levels"])
 
 
+def test_following_a_generic_foreign_key_fails_at_registration() -> None:
+    # Tag.content_object may point to an instance of any model: its related
+    # model is unknown, so no text could be guessed for it.
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=r"\bcontent_object\b.*\bgeneric foreign key\b"
+        r"|\bgeneric foreign key\b.*\bcontent_object\b",
+    ):
+        rag.register(Tag, follow=["content_object"])
+
+
 def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
     with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
         # A bare string is the slip under test: the type checker rightly
