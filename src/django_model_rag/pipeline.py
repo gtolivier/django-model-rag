@@ -9,7 +9,11 @@ from django.db.models import Field, ForeignObjectRel, Model, QuerySet
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
-from django_model_rag.extractors import BaseExtractor, path_links
+from django_model_rag.extractors import (
+    BaseExtractor,
+    DeclaredFieldsExtractor,
+    path_links,
+)
 from django_model_rag.registry import rag, relations_by_accessor
 
 # iterator() prefetches per chunk: this many instances share one query
@@ -19,15 +23,26 @@ _CHUNK_SIZE = 1000
 _SINGLE_FIELD_OPTIONS = ("title_field", "language_field", "url_field")
 
 
+def _option(extractor: BaseExtractor[Any], name: str, default: Any) -> Any:
+    """Return the registration option ``name`` of ``extractor``, else ``default``.
+
+    Only the extractor built from a registration has options: an attribute of
+    a custom extractor, whatever its name, shapes nothing.
+    """
+    if isinstance(extractor, DeclaredFieldsExtractor):
+        return getattr(extractor, name)
+    return default
+
+
 def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
     """Return the names of the relations ``extractor`` follows, if any."""
-    followed: Sequence[str] = getattr(extractor, "follow", ())
+    followed: Sequence[str] = _option(extractor, "follow", ())
     return followed
 
 
 def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
     """Return the fields ``extractor`` declares, lookup paths included, if any."""
-    fields: Sequence[str] = getattr(extractor, "fields", ())
+    fields: Sequence[str] = _option(extractor, "fields", ())
     return fields
 
 
@@ -38,7 +53,7 @@ def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
     and its URL field, if any.
     """
     named: list[str | None] = [
-        getattr(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS
+        _option(extractor, option, None) for option in _SINGLE_FIELD_OPTIONS
     ]
     read = [*_declared_fields(extractor), *(name for name in named if name)]
     return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
