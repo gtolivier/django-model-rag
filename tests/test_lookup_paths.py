@@ -35,6 +35,27 @@ def _create_product(*, name: str, category_name: str) -> Product:
     )
 
 
+def _create_three_reviews_of_products_in_their_own_categories() -> None:
+    """Create Sturdy/Chair/Furniture, Heavy/Hammer/Tools and Bright/Lamp/Lighting.
+
+    One query per review or per product would show as more than one query.
+    """
+    for title, product_name, category_name in [
+        ("Sturdy", "Chair", "Furniture"),
+        ("Heavy", "Hammer", "Tools"),
+        ("Bright", "Lamp", "Lighting"),
+    ]:
+        product = _create_product(name=product_name, category_name=category_name)
+        Review.objects.create(title=title, product=product)
+
+
+def _create_supplier(*, name: str, profile_body: str) -> Supplier:
+    """Create a supplier called ``name``, with a profile of body ``profile_body``."""
+    supplier = Supplier.objects.create(name=name)
+    SupplierProfile.objects.create(supplier=supplier, body=profile_body)
+    return supplier
+
+
 @pytest.mark.django_db
 def test_foreign_key_lookup_path_adds_each_instance_its_related_field_text() -> None:
     _create_product(name="Chair", category_name="Furniture")
@@ -115,15 +136,7 @@ def test_lookup_path_crossing_several_relations_adds_the_last_field_text() -> No
 def test_several_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
     django_assert_num_queries: DjangoAssertNumQueries,
 ) -> None:
-    # Three reviews, each of a product in its own category: one query per
-    # review or per product would show as more than one query.
-    for title, product_name, category_name in [
-        ("Sturdy", "Chair", "Furniture"),
-        ("Heavy", "Hammer", "Tools"),
-        ("Bright", "Lamp", "Lighting"),
-    ]:
-        product = _create_product(name=product_name, category_name=category_name)
-        Review.objects.create(title=title, product=product)
+    _create_three_reviews_of_products_in_their_own_categories()
     rag.register(Review, fields=["title", "product__category__name"])
 
     with django_assert_num_queries(1):
@@ -166,15 +179,7 @@ def test_title_field_lookup_path_outside_fields_gives_the_title_not_text() -> No
 def test_title_field_lookup_path_outside_fields_is_read_in_a_single_query(
     django_assert_num_queries: DjangoAssertNumQueries,
 ) -> None:
-    # Three reviews, each of a product in its own category: one query per
-    # review or per product would show as more than one query.
-    for title, product_name, category_name in [
-        ("Sturdy", "Chair", "Furniture"),
-        ("Heavy", "Hammer", "Tools"),
-        ("Bright", "Lamp", "Lighting"),
-    ]:
-        product = _create_product(name=product_name, category_name=category_name)
-        Review.objects.create(title=title, product=product)
+    _create_three_reviews_of_products_in_their_own_categories()
     rag.register(Review, fields=["title"], title_field="product__category__name")
 
     with django_assert_num_queries(1):
@@ -199,8 +204,7 @@ def test_lookup_path_through_a_null_foreign_key_adds_nothing() -> None:
 
 @pytest.mark.django_db
 def test_lookup_path_crossing_a_reverse_one_to_one_by_its_query_name() -> None:
-    supplier = Supplier.objects.create(name="Acme")
-    SupplierProfile.objects.create(supplier=supplier, body="Fine tools since 1920")
+    _create_supplier(name="Acme", profile_body="Fine tools since 1920")
     rag.register(Supplier, fields=["name", "supplier_profile__body"])
 
     documents = SyncPipeline().run()
@@ -222,8 +226,7 @@ def test_reverse_one_to_one_lookup_path_by_query_name_is_read_in_a_single_query(
         ("Globex", "Lamps for every room"),
         ("Initech", "Chairs built to last"),
     ]:
-        supplier = Supplier.objects.create(name=name)
-        SupplierProfile.objects.create(supplier=supplier, body=body)
+        _create_supplier(name=name, profile_body=body)
     rag.register(Supplier, fields=["name", "supplier_profile__body"])
 
     with django_assert_num_queries(1):
@@ -249,8 +252,7 @@ def test_reverse_one_to_one_past_the_first_link_by_query_name_is_read_in_one_que
         ("PO-2", "Globex", "Lamps for every room"),
         ("PO-3", "Initech", "Chairs built to last"),
     ]:
-        supplier = Supplier.objects.create(name=name)
-        SupplierProfile.objects.create(supplier=supplier, body=body)
+        supplier = _create_supplier(name=name, profile_body=body)
         SupplierOrder.objects.create(reference=reference, supplier=supplier)
     rag.register(
         SupplierOrder, fields=["reference", "supplier__supplier_profile__body"]
@@ -295,15 +297,7 @@ def test_lookup_path_and_follow_through_the_same_relation_combine() -> None:
 def test_lookup_path_and_follow_on_its_first_relation_are_read_in_a_single_query(
     django_assert_num_queries: DjangoAssertNumQueries,
 ) -> None:
-    # Three reviews, each of a product in its own category: one query per
-    # review or per product would show as more than one query.
-    for title, product_name, category_name in [
-        ("Sturdy", "Chair", "Furniture"),
-        ("Heavy", "Hammer", "Tools"),
-        ("Bright", "Lamp", "Lighting"),
-    ]:
-        product = _create_product(name=product_name, category_name=category_name)
-        Review.objects.create(title=title, product=product)
+    _create_three_reviews_of_products_in_their_own_categories()
     rag.register(
         Review, fields=["title", "product__category__name"], follow=["product"]
     )
