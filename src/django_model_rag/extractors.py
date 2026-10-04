@@ -18,7 +18,7 @@ from django.db.models import (
     TextField,
 )
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.fields.reverse_related import ForeignObjectRel
+from django.db.models.fields.reverse_related import ForeignObjectRel, ManyToManyRel
 from django.db.models.manager import BaseManager
 
 from django_model_rag.documents import NormalizedDocument
@@ -494,10 +494,16 @@ def _prefetch_match_column(
     # the reverse foreign key itself, or the through model's for a many-to-many
     if _is_reverse_foreign_key(relation):
         return relation.field.target_field.name
-    if not isinstance(relation, ManyToManyField):
+    if isinstance(relation, ManyToManyRel):
+        # reached from the other side: the through model's key to the parent is
+        # the declaring field's reverse one
+        field, key_name = relation.field, relation.field.m2m_reverse_field_name()
+    elif isinstance(relation, ManyToManyField):
+        field, key_name = relation, relation.m2m_field_name()
+    else:
         return None
-    through = relation.remote_field.through
-    key = through._meta.get_field(relation.m2m_field_name()) if through else None
+    through = field.remote_field.through
+    key = through._meta.get_field(key_name) if through else None
     return key.target_field.name if isinstance(key, ForeignKey) else None
 
 
