@@ -396,8 +396,8 @@ class Registry:
             ImproperlyConfigured: ``fields``, ``exclude`` or ``follow`` is not
                 a list or a tuple; no field is declared, a field is declared
                 or excluded twice, or a field (``title_field``,
-                ``language_field`` and ``exclude`` included) is not one of the
-                model's or is a relation;
+                ``language_field``, ``url_field`` and ``exclude`` included) is
+                not one of the model's or is a relation;
                 ``exclude`` is combined with ``fields``, or ``language`` with
                 ``language_field``; ``language`` is blank or not a string;
                 without ``fields`` and ``follow``, the model has no text
@@ -422,12 +422,9 @@ class Registry:
             fields = _guessed_fields(model, exclude, follow, metadata_fields)
         else:
             _require_content_fields(model, fields)
-        if title_field is not None:
-            _require_content_field(model, title_field)
-        if language_field is not None:
-            _require_content_field(model, language_field)
-        if url_field is not None:
-            _require_content_field(model, url_field)
+        for single_field in (title_field, language_field, url_field):
+            if single_field is not None:
+                _require_content_field(model, single_field)
         if follow:
             _require_models_ready(model, "follow relations")
             _require_followable_relations(model, follow)
