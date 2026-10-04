@@ -504,6 +504,29 @@ def test_extractor_get_queryset_returning_values_fails_naming_the_extractor() ->
         SyncPipeline().run()
 
 
+@pytest.mark.django_db
+def test_extractor_get_queryset_returning_another_model_fails_naming_both() -> None:
+    tools = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Category)
+    class StrayExtractor(BaseExtractor[Category]):
+        # A queryset of products for a category extractor is the slip under
+        # test: the type checker rightly rejects it.
+        def get_queryset(  # type: ignore[override]
+            self, queryset: QuerySet[Category]
+        ) -> QuerySet[Product]:
+            return Product.objects.all()
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with pytest.raises(TypeError, match=r"StrayExtractor\.get_queryset\(\).*Category"):
+        SyncPipeline().run()
+
+
 def test_register_extractor_gives_back_the_decorated_class_itself() -> None:
     # Applying the decorator by hand is what ``@rag.register_extractor(...)``
     # does to the class, and keeps a handle on the undecorated class.
