@@ -592,6 +592,27 @@ def test_build_document_gives_the_permissions_it_is_passed_or_none_as_frozenset(
 
 
 @pytest.mark.django_db
+def test_build_document_refuses_a_bare_string_as_permissions() -> None:
+    tools = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class SinglePermissionProductExtractor(BaseExtractor[Product]):
+        # One permission given as a bare string instead of a collection is
+        # the slip under test: read as an iterable, it would grant its
+        # characters.
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=instance.name, permissions="testapp.view_product"
+            )
+
+    with pytest.raises(TypeError, match="permissions"):
+        SyncPipeline().run()
+
+
+@pytest.mark.django_db
 def test_extractor_keeping_fields_of_its_own_that_resolve_to_nothing_runs() -> None:
     tools = Category.objects.create(name="Tools")
     hammer = Product.objects.create(
