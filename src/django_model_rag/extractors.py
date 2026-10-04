@@ -88,6 +88,17 @@ class BaseExtractor(ABC, Generic[M]):
 _FIELD_SEPARATOR = "\n\n"
 
 
+def _accessor_name(instance: Model, step: str) -> str:
+    """Name the attribute of ``instance`` that crosses the relation ``step``.
+
+    A reverse relation is reached by its accessor, not its query name.
+    """
+    relation = instance._meta.get_field(step)
+    if isinstance(relation, ForeignObjectRel):
+        return relation.get_accessor_name() or step
+    return step
+
+
 def _field_text(instance: Model, name: str) -> str:
     """Read the field ``name`` of ``instance`` as stripped text.
 
@@ -96,14 +107,7 @@ def _field_text(instance: Model, name: str) -> str:
     """
     *path, name = name.split(LOOKUP_SEP)
     for step in path:
-        relation = instance._meta.get_field(step)
-        # a reverse relation is reached by its accessor, not its query name
-        accessor = (
-            relation.get_accessor_name()
-            if isinstance(relation, ForeignObjectRel)
-            else None
-        )
-        instance = getattr(instance, accessor or step)
+        instance = getattr(instance, _accessor_name(instance, step))
         if instance is None:
             return ""
     value = getattr(instance, name)
