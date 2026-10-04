@@ -89,6 +89,19 @@ def test_lookup_path_ending_on_a_field_with_choices_gives_its_display_label() ->
 
 
 @pytest.mark.django_db
+def test_title_field_lookup_path_outside_fields_gives_the_title_not_text() -> None:
+    product = _create_product(name="Chair", category_name="Furniture")
+    Review.objects.create(title="Sturdy", product=product)
+    rag.register(Review, fields=["title"], title_field="product__name")
+
+    documents = SyncPipeline().run()
+
+    assert [(document.title, document.text) for document in documents] == [
+        ("Chair", "Sturdy")
+    ]
+
+
+@pytest.mark.django_db
 def test_lookup_path_through_a_null_foreign_key_adds_nothing() -> None:
     Workshop.objects.create(title="Pottery", topic=None)
     rag.register(Workshop, fields=["title", "topic__title"])
