@@ -72,6 +72,7 @@ class BaseExtractor(ABC, Generic[M]):
         url: str = "",
         language: str | None = None,
         metadata: Mapping[str, Any] | None = None,
+        permissions: Iterable[str] = (),
     ) -> NormalizedDocument:
         """Build a document with ``text``, its source taken from ``instance``."""
         return NormalizedDocument(
@@ -83,6 +84,7 @@ class BaseExtractor(ABC, Generic[M]):
             url=url,
             language=language,
             metadata=metadata or {},
+            permissions=frozenset(permissions),
         )
 
 
@@ -211,6 +213,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         language_field: str | None = None,
         language: str | None = None,
         url_field: str | None = None,
+        permissions: tuple[str, ...] = (),
     ) -> None:
         """Read ``fields`` as the text, ``title_field`` (if any) as the title.
 
@@ -221,7 +224,9 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         ``url_field`` (if any) names the field whose stripped value is the
         document url: an own field, or a lookup path such as
         ``bookmark__link``.
+        ``permissions`` are given to every document.
         """
+        self.permissions = permissions
         self.fields = fields
         self.title_field = title_field
         self.follow = follow
@@ -250,6 +255,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
             title=self._title(instance, field_texts),
             url=self._url(instance),
             language=self._language(instance),
+            permissions=self.permissions,
         )
 
     def _url(self, instance: Model) -> str:

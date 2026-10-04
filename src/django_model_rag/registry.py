@@ -378,8 +378,11 @@ class Registry:
         language_field: str | None = None,
         language: str | None = None,
         url_field: str | None = None,
+        permissions: FieldNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
+
+        ``permissions`` are given to every document of the model.
 
         Without ``fields``, the model's text fields are extracted, except
         those named in ``exclude``.
@@ -430,8 +433,15 @@ class Registry:
             _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
+        granted = tuple(permissions)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field, followed, language_field, language, url_field
+            declared,
+            title_field,
+            followed,
+            language_field,
+            language,
+            url_field,
+            granted,
         )
 
     def register_extractor(
