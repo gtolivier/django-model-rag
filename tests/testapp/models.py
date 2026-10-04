@@ -642,3 +642,31 @@ class Offer(models.Model):
     )
 
     objects = OfferManager()
+
+
+# --- A related model whose default manager follows a foreign key --------
+# A Showroom reaches its Exhibits by the reverse foreign key ``exhibits``. An
+# Exhibit's default manager follows its other foreign key, ``category``, with
+# select_related(), as a project may do so that every exhibit it shows comes
+# with its category: whatever loads Exhibits through it joins the category.
+
+
+class Showroom(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class ExhibitManager(models.Manager["Exhibit"]):
+    def get_queryset(self) -> models.QuerySet["Exhibit"]:
+        return super().get_queryset().select_related("category")
+
+
+class Exhibit(models.Model):
+    showroom = models.ForeignKey(
+        Showroom, related_name="exhibits", on_delete=models.CASCADE
+    )
+    label = models.CharField(max_length=200)
+    category = models.ForeignKey(
+        Category, related_name="exhibits", on_delete=models.CASCADE
+    )
+
+    objects = ExhibitManager()

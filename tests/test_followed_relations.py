@@ -15,6 +15,7 @@ from tests.testapp.models import (
     Category,
     Course,
     Delivery,
+    Exhibit,
     FeaturedProduct,
     Lesson,
     Note,
@@ -26,6 +27,7 @@ from tests.testapp.models import (
     Remark,
     Review,
     Shelf,
+    Showroom,
     Step,
     StockLevel,
     Supplier,
@@ -512,6 +514,32 @@ def test_followed_reverse_foreign_key_to_a_unique_column_keeps_that_column_loade
     assert [document.text for document in documents] == [
         "North depot\n\nTimber\n\nScrews",
         "South depot\n\nGlue\n\nVarnish",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_foreign_key_whose_manager_joins_another_foreign_key(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Exhibit's default manager joins its category with select_related(), and
+    # the prefetch of the exhibits is built from it: deferring that foreign
+    # key, though it is not text, would make Django refuse the query, and a
+    # column the documents read left out would show as more than two queries.
+    tools = Category.objects.create(name="Tools")
+    north = Showroom.objects.create(name="North hall")
+    south = Showroom.objects.create(name="South hall")
+    Exhibit.objects.create(showroom=north, label="Hammer", category=tools)
+    Exhibit.objects.create(showroom=south, label="Rake", category=tools)
+    Exhibit.objects.create(showroom=north, label="Saw", category=tools)
+    Exhibit.objects.create(showroom=south, label="Spade", category=tools)
+    rag.register(Showroom, follow=["exhibits"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "North hall\n\nHammer\n\nSaw",
+        "South hall\n\nRake\n\nSpade",
     ]
 
 
