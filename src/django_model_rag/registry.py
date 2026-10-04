@@ -48,22 +48,15 @@ def _model_through(model: type[Model], step: str, path: str) -> type[Model]:
 
     Raises:
         FieldDoesNotExist: ``model`` has no field ``step``.
-        ImproperlyConfigured: ``step`` is not a relation, or holds several
-            objects.
+        ImproperlyConfigured: ``step`` is not a relation, is a generic
+            foreign key, or holds several objects.
     """
     relation = model._meta.get_field(step)
     related_model = relation.related_model
-    if related_model is None and relation.is_relation:
-        message = (
-            f"{model.__name__}.{step} is a generic foreign key, "
-            f"so {path!r} cannot go through it"
-        )
-        raise ImproperlyConfigured(message)
     if related_model is None:
-        message = (
-            f"{model.__name__}.{step} is not a relation, "
-            f"so {path!r} cannot go through it"
-        )
+        # A generic foreign key is a relation, only one without a single model.
+        kind = "a generic foreign key" if relation.is_relation else "not a relation"
+        message = f"{model.__name__}.{step} is {kind}, so {path!r} cannot go through it"
         raise ImproperlyConfigured(message)
     if relation.many_to_many or relation.one_to_many:
         message = (
