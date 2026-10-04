@@ -3,11 +3,11 @@
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import Field, ForeignObjectRel, Model
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
-from django_model_rag.registry import rag
+from django_model_rag.registry import rag, relations_by_accessor
 
 # iterator() prefetches per chunk: this many instances share one query
 _CHUNK_SIZE = 1000
@@ -19,78 +19,52 @@ def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
     return followed
 
 
-def _followed_to_one_relations(
-    model: type[Model], followed: Sequence[str]
-) -> list[str]:
-    """List the relations of ``model`` to a single object among ``followed``.
+# quoted: Django's Field is generic for the type checker only, and before
+# Python 3.14 an annotation is evaluated when the function is defined
+def _is_selected(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
+    """Tell whether ``relation`` leads to a single object, read in the same query.
 
     These are the foreign keys and the one-to-one relations, forward or reverse.
     """
-    # a followed name may be a reverse accessor, which is no field name:
-    # look among the concrete fields instead of calling get_field()
-    forward = [
-        field.name
-        for field in model._meta.concrete_fields
-        if (field.many_to_one or field.one_to_one) and field.name in followed
-    ]
-    # select_related() names a reverse relation by its query name, which
-    # related_query_name may set apart from its accessor
-    reverse = [
-        relation.name
-        for relation, _ in _followed_reverse_relations(model, followed)
-        if relation.one_to_one
-    ]
-    return [*forward, *reverse]
+    if isinstance(relation, ForeignObjectRel):
+        return bool(relation.one_to_one)
+    # a generic foreign key leads to a single object too, but has no column
+    # select_related() could join on
+    return bool(relation.concrete and (relation.many_to_one or relation.one_to_one))
 
 
-def _followed_reverse_relations(
-    model: type[Model], followed: Sequence[str]
-) -> Iterator[tuple[ForeignObjectRel, str]]:
-    """Yield ``model``'s reverse relations among ``followed``, with their accessor."""
-    for relation in model._meta.related_objects:
-        accessor = relation.get_accessor_name()
-        if accessor is not None and accessor in followed:
-            yield relation, accessor
+def _is_prefetched(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
+    """Tell whether ``relation`` leads to many objects, read in one more query.
 
-
-def _followed_reverse_foreign_keys(
-    model: type[Model], followed: Sequence[str]
-) -> list[str]:
-    """List the accessors of ``model``'s reverse foreign keys among ``followed``."""
-    return [
-        accessor
-        for relation, accessor in _followed_reverse_relations(model, followed)
-        if relation.one_to_many
-    ]
-
-
-def _followed_many_to_many(model: type[Model], followed: Sequence[str]) -> list[str]:
-    """List the many-to-many relations of ``model`` among ``followed``.
-
-    These are the many-to-many fields and their reverse accessors.
+    These are the reverse foreign keys, the many-to-many relations, forward or
+    reverse, and the generic relations.
     """
-    forward = [
-        field.name for field in model._meta.many_to_many if field.name in followed
-    ]
-    reverse = [
-        accessor
-        for relation, accessor in _followed_reverse_relations(model, followed)
-        if relation.many_to_many
-    ]
-    return [*forward, *reverse]
+    return bool(relation.one_to_many or relation.many_to_many)
 
 
-def _followed_generic_relations(
+def _sorted_relations(
     model: type[Model], followed: Sequence[str]
-) -> list[str]:
-    """List the generic relations of ``model`` among ``followed``."""
-    # GenericRelation is not imported: loading it needs the content types app
-    # to be installed, which the models of a project may not have
-    return [
-        field.name
-        for field in model._meta.private_fields
-        if field.is_relation and field.one_to_many and field.name in followed
-    ]
+) -> tuple[list[str], list[str]]:
+    """Sort the relations ``followed`` from ``model`` by how they are read.
+
+    Returns:
+        The names to give select_related(), then those to give
+        prefetch_related().
+    """
+    relations = relations_by_accessor(model)
+    selected: list[str] = []
+    prefetched: list[str] = []
+    for accessor in followed:
+        relation = relations.get(accessor)
+        if relation is None:
+            continue
+        if _is_selected(relation):
+            # select_related() names a reverse relation by its query name,
+            # which related_query_name may set apart from its accessor
+            selected.append(relation.name)
+        elif _is_prefetched(relation):
+            prefetched.append(accessor)
+    return selected, prefetched
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
@@ -102,16 +76,11 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
-    followed = _followed(extractor)
+    selected, prefetched = _sorted_relations(model, _followed(extractor))
     # never select_related() without a field: it would follow every non-null
     # foreign key, followed or not
-    if to_one_relations := _followed_to_one_relations(model, followed):
-        queryset = queryset.select_related(*to_one_relations)
-    prefetched = [
-        *_followed_reverse_foreign_keys(model, followed),
-        *_followed_many_to_many(model, followed),
-        *_followed_generic_relations(model, followed),
-    ]
+    if selected:
+        queryset = queryset.select_related(*selected)
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)
     return queryset.iterator(chunk_size=_CHUNK_SIZE)

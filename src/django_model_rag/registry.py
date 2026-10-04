@@ -6,7 +6,7 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import Field, ForeignObjectRel, Model
 
 from django_model_rag.extractors import (
     BaseExtractor,
@@ -74,6 +74,27 @@ def _require_models_ready(model: type[Model]) -> None:
         raise ImproperlyConfigured(message)
 
 
+# quoted: Django's Field is generic for the type checker only, and before
+# Python 3.14 an annotation is evaluated when the function is defined
+def relations_by_accessor(
+    model: type[Model],
+) -> "dict[str, Field[Any, Any] | ForeignObjectRel]":
+    """Map each of ``model``'s relations, forward or reverse, by its accessor.
+
+    A forward relation is its field, under its name; a reverse one is its
+    relation object, under the accessor ``related_name`` may set.
+    """
+    relations: dict[str, Field[Any, Any] | ForeignObjectRel] = {}
+    for field in model._meta.get_fields():
+        if not field.is_relation:
+            continue
+        if not isinstance(field, ForeignObjectRel):
+            relations[field.name] = field
+        elif (accessor := field.get_accessor_name()) is not None:
+            relations[accessor] = field
+    return relations
+
+
 def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
     """Fail unless ``names`` names, once each, relations of ``model`` with text.
 
@@ -82,13 +103,7 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             is given twice, or its related model is unknown (a generic foreign
             key) or has no text field.
     """
-    accessors = {
-        field.get_accessor_name()
-        if isinstance(field, ForeignObjectRel)
-        else field.name: field
-        for field in model._meta.get_fields()
-        if field.is_relation
-    }
+    accessors = relations_by_accessor(model)
     seen: set[str] = set()
     for name in names:
         if name not in accessors:
