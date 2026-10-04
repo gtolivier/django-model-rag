@@ -190,3 +190,24 @@ def test_pipeline_prunes_a_model_after_its_documents_keeping_their_keys() -> Non
     # brings back, or keep a key the replace has not stored yet.
     assert "replace" in output.calls
     assert output.calls[-1] == "prune"
+
+
+@pytest.mark.django_db
+def test_pipeline_prunes_each_model_it_runs_in_order_under_its_own_label() -> None:
+    # Page is registered before Category, though declared after it and after
+    # it alphabetically: only the order the models run in can put it first.
+    faq = Page.objects.create(title="FAQ", slug="faq")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Page, fields=["title"])
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    # One prune per model, each naming its own model with only its own keys:
+    # a single prune, or a label shared across models, would let one model's
+    # prune delete the documents of another.
+    assert output.pruned == [
+        ("testapp.page", {f"testapp.page:{faq.pk}"}),
+        ("testapp.category", {f"testapp.category:{lighting.pk}"}),
+    ]
