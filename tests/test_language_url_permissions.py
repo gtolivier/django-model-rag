@@ -356,6 +356,17 @@ def test_url_field_lookup_path_is_read_with_its_instances_in_a_single_query(
     }
 
 
+@pytest.mark.django_db
+def test_model_without_permissions_option_gives_empty_frozenset_permissions() -> None:
+    Category.objects.create(name="Tools")
+    rag.register(Category, fields=["name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.permissions for document in documents] == [frozenset()]
+    assert all(isinstance(document.permissions, frozenset) for document in documents)
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
