@@ -211,3 +211,22 @@ def test_pipeline_prunes_each_model_it_runs_in_order_under_its_own_label() -> No
         ("testapp.page", {f"testapp.page:{faq.pk}"}),
         ("testapp.category", {f"testapp.category:{lighting.pk}"}),
     ]
+
+
+@pytest.mark.django_db
+def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> None:
+    # One more instance than a chunk holds: one replace per instance, or a
+    # single replace for the whole model, would both miss the two batches.
+    Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(1001)
+    )
+    rag.register(Category, fields=["name"])
+    keys = [
+        f"testapp.category:{pk}"
+        for pk in Category.objects.order_by("pk").values_list("pk", flat=True)
+    ]
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
