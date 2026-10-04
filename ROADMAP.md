@@ -13,7 +13,7 @@ feature also ticks it here.
   [django-minimal-rag](https://github.com/gtolivier/django-minimal-rag). The
   earlier prototype had a naive chunker in its pipeline; it is not
   rewritten. The pipeline hands the `NormalizedDocument`s to an output that
-  the project supplies (its shape is an open question, below).
+  the project supplies (see "The output", below).
 - **The interface between the two packages is structural.**
   django-minimal-rag will define a `typing.Protocol` that describes what it
   reads from a document (`text`, `title`, `url`, `source_key`…), with
@@ -25,6 +25,84 @@ feature also ticks it here.
   exists. The attribute names of `NormalizedDocument` are therefore a
   contract as soon as they exist; the exact contents of the Protocol are
   settled when django-minimal-rag is designed.
+- **Each package works without the other.** django-model-rag hands its
+  documents to whatever output a project supplies: django-minimal-rag is one
+  of them, not a requirement. django-minimal-rag indexes any document of the
+  right shape, whatever produced it. Its indexing API is therefore the
+  output's API (below), usable directly, not an adapter for this package.
+
+### The output
+
+Settled before feature 8 (they were open questions until then). The output
+is the interface that the command (feature 9), the signals (feature 10) and
+django-minimal-rag all depend on: adding a method to a Protocol later breaks
+every class that implements it, so the output covers from the start what
+features 9 and 10 need.
+
+- **A Protocol, defined here.** django-model-rag calls the output, so it
+  defines its `typing.Protocol`; django-minimal-rag satisfies it by its
+  shape, without importing it — the document's interface, the other way
+  round. A single callable taking documents was rejected: it could never
+  remove anything without an API break. So was a per-document `upsert` /
+  `delete` pair: a save that produces fewer documents would need two calls,
+  with a moment where the instance has none, and `upsert` would not say
+  whether it adds to an instance's documents or replaces them.
+- **Two methods, by source.** `replace(groups)` takes a mapping of
+  `source_key` to the complete sequence of that source's documents: each
+  group replaces everything the output holds for its source, and an empty
+  sequence removes the source. `prune(model_label, kept_keys)` removes the
+  sources of a model (`app_label.model_name`: the whole part of their
+  `source_key` before the colon, so that `app.note` never matches
+  `app.notebook:3`) that are not in `kept_keys`. Groups go in batches, so that
+  django-minimal-rag can batch its embedding calls. The exact signatures are
+  settled by the tests of feature 8; the name of `prune`'s first argument
+  should stay meaningful for a django-minimal-rag used without this package.
+- **`source_key` identifies a group, not a document.** The documents of an
+  instance are replaced together; no document gets an identity of its own
+  (a rank shifts on every insertion, a name would burden every extractor).
+  django-minimal-rag identifies its chunks within a group, and can compare
+  texts to re-embed only what changed.
+- **A document's source is the instance it was extracted from.** A custom
+  extractor that builds a document whose source is another instance — a
+  plugin indexed as its page — would replace that other instance's
+  documents, and its own deletion would remove nothing. The pipeline refuses
+  it. Content gathered from other models is indexed by an extractor on the
+  model that owns it (a `Page` extractor reading its plugins); keeping it
+  fresh when those models change is feature 10's open question.
+- **Removal is replacement.** Every run of an instance sends its complete
+  set of documents, empty included: an extractor returning `None` means
+  "nothing to index any more", hence removal. An extractor that raises sends
+  nothing, and the output keeps the previous documents. django-model-rag
+  stores nothing about what it produced — remembering it would make the
+  package a Django app with models and migrations, duplicating
+  django-minimal-rag's storage. Leaving stale documents to the next full
+  sync was rejected too: on an authenticated intranet, an unpublished page
+  would stay quotable until then.
+- **The destination is a setting, read by the command and the signals.**
+  `SyncPipeline` receives its output explicitly, so tests and scripts pass
+  their own. The command and the signals run outside project code: they
+  build the output from a setting shaped like Django's `STORAGES` — a
+  dotted path to a class and its options, for instance
+  `{"BACKEND": "…", "OPTIONS": {…}}` — loaded with `import_string`. Without
+  the setting, the command fails with `ImproperlyConfigured`. The setting's
+  name and loading come with feature 9, their first user. Registering the
+  output in code (`rag.set_output()` from `AppConfig.ready()`) was rejected:
+  global mutable state, dependent on app order, and a per-environment value
+  belongs in settings.
+- **No project-wide default language, for now.** A model with no language
+  source keeps giving `None`, which tells the output the language is
+  unknown; the output decides what to make of it (django-minimal-rag may
+  fall back on `LANGUAGE_CODE`). Falling back on `LANGUAGE_CODE` here would
+  be wrong for a multilingual site; an opt-in `DEFAULT_LANGUAGE` would
+  reopen feature 7's rule that a configured field is authoritative. Adding a
+  default later breaks nothing; removing one would.
+- **No project-wide defaults for guessed fields, for now.** `exclude=` per
+  model and the built-in title-like names stay. A setting excluding names
+  (`password`, `token`…) contradicts feature 4 — no field is left out by its
+  name — gives false safety (`secret_answer` passes), and changing it would
+  silently change what every model indexes. A later, non-breaking
+  possibility: a list of sensitive names that only warns, as a system check
+  next to feature 4's.
 
 ## Rewrite of the prototype
 
@@ -118,44 +196,36 @@ refactoring, not from the prototype.
   column stays loaded when `get_absolute_url()` or `str(instance)` may read
   any of them. The pipeline no longer duck-types extractors, and the
   single-field options (`title_field`, `language_field`, `url_field`) are
-  listed once.
-- [ ] **8. The output** — each document goes to an output that the project
-  supplies, instead of only being returned. The questions below are settled
-  before it starts.
+  listed once. Two cases are left open, with no test:
+  - `get_queryset()` must return a queryset of the registered model itself,
+    so the queryset of one of its proxy models is refused — although it
+    holds the same rows, under a class whose methods (`__str__`,
+    `get_absolute_url()`) may differ. Decide whether to accept it.
+  - A followed model whose default manager makes a nested
+    `select_related()` (`product__category`, two links deep) goes through
+    the prefetch that loads only its text columns. A quick check on the test
+    bench (`Offer`, followed from `Product`) ran in two queries with the
+    right text, but no test pins it down.
+- [ ] **8. The output** — `SyncPipeline(output=...)` hands the documents to
+  an output that the project supplies, as decided under "The output", above:
+  - the output's Protocol, importable from `django_model_rag`, with
+    `replace(groups)` and `prune(model_label, kept_keys)`, typed against
+    `NormalizedDocument`;
+  - `run()` sends the documents of each model in batches of groups, one
+    batch per chunk of the iterator, then prunes the model with the keys of
+    the sources that produced documents — so an instance that now produces
+    none is removed. A model whose run fails is not pruned;
+  - `run_instance()` sends its instance's group, even empty;
+  - a document whose source is not the instance it was extracted from fails
+    with a `TypeError` naming the extractor;
+  - to decide when the feature starts: what `run()` and `run_instance()`
+    return when they have an output, and whether they still work without
+    one.
 
 Then, in django-model-rag-demo, an integration test replays the prototype's
 demo scenario against the installed package: a product with its category, a
 product without a description, and a page whose content is spread across
 plugin models.
-
-### Open questions, before feature 8
-
-These decide the interface that the command, the signals and
-django-minimal-rag all depend on.
-
-- **The shape of the output.** A single callable taking a document cannot
-  later remove anything without an API break. A small object (a Protocol
-  with, say, an upsert and a delete) avoids it.
-- **The identity of a document.** An instance can produce several
-  documents, and they share one `source_key`. Either the key identifies the
-  group — the documents of an instance are replaced together — or each
-  document gets its own part. A custom extractor may also build a document
-  whose source is another instance (a plugin indexed as its page), which
-  nothing forbids yet: decide whether the pipeline should.
-- **Removal on save.** A saved instance that now produces fewer documents,
-  or none, must have the old ones removed, not only a deleted instance.
-- **Where the output comes from.** The command and the signals run outside
-  project code, so they need a configured destination (a setting, for
-  instance).
-- **A project-wide default language.** A model with no language source
-  gives `None` today. A setting (`DEFAULT_LANGUAGE`, or Django's
-  `LANGUAGE_CODE`) could fill it in, but `None` then no longer tells a
-  retrieval side that the language is unknown: decide whether the fallback
-  belongs here or in the output.
-- **Project-wide defaults for guessed fields.** The same setting could hold
-  names excluded from every guessed model (`password`, `token`…) and the
-  title-like names and their order, which `exclude=` and the built-in list
-  cover per model today.
 
 ## Synchronization
 
@@ -163,15 +233,21 @@ The prototype has none of this: the behaviors come from design, not from a
 reference.
 
 - [ ] **9. A management command, `sync_model_rag`**, that runs the pipeline
-  over every registered model. Open, to settle by this feature at the
+  over every registered model, into the output named by a setting (its
+  name and loading come with this feature; see "The output", above). Each
+  model's run ends with a `prune`, which removes what the signals missed: an
+  instance deleted by raw SQL, with the signals off, or before the package
+  was installed. Open: the documents of a model that is no longer
+  registered are pruned by no run. Open, to settle by this feature at the
   latest: does the package become a Django app that autodiscovers each
   app's `rag.py`, as `django.contrib.admin` does with `admin.py`? The
   command only sees the models registered by the time it runs; until then,
   each project imports its `rag.py` from `AppConfig.ready()`.
-- [ ] **10. Signals** — `post_save` re-extracts the saved instance;
-  `post_delete` removes its documents. Removal is new: the output needs a
-  way to delete by `source_key`, designed together with
-  django-minimal-rag's handling of updated and orphaned chunks. Open: text
+- [ ] **10. Signals** — `post_save` re-extracts the saved instance and
+  replaces its group, even empty; `post_delete` replaces it with an empty
+  group. Both build their output from the same setting as the command.
+  Open: whether they write at once or after the transaction commits
+  (`transaction.on_commit`). Open: text
   that comes from another model — through `follow`, or a parent that a
   custom extractor reads — goes stale when that model changes, unless the
   dependent instances are found and re-extracted. Also open: a proxy model
