@@ -2,6 +2,8 @@ from collections.abc import Iterator
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import QuerySet
+from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import (
     AlreadyRegistered,
@@ -206,6 +208,46 @@ def test_extractor_may_yield_its_documents_for_one_instance() -> None:
             source_pk=page.pk,
             title="Returns",
         ),
+    ]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_extractor_get_queryset_shapes_the_queryset_its_instances_are_read_from(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three pages with two text plugins each: without the prefetch, one query
+    # per page would show as more than two queries, and the reversed selects
+    # check that the pages still come in primary key order.
+    about = Page.objects.create(title="About us", slug="about-us")
+    contact = Page.objects.create(title="Contact", slug="contact")
+    visits = Page.objects.create(title="Visits", slug="visits")
+    TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    TextPlugin.objects.create(page=contact, body="Write to us.")
+    TextPlugin.objects.create(page=visits, body="Visits on Saturdays.")
+    TextPlugin.objects.create(page=about, body="Our workshop is in Lyon.")
+    TextPlugin.objects.create(page=contact, body="Or call us.")
+    TextPlugin.objects.create(page=visits, body="Book a week ahead.")
+
+    @rag.register_extractor(Page)
+    class PageExtractor(BaseExtractor[Page]):
+        def get_queryset(self, queryset: QuerySet[Page]) -> QuerySet[Page]:
+            return queryset.prefetch_related("text_plugins")
+
+        def extract(self, instance: Page) -> NormalizedDocument:
+            # sorted in Python, not order_by(): the plugins stay prefetched
+            plugins = sorted(instance.text_plugins.all(), key=lambda plugin: plugin.pk)
+            return self.build_document(
+                instance, text=" ".join(plugin.body for plugin in plugins)
+            )
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (about.pk, "We build chairs by hand. Our workshop is in Lyon."),
+        (contact.pk, "Write to us. Or call us."),
+        (visits.pk, "Visits on Saturdays. Book a week ahead."),
     ]
 
 
