@@ -3,6 +3,7 @@ import pytest
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     Category,
+    Page,
     Product,
     Review,
     Supplier,
@@ -108,3 +109,13 @@ def test_lookup_path_crossing_a_reverse_one_to_one_by_its_query_name() -> None:
     assert [document.text for document in documents] == [
         "Acme\n\nFine tools since 1920"
     ]
+
+
+@pytest.mark.django_db
+def test_lookup_path_through_a_missing_reverse_one_to_one_adds_nothing() -> None:
+    Page.objects.create(title="Home", slug="home")
+    rag.register(Page, fields=["title", "intro__body"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == ["Home"]
