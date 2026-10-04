@@ -71,6 +71,22 @@ def test_foreign_key_lookup_path_adds_each_instance_its_related_field_text() -> 
 
 
 @pytest.mark.django_db
+def test_lookup_path_naming_a_foreign_key_by_its_column_name_crosses_it() -> None:
+    # Like Product.objects.values("category_id__name"): category_id names the
+    # foreign key category by its column, and the path goes through it.
+    _create_product(name="Chair", category_name="Furniture")
+    _create_product(name="Hammer", category_name="Tools")
+    rag.register(Product, fields=["name", "category_id__name"])
+
+    documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Chair\n\nFurniture",
+        "Hammer\n\nTools",
+    ]
+
+
+@pytest.mark.django_db
 def test_one_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
     django_assert_num_queries: DjangoAssertNumQueries,
 ) -> None:
