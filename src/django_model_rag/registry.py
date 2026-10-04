@@ -78,6 +78,8 @@ def _require_content_field(model: type[Model], path: str) -> None:
             relation; or a link of ``path`` is not a relation.
     """
     *steps, field_name = path.split(LOOKUP_SEP)
+    if steps:
+        _require_models_ready(model)
     try:
         for step in steps:
             model = _model_through(model, step, path)
