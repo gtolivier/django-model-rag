@@ -396,3 +396,13 @@ class Leaflet(models.Model):
 class Memo(models.Model):
     title = models.CharField(max_length=200)
     locale = models.CharField(max_length=10, blank=True, null=True)  # noqa: DJ001 -- the test bench needs a language field whose value can be None
+
+
+# --- A language held under the conventional name ------------------------
+# A Notice keeps its language code, such as "fr", in its own field named
+# ``language``: the name a language field would be guessed by.
+
+
+class Notice(models.Model):
+    title = models.CharField(max_length=200)
+    language = models.CharField(max_length=10)

@@ -1,7 +1,7 @@
 import pytest
 
 from django_model_rag import SyncPipeline, rag
-from tests.testapp.models import Bulletin, Category, Leaflet, Memo
+from tests.testapp.models import Bulletin, Category, Leaflet, Memo, Notice
 
 
 @pytest.mark.django_db
@@ -55,4 +55,18 @@ def test_blank_or_null_language_gives_no_language() -> None:
     assert {document.text: document.language for document in documents} == {
         "Blank": None,
         "Null": None,
+    }
+
+
+@pytest.mark.django_db
+def test_own_field_named_language_gives_the_language_without_language_field() -> None:
+    Notice.objects.create(title="Bonjour", language="  fr  ")
+    Notice.objects.create(title="Hello", language="en")
+    rag.register(Notice, fields=["title"])
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Bonjour": "fr",
+        "Hello": "en",
     }
