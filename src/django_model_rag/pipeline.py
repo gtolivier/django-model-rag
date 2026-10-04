@@ -31,10 +31,16 @@ def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
 def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
     """Return, once each, the lookup paths among the fields ``extractor`` reads.
 
-    The fields read are those it declares, and its title field, if any.
+    The fields read are those it declares, its title field and its language
+    field, if any.
     """
     title_field: str | None = getattr(extractor, "title_field", None)
-    read = [*_declared_fields(extractor), *([title_field] if title_field else [])]
+    language_field: str | None = getattr(extractor, "language_field", None)
+    read = [
+        *_declared_fields(extractor),
+        *([title_field] if title_field else []),
+        *([language_field] if language_field else []),
+    ]
     return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
 
 
