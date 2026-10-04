@@ -730,6 +730,14 @@ def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
         rag.register(Product, follow="category")  # type: ignore[arg-type]
 
 
+def test_following_none_on_a_model_without_text_field_fails_on_its_type() -> None:
+    # StockLevel has no own text field: the type of follow must be refused
+    # before any guess of the fields could fail on their absence.
+    with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
+        # None is the slip under test: the type checker rightly rejects it.
+        rag.register(StockLevel, follow=None)  # type: ignore[arg-type]
+
+
 def test_following_a_relation_from_a_models_module_fails_and_points_to_appconfig_ready(
     tmp_path: Path,
 ) -> None:
