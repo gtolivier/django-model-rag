@@ -125,7 +125,10 @@ def _groups(
     """Group the documents of ``instances`` by source key."""
     groups: dict[str, list[NormalizedDocument]] = {}
     for instance in instances:
+        source_key = build_source_key(instance._meta.label_lower, instance.pk)
         for document in _instance_documents(instance, extractor):
+            if document.source_key != source_key:
+                raise _foreign_source(extractor, source_key)
             groups.setdefault(document.source_key, []).append(document)
     return groups
 
@@ -176,8 +179,6 @@ class SyncPipeline:
         extractor = rag.new_extractor(type(instance))
         groups = _groups([instance], extractor)
         source_key = build_source_key(instance._meta.label_lower, instance.pk)
-        if set(groups) - {source_key}:
-            raise _foreign_source(extractor, source_key)
         # an empty group still replaces what the output holds for the instance
         groups.setdefault(source_key, [])
         self._output.replace(groups)
