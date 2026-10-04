@@ -79,7 +79,8 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
 
     Raises:
         ImproperlyConfigured: a name to follow is not a relation accessor, it
-            is given twice, or its related model has no text field.
+            is given twice, or its related model is unknown (a generic foreign
+            key) or has no text field.
     """
     accessors = {
         field.get_accessor_name()
@@ -97,25 +98,25 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             message = f"{model.__name__}: relation {name!r} is followed twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
-        related = accessors[name].related_model
-        if related is None:
-            message = (
-                f"{model.__name__}: cannot follow {name!r}, "
-                "a generic foreign key has no single related model"
-            )
-            raise ImproperlyConfigured(message)
-        _require_related_text(model, name, related)
+        _require_related_text(model, name, accessors[name].related_model)
 
 
 def _require_related_text(
     model: type[Model], name: str, related: type[Model] | None
 ) -> None:
-    """Fail if ``related``, followed from ``model`` as ``name``, has no text.
+    """Fail unless ``related``, followed from ``model`` as ``name``, has text.
 
     Raises:
-        ImproperlyConfigured: ``related`` has no text field.
+        ImproperlyConfigured: ``related`` is unknown (``None``, for a generic
+            foreign key) or has no text field.
     """
-    if isinstance(related, type) and not text_fields(related):
+    if related is None:
+        message = (
+            f"{model.__name__}: cannot follow {name!r}, "
+            "a generic foreign key has no single related model"
+        )
+        raise ImproperlyConfigured(message)
+    if not text_fields(related):
         message = (
             f"{model.__name__}: cannot follow {name!r}, "
             f"{related.__name__} has no text field"
