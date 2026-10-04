@@ -3,16 +3,87 @@
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
-from django.db.models import Model
+from django.db.models import Field, ForeignObjectRel, Model
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
-from django_model_rag.registry import rag
+from django_model_rag.registry import rag, relations_by_accessor
+
+# iterator() prefetches per chunk: this many instances share one query
+_CHUNK_SIZE = 1000
 
 
-def _instances(model: type[Model]) -> Iterator[Model]:
-    """Iterate over ``model``'s instances, in primary key order."""
-    return model._default_manager.order_by("pk").iterator()
+def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
+    """Return the names of the relations ``extractor`` follows, if any."""
+    followed: Sequence[str] = getattr(extractor, "follow", ())
+    return followed
+
+
+# quoted: Django's Field is generic for the type checker only, and before
+# Python 3.14 an annotation is evaluated when the function is defined
+def _is_selected(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
+    """Tell whether ``relation`` leads to a single object, read in the same query.
+
+    These are the foreign keys and the one-to-one relations, forward or reverse.
+    """
+    if isinstance(relation, ForeignObjectRel):
+        return bool(relation.one_to_one)
+    # a generic foreign key leads to a single object too, but has no column
+    # select_related() could join on
+    return bool(relation.concrete and (relation.many_to_one or relation.one_to_one))
+
+
+def _is_prefetched(relation: "Field[Any, Any] | ForeignObjectRel") -> bool:
+    """Tell whether ``relation`` leads to many objects, read in one more query.
+
+    These are the reverse foreign keys, the many-to-many relations, forward or
+    reverse, and the generic relations.
+    """
+    return bool(relation.one_to_many or relation.many_to_many)
+
+
+def _sorted_relations(
+    model: type[Model], followed: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """Sort the relations ``followed`` from ``model`` by how they are read.
+
+    Returns:
+        The names to give select_related(), then those to give
+        prefetch_related().
+    """
+    relations = relations_by_accessor(model)
+    selected: list[str] = []
+    prefetched: list[str] = []
+    for accessor in followed:
+        relation = relations.get(accessor)
+        if relation is None:
+            continue
+        if _is_selected(relation):
+            # select_related() names a reverse relation by its query name,
+            # which related_query_name may set apart from its accessor
+            selected.append(relation.name)
+        elif _is_prefetched(relation):
+            prefetched.append(accessor)
+    return selected, prefetched
+
+
+def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
+    """Iterate over ``model``'s instances, in primary key order.
+
+    The followed foreign keys and one-to-one relations come with each instance,
+    in the same query, and the followed reverse foreign keys, many-to-many
+    relations, forward or reverse, and generic relations, in one more query
+    each for all the instances.
+    """
+    queryset = model._default_manager.order_by("pk")
+    selected, prefetched = _sorted_relations(model, _followed(extractor))
+    # never select_related() without a field: it would follow every non-null
+    # foreign key, followed or not
+    if selected:
+        queryset = queryset.select_related(*selected)
+    if prefetched:
+        queryset = queryset.prefetch_related(*prefetched)
+    return queryset.iterator(chunk_size=_CHUNK_SIZE)
 
 
 def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError:
@@ -54,7 +125,7 @@ def _model_documents(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
     """Build the documents of ``model``'s instances, in primary key order."""
-    for instance in _instances(model):
+    for instance in _instances(model, extractor):
         yield from _instance_documents(instance, extractor)
 
 

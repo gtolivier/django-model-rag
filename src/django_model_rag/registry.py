@@ -4,67 +4,39 @@ import inspect
 from collections.abc import Callable
 from typing import Any, TypeAlias
 
+from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import CharField, Field, Model, TextField
+from django.db.models import Field, ForeignObjectRel, Model
 
-from django_model_rag.extractors import BaseExtractor, DeclaredFieldsExtractor, M
+from django_model_rag.extractors import (
+    BaseExtractor,
+    DeclaredFieldsExtractor,
+    M,
+    text_fields,
+)
 
 FieldNames: TypeAlias = list[str] | tuple[str, ...]
 """The field names a model declares: a list or a tuple, never a bare string."""
 
 
-_TITLE_LIKE_NAMES = ("title", "name", "heading", "label")
-"""The names of the guessed fields that come first, in this order."""
-
-
-def _title_rank(name: str) -> int:
-    """Rank ``name``: title-like names first, in order, then the others."""
-    if name in _TITLE_LIKE_NAMES:
-        return _TITLE_LIKE_NAMES.index(name)
-    return len(_TITLE_LIKE_NAMES)
-
-
-# quoted: Django's Field is generic for the type checker only, and before
-# Python 3.14 an annotation is evaluated when the function is defined
-def _is_text_field(field: "Field[Any, Any]") -> bool:
-    """Tell whether ``field`` holds text content."""
-    # a primary key is an identifier, not content
-    if field.primary_key:
-        return False
-    # a CharField subclass is a kind of field of its own, such as a code,
-    # an identifier, an address or a link, not content
-    return type(field) is CharField or isinstance(field, TextField)
-
-
-def _text_fields(model: type[Model]) -> list[str]:
-    """List the names of ``model``'s text fields, title-like names first.
-
-    The others follow in declaration order.
-    """
-    names = [
-        field.name
-        # unlike get_fields(), concrete_fields needs no loaded app registry,
-        # so a models.py can register its models while Django loads the apps;
-        # it is not in the documented meta API, but Django itself relies on it
-        for field in model._meta.concrete_fields
-        if _is_text_field(field)
-    ]
-    return sorted(names, key=_title_rank)  # stable sort
-
-
-def _guessed_fields(model: type[Model], exclude: FieldNames) -> list[str]:
+def _guessed_fields(
+    model: type[Model], exclude: FieldNames, follow: FieldNames
+) -> list[str]:
     """List ``model``'s text fields, except those named in ``exclude``.
 
+    A model that follows relations may be left with no text field of its
+    own: their text is enough to make a document.
+
     Raises:
-        ImproperlyConfigured: ``model`` has no text field, or ``exclude``
-            names all of them.
+        ImproperlyConfigured: ``model`` follows no relation and has no text
+            field, or none left once ``exclude`` is applied.
     """
-    names = _text_fields(model)
-    if not names:
+    names = text_fields(model)
+    if not names and not follow:
         message = f"{model.__name__} has no text field to guess"
         raise ImproperlyConfigured(message)
     guessed = [name for name in names if name not in exclude]
-    if not guessed:
+    if not guessed and not follow:
         message = f"{model.__name__} has no text field left to extract"
         raise ImproperlyConfigured(message)
     return guessed
@@ -84,6 +56,86 @@ def _require_content_field(model: type[Model], name: str) -> None:
         raise ImproperlyConfigured(message) from error
     if field.is_relation:
         message = f"{model.__name__}.{name} is a relation, not a content field"
+        raise ImproperlyConfigured(message)
+
+
+def _require_models_ready(model: type[Model]) -> None:
+    """Fail unless every model is loaded, as following ``model``'s relations needs.
+
+    Raises:
+        ImproperlyConfigured: models are still loading (``model`` is
+            registered from a models module, say).
+    """
+    if not apps.models_ready:
+        message = (
+            f"{model.__name__}: cannot follow relations while models are loading; "
+            "register from a rag.py module imported in AppConfig.ready()"
+        )
+        raise ImproperlyConfigured(message)
+
+
+# quoted: Django's Field is generic for the type checker only, and before
+# Python 3.14 an annotation is evaluated when the function is defined
+def relations_by_accessor(
+    model: type[Model],
+) -> "dict[str, Field[Any, Any] | ForeignObjectRel]":
+    """Map each of ``model``'s relations, forward or reverse, by its accessor.
+
+    A forward relation is its field, under its name; a reverse one is its
+    relation object, under the accessor ``related_name`` may set.
+    """
+    relations: dict[str, Field[Any, Any] | ForeignObjectRel] = {}
+    for field in model._meta.get_fields():
+        if not field.is_relation:
+            continue
+        if not isinstance(field, ForeignObjectRel):
+            relations[field.name] = field
+        elif (accessor := field.get_accessor_name()) is not None:
+            relations[accessor] = field
+    return relations
+
+
+def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
+    """Fail unless ``names`` names, once each, relations of ``model`` with text.
+
+    Raises:
+        ImproperlyConfigured: a name to follow is not a relation accessor, it
+            is given twice, or its related model is unknown (a generic foreign
+            key) or has no text field.
+    """
+    accessors = relations_by_accessor(model)
+    seen: set[str] = set()
+    for name in names:
+        if name not in accessors:
+            message = f"{model.__name__}: cannot follow {name!r}, not a relation"
+            raise ImproperlyConfigured(message)
+        if name in seen:
+            message = f"{model.__name__}: relation {name!r} is followed twice"
+            raise ImproperlyConfigured(message)
+        seen.add(name)
+        _require_related_text(model, name, accessors[name].related_model)
+
+
+def _require_related_text(
+    model: type[Model], name: str, related: type[Model] | None
+) -> None:
+    """Fail unless ``related``, followed from ``model`` as ``name``, has text.
+
+    Raises:
+        ImproperlyConfigured: ``related`` is unknown (``None``, for a generic
+            foreign key) or has no text field.
+    """
+    if related is None:
+        message = (
+            f"{model.__name__}: cannot follow {name!r}, "
+            "a generic foreign key has no single related model"
+        )
+        raise ImproperlyConfigured(message)
+    if not text_fields(related):
+        message = (
+            f"{model.__name__}: cannot follow {name!r}, "
+            f"{related.__name__} has no text field"
+        )
         raise ImproperlyConfigured(message)
 
 
@@ -229,35 +281,46 @@ class Registry:
         fields: FieldNames | None = None,
         title_field: str | None = None,
         exclude: FieldNames = (),
+        follow: FieldNames = (),
     ) -> None:
         """Register ``model`` with the fields to extract.
 
         Without ``fields``, the model's text fields are extracted, except
         those named in ``exclude``.
         ``title_field`` names the field whose value is the document title.
+        The text of the relations named in ``follow`` comes after the fields.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
-            ImproperlyConfigured: ``fields`` or ``exclude`` is not a list or
-                a tuple, no field is declared, a field is declared or excluded
-                twice, or a field (``title_field`` and ``exclude`` included) is
-                not one of the model's or is a relation, ``exclude`` is
-                combined with ``fields``, or, without ``fields``, the model
-                has no text field or ``exclude`` names all of them.
+            ImproperlyConfigured: ``fields``, ``exclude`` or ``follow`` is not
+                a list or a tuple; no field is declared, a field is declared
+                or excluded twice, or a field (``title_field`` and ``exclude``
+                included) is not one of the model's or is a relation;
+                ``exclude`` is combined with ``fields``; without ``fields``
+                and ``follow``, the model has no text field, or none left once
+                ``exclude`` is applied; a name in ``follow`` is not one of the
+                model's relation accessors, is given twice, or leads to a
+                model with no text field; or relations are followed while
+                models are loading.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
+        _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
             _require_distinct_content_fields(model, exclude, "excluded")
-            fields = _guessed_fields(model, exclude)
+            fields = _guessed_fields(model, exclude, follow)
         else:
             _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
+        if follow:
+            _require_models_ready(model)
+            _require_followable_relations(model, follow)
         declared = tuple(fields)
+        followed = tuple(follow)
         self._registrations[model] = lambda: DeclaredFieldsExtractor(
-            declared, title_field
+            declared, title_field, followed
         )
 
     def register_extractor(

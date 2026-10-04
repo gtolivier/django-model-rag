@@ -5,7 +5,10 @@ they were, not re-derived test-first. Some deliberately have no ``__str__``,
 as in the prototype.
 """
 
+from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
+from django.contrib.contenttypes.models import ContentType
 from django.db import models
+from django.db.models.manager import BaseManager
 
 # --- Simple case: an ordinary Django model -----------------------------
 
@@ -175,6 +178,22 @@ class StockLevel(models.Model):
     )
 
 
+# --- No text at all, but a string form ----------------------------------
+# Only a number, a date and a relation, like StockLevel, but with a __str__
+# computed from the instance's own values.
+
+
+class Delivery(models.Model):
+    quantity = models.IntegerField()
+    delivered_on = models.DateField()
+    product = models.ForeignKey(
+        Product, related_name="deliveries", on_delete=models.CASCADE
+    )
+
+    def __str__(self) -> str:
+        return f"{self.quantity} delivered on {self.delivered_on.isoformat()}"
+
+
 # --- Only CharField subclasses -----------------------------------------
 # A slug, an e-mail address and a URL, but no plain CharField or TextField:
 # text-ish fields, none of them content.
@@ -184,3 +203,149 @@ class ContactCard(models.Model):
     handle = models.SlugField()
     email = models.EmailField()
     website = models.URLField()
+
+
+# --- A related model with several text fields ---------------------------
+# A Lesson points to a Topic whose title comes after its summary in
+# declaration order, next to a slug; the Topic's string form is its slug,
+# not its text.
+
+
+class Topic(models.Model):
+    summary = models.TextField()
+    title = models.CharField(max_length=200)
+    slug = models.SlugField()
+
+    def __str__(self) -> str:
+        return self.slug
+
+
+class Lesson(models.Model):
+    title = models.CharField(max_length=200)
+    topic = models.ForeignKey(Topic, related_name="lessons", on_delete=models.CASCADE)
+
+
+# --- A related model with a field with choices --------------------------
+# A Review points to a Product, whose condition is a text field with choices:
+# its stored value and its label differ.
+
+
+class Review(models.Model):
+    title = models.CharField(max_length=200)
+    product = models.ForeignKey(
+        Product, related_name="reviews", on_delete=models.CASCADE
+    )
+
+
+# --- An optional relation -----------------------------------------------
+# A Workshop may point to a Topic, or to nothing: its foreign key is nullable.
+
+
+class Workshop(models.Model):
+    title = models.CharField(max_length=200)
+    topic = models.ForeignKey(
+        Topic,
+        related_name="workshops",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
+# --- A many-to-many relation --------------------------------------------
+# A Course covers several Topics, and a Topic may belong to several Courses.
+
+
+class Course(models.Model):
+    title = models.CharField(max_length=200)
+    topics = models.ManyToManyField(Topic, related_name="courses")
+
+
+# --- A reverse relation without a related_name --------------------------
+# A Remark points to a Note through a foreign key without related_name: the
+# Note reaches its Remarks by the default accessor ``remark_set``, while the
+# query name of the relation is ``remark``.
+
+
+class Remark(models.Model):
+    note = models.ForeignKey(Note, on_delete=models.CASCADE)
+    body = models.TextField()
+
+
+# --- A one-to-one relation ----------------------------------------------
+# A Page may have one PageIntro, or none: the Page reaches it by the reverse
+# one-to-one ``intro``, which raises when there is no PageIntro.
+
+
+class PageIntro(models.Model):
+    page = models.OneToOneField(Page, related_name="intro", on_delete=models.CASCADE)
+    body = models.TextField()
+
+
+# --- A one-to-one relation with its own query name ----------------------
+# A Supplier may have one SupplierProfile, or none: the Supplier reaches it by
+# the reverse one-to-one accessor ``profile``, while the query name of the
+# relation, set by related_query_name, is ``supplier_profile``.
+
+
+class Supplier(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class SupplierProfile(models.Model):
+    supplier = models.OneToOneField(
+        Supplier,
+        related_name="profile",
+        related_query_name="supplier_profile",
+        on_delete=models.CASCADE,
+    )
+    body = models.TextField()
+
+
+# --- Multi-table inheritance --------------------------------------------
+# A FeaturedProduct is a Product with a tagline of its own: it inherits the
+# Product's fields and relations, and Django links it to its parent row by
+# an automatic one-to-one field, ``product_ptr``.
+
+
+class FeaturedProduct(Product):
+    tagline = models.CharField(max_length=200)
+
+
+# --- A related model whose manager is not a Manager ---------------------
+# A Step's default manager is built with BaseManager.from_queryset(), as some
+# third-party apps do: its class derives from BaseManager, not from Manager. A
+# Recipe reaches its Steps by the reverse foreign key ``steps``.
+
+
+class StepQuerySet(models.QuerySet["Step"]):
+    """Stand in for a third-party app's own queryset."""
+
+
+class Recipe(models.Model):
+    title = models.CharField(max_length=200)
+
+
+class Step(models.Model):
+    recipe = models.ForeignKey(Recipe, related_name="steps", on_delete=models.CASCADE)
+    body = models.TextField()
+
+    objects = BaseManager.from_queryset(StepQuerySet)()
+
+
+# --- A generic relation -------------------------------------------------
+# A Tag may be attached to an instance of any model, through a generic foreign
+# key built from a content type and an object id. A Photo reaches its Tags by
+# the generic relation ``tags``.
+
+
+class Tag(models.Model):
+    label = models.CharField(max_length=100)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
+    object_id = models.PositiveIntegerField()
+    content_object = GenericForeignKey("content_type", "object_id")
+
+
+class Photo(models.Model):
+    title = models.CharField(max_length=200)
+    tags = GenericRelation(Tag)
