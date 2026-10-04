@@ -91,6 +91,9 @@ def _field_text(instance: Model, name: str) -> str:
 
     A field with choices reads as its label.
     """
+    *path, name = name.split("__")
+    for step in path:
+        instance = getattr(instance, step)
     value = getattr(instance, name)
     # Django adds get_<name>_display only to fields that have choices
     if getattr(instance._meta.get_field(name), "choices", None):
