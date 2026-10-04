@@ -222,6 +222,18 @@ def _require_distinct_content_fields(
         _require_content_field(model, name)
 
 
+def _require_own_fields(model: type[Model], names: FieldNames) -> None:
+    """Fail unless each of ``names`` is a field of ``model`` itself.
+
+    Raises:
+        ImproperlyConfigured: a name is a lookup path through a relation.
+    """
+    for name in names:
+        if LOOKUP_SEP in name:
+            message = f"{model.__name__}: {name!r} is not an own field of the model"
+            raise ImproperlyConfigured(message)
+
+
 def _require_fields_or_exclude(
     model: type[Model], fields: FieldNames | None, exclude: FieldNames
 ) -> None:
@@ -334,20 +346,15 @@ class Registry:
                 and ``follow``, the model has no text field, or none left once
                 ``exclude`` is applied; a name in ``follow`` is not one of the
                 model's relation accessors, is given twice, or leads to a
-                model with no text field; or relations are followed while
-                models are loading.
+                model with no text field; a name in ``exclude`` is a lookup
+                path; or relations are followed while models are loading.
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
         _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
-            for name in exclude:
-                if LOOKUP_SEP in name:
-                    message = (
-                        f"{model.__name__}: {name!r} is not an own field of the model"
-                    )
-                    raise ImproperlyConfigured(message)
+            _require_own_fields(model, exclude)
             _require_distinct_content_fields(model, exclude, "excluded")
             fields = _guessed_fields(model, exclude, follow)
         else:
