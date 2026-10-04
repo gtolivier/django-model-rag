@@ -36,10 +36,12 @@ def _lookup_paths(extractor: BaseExtractor[Any]) -> list[str]:
     """
     title_field: str | None = getattr(extractor, "title_field", None)
     language_field: str | None = getattr(extractor, "language_field", None)
+    url_field: str | None = getattr(extractor, "url_field", None)
     read = [
         *_declared_fields(extractor),
         *([title_field] if title_field else []),
         *([language_field] if language_field else []),
+        *([url_field] if url_field else []),
     ]
     return [name for name in dict.fromkeys(read) if LOOKUP_SEP in name]
 
