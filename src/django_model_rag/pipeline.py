@@ -80,6 +80,19 @@ def _followed_many_to_many(model: type[Model], followed: Sequence[str]) -> list[
     return [*forward, *reverse]
 
 
+def _followed_generic_relations(
+    model: type[Model], followed: Sequence[str]
+) -> list[str]:
+    """List the generic relations of ``model`` among ``followed``."""
+    # GenericRelation is not imported: loading it needs the content types app
+    # to be installed, which the models of a project may not have
+    return [
+        field.name
+        for field in model._meta.private_fields
+        if field.is_relation and field.one_to_many and field.name in followed
+    ]
+
+
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
@@ -96,6 +109,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     prefetched = [
         *_followed_reverse_foreign_keys(model, followed),
         *_followed_many_to_many(model, followed),
+        *_followed_generic_relations(model, followed),
     ]
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)
