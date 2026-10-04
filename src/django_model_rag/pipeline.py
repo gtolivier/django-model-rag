@@ -14,6 +14,7 @@ from django_model_rag.extractors import (
     DeclaredFieldsExtractor,
     PathLink,
     path_links,
+    text_fields,
 )
 from django_model_rag.registry import rag, relations_by_accessor
 
@@ -139,6 +140,20 @@ def _selected_path_prefixes(
     return [_query_path(run) for run in runs if run]
 
 
+def _followed_read(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> dict[str, tuple[type[Model], set[str]]]:
+    """Map each followed selected relation to its model and its text fields."""
+    relations = relations_by_accessor(model)
+    read: dict[str, tuple[type[Model], set[str]]] = {}
+    for accessor in _followed(extractor):
+        relation = relations.get(accessor)
+        owner = relation.related_model if relation is not None else None
+        if relation is not None and owner is not None and _is_selected(relation):
+            read[relation.name] = (owner, set(text_fields(owner)))
+    return read
+
+
 def _read_by_prefix(
     model: type[Model], extractor: BaseExtractor[Any]
 ) -> dict[str, tuple[type[Model], set[str]]]:
@@ -146,13 +161,9 @@ def _read_by_prefix(
 
     The value is the related model, and the names of its fields the paths read.
     """
-    followed = set(_followed(extractor))
-    read: dict[str, tuple[type[Model], set[str]]] = {}
+    read = _followed_read(model, extractor)
     for path in _lookup_paths(extractor):
         run = _selected_run(model, path)
-        # a followed relation is read in full
-        if run and run[0].accessor in followed:
-            continue
         names = path.split(LOOKUP_SEP)
         for depth, link in enumerate(run, start=1):
             owner = link.relation.related_model
