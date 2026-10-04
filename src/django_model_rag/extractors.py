@@ -7,6 +7,7 @@ from typing import Any, Generic, TypeVar
 from django.core.exceptions import ObjectDoesNotExist
 from django.db.models import CharField, Field, Model, TextField
 from django.db.models.constants import LOOKUP_SEP
+from django.db.models.fields.reverse_related import ForeignObjectRel
 from django.db.models.manager import BaseManager
 
 from django_model_rag.documents import NormalizedDocument
@@ -95,7 +96,14 @@ def _field_text(instance: Model, name: str) -> str:
     """
     *path, name = name.split(LOOKUP_SEP)
     for step in path:
-        instance = getattr(instance, step)
+        relation = instance._meta.get_field(step)
+        # a reverse relation is reached by its accessor, not its query name
+        accessor = (
+            relation.get_accessor_name()
+            if isinstance(relation, ForeignObjectRel)
+            else None
+        )
+        instance = getattr(instance, accessor or step)
         if instance is None:
             return ""
     value = getattr(instance, name)
