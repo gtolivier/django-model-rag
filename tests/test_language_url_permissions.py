@@ -204,3 +204,11 @@ def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> Non
 
     with pytest.raises(ImproperlyConfigured, match="notice__nonexistent"):
         rag.register(Excerpt, fields=["title"], language_field="notice__nonexistent")
+
+
+def test_language_field_naming_a_relation_fails_at_registration_naming_it() -> None:
+    with pytest.raises(ImproperlyConfigured, match="notice"):
+        rag.register(Excerpt, fields=["title"], language_field="notice")
+
+    with pytest.raises(ImproperlyConfigured, match="language"):
+        rag.register(Announcement, fields=["title"], language_field="language")
