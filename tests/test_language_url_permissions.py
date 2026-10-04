@@ -445,6 +445,29 @@ def test_permission_not_of_the_form_app_label_codename_fails_naming_it(
         )
 
 
+@pytest.mark.parametrize(
+    "permission",
+    [
+        # Its text form, "1.5", looks like app_label.codename.
+        pytest.param(1.5, id="float-looking-well-formed"),
+        pytest.param(None, id="none"),
+        pytest.param(42, id="int"),
+    ],
+)
+def test_permission_not_a_string_fails_at_registration_naming_permissions(
+    permission: object,
+) -> None:
+    # After a well-formed one: every permission is checked, not only the first.
+    with pytest.raises(ImproperlyConfigured, match=r"\bpermissions\b"):
+        rag.register(
+            Category,
+            fields=["name"],
+            # A non-string item is the slip under test: the type checker
+            # rightly rejects it.
+            permissions=["testapp.view_category", permission],  # type: ignore[list-item]
+        )
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
