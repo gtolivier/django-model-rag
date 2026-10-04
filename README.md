@@ -54,8 +54,83 @@ from all its editable fields; both start from an implicit set, and here
 that set is the guessed text fields. A model with nothing to guess, or whose
 `exclude` leaves nothing, fails at registration with `ImproperlyConfigured`.
 
-A model can be registered in its own `models.py`: guessing reads only that
-model's fields, not the app registry, which Django is still loading then.
+A model without `follow` can be registered in its own `models.py`: guessing
+reads only that model's fields, not the app registry, which Django is still
+loading then. Following relations needs every model loaded (see below).
+
+## Where to register
+
+Register your models in a `rag.py` module of your app, imported from the
+app's `AppConfig.ready()`, when every model is loaded:
+
+```python
+# shop/apps.py
+from django.apps import AppConfig
+
+
+class ShopConfig(AppConfig):
+    name = "shop"
+
+    def ready(self) -> None:
+        from . import rag  # noqa: F401 -- imported for its registrations
+```
+
+```python
+# shop/rag.py
+from django.contrib.auth import get_user_model
+
+from django_model_rag import rag
+
+from .models import Page, Product
+
+rag.register(Product, follow=["category"])
+rag.register(Page, follow=["text_plugins", "accordion_items"])
+# A model from an app you do not own, registered from your own app.
+rag.register(get_user_model(), fields=["first_name", "last_name"])
+```
+
+## Following relations
+
+`follow=[...]` appends the text of related objects to the text of the
+model's own fields:
+
+- **Names** are relation accessors, as in `prefetch_related`: a foreign key,
+  a one-to-one or a many-to-many field by its name, a reverse relation by
+  its `related_name`, or by its default accessor `<model>_set` when it has
+  none (`remark_set`, not the query name `remark`).
+- **What a related object brings:** its guessed text fields, by the rules
+  above, title-like ones first. `fields` and `exclude` apply to the model's
+  own fields only, never to the related objects'.
+- **In which order:** the model's own fields, then each relation in the
+  order of `follow`, its objects in primary key order; every piece is
+  separated by a blank line.
+- **Nothing to follow adds nothing:** a null foreign key, a missing reverse
+  one-to-one, an empty relation, or related objects whose text fields are
+  blank.
+- **One level only.** A path such as `category__name` is refused: only
+  relations of the model itself are followed.
+- **Title.** A model with no text field of its own — or whose `exclude`
+  leaves none — can be registered when it follows relations; its document
+  title is `str(instance)`. A model whose own fields are blank but whose
+  related text is not still gets a document, with a blank title.
+
+Errors are raised at registration, with `ImproperlyConfigured`: `follow`
+that is not a list or a tuple, a name that is not a relation accessor of the
+model, a relation followed twice, a related model with no text field, and
+`follow` while models are still loading.
+
+**A related object brings all its guessed text fields, sensitive ones
+included.** `follow=["author"]` towards Django's `User` brings its
+`password` field — the hash is a plain `CharField` — along with the name and
+the e-mail address. `exclude` cannot leave it out, since it only applies to
+the model's own fields. Follow only relations to models whose whole text you
+want indexed; for the others, write a custom extractor.
+
+**Queries.** `SyncPipeline().run()` reads foreign keys and one-to-one
+relations in the same query as the instances (`select_related`), and each
+reverse foreign key or many-to-many relation in one more query
+(`prefetch_related`), whatever the number of instances; instances are read
+in chunks of 1000. `run_instance` makes one query per followed relation.
 
 ## Requirements
 

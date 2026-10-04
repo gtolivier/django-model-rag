@@ -74,17 +74,23 @@ refactoring, not from the prototype.
   system check (a warning, not an error): `exclude` naming a field that is
   not guessed, which excludes nothing — a CharField subclass, say, that the
   project believes it is leaving out.
-- [ ] **5. Followed relations** — `follow=[...]` adds the text of related
-  objects, across foreign keys, reverse relations and many-to-many
-  relations; a missing or empty relation adds nothing. The instance's
-  string form becomes the title when the model has no field of its own to
-  take it from, which only `follow` makes possible. Open, to settle
-  when it starts: lookup paths in `fields` (`fields=["name",
-  "category__name"]`, as in `list_display` or `values()`), which pick one
-  field of the related object, in a chosen order, where `follow=` takes all
-  its text. The two could coexist. Until then, a relation in `fields` is an
-  error.
-- [ ] **6. Language, URL and permissions** — from configured fields
+- [x] **5. Followed relations** — `follow=[...]` adds the guessed text of
+  related objects, one level deep, across foreign keys, one-to-one, reverse
+  and many-to-many relations, named by their accessors as in
+  `prefetch_related`; a missing or empty relation adds nothing. The
+  instance's string form becomes the title when the model has no field of
+  its own to take it from, which only `follow` makes possible. Errors are
+  raised at registration; following needs every model loaded, so such
+  registrations go in a `rag.py` imported from `AppConfig.ready()`.
+  `run()` reads the relations with `select_related` / `prefetch_related`,
+  in a fixed number of queries.
+- [ ] **6. Lookup paths in `fields`** — `fields=["name", "category__name"]`,
+  as in `list_display` or `values()`: one field of a related object, in a
+  chosen order, where `follow=` takes all its text — and a way to leave out
+  a related object's sensitive field, such as `User.password`, which
+  `follow=` brings along. The two coexist. Until then, a relation in
+  `fields` is an error.
+- [ ] **7. Language, URL and permissions** — from configured fields
   (`language_field`, `url_field`) or guessed (common attribute names,
   `get_absolute_url`), with their fallbacks; permissions passed through.
   Once this feature settles everything the pipeline reads from an instance,
@@ -94,7 +100,7 @@ refactoring, not from the prototype.
   optional hook to shape their queryset (`select_related`,
   `prefetch_related`, iterated with `iterator(chunk_size=...)`) would avoid
   a query per instance.
-- [ ] **7. The output** — each document goes to an output that the project
+- [ ] **8. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.
 
@@ -103,7 +109,7 @@ demo scenario against the installed package: a product with its category, a
 product without a description, and a page whose content is spread across
 plugin models.
 
-### Open questions, before feature 7
+### Open questions, before feature 8
 
 These decide the interface that the command, the signals and
 django-minimal-rag all depend on.
@@ -132,9 +138,13 @@ django-minimal-rag all depend on.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-- [ ] **8. A management command, `sync_model_rag`**, that runs the pipeline
-  over every registered model.
-- [ ] **9. Signals** — `post_save` re-extracts the saved instance;
+- [ ] **9. A management command, `sync_model_rag`**, that runs the pipeline
+  over every registered model. Open, to settle by this feature at the
+  latest: does the package become a Django app that autodiscovers each
+  app's `rag.py`, as `django.contrib.admin` does with `admin.py`? The
+  command only sees the models registered by the time it runs; until then,
+  each project imports its `rag.py` from `AppConfig.ready()`.
+- [ ] **10. Signals** — `post_save` re-extracts the saved instance;
   `post_delete` removes its documents. Removal is new: the output needs a
   way to delete by `source_key`, designed together with
   django-minimal-rag's handling of updated and orphaned chunks. Open: text
