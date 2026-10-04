@@ -252,6 +252,44 @@ def test_extractor_get_queryset_shapes_the_queryset_its_instances_are_read_from(
 
 
 @pytest.mark.django_db
+def test_extractor_get_queryset_may_select_the_related_objects_extract_reads(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three products in two categories: without the join, reading each
+    # product's category would show as more than one query.
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=tools
+    )
+    rake = Product.objects.create(
+        name="Rake", description="Gathers leaves.", price="14.50", category=garden
+    )
+    saw = Product.objects.create(
+        name="Saw", description="Cuts planks.", price="19.90", category=tools
+    )
+
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def get_queryset(self, queryset: QuerySet[Product]) -> QuerySet[Product]:
+            return queryset.select_related("category")
+
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.name}, filed under {instance.category.name}."
+            )
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [(document.source_pk, document.text) for document in documents] == [
+        (hammer.pk, "Hammer, filed under Tools."),
+        (rake.pk, "Rake, filed under Garden."),
+        (saw.pk, "Saw, filed under Tools."),
+    ]
+
+
+@pytest.mark.django_db
 def test_run_instance_produces_the_extracted_documents_of_that_instance_only() -> None:
     faq = Page.objects.create(title="FAQ", slug="faq")
     AccordionItem.objects.create(
