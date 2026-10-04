@@ -88,7 +88,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
 
     The followed foreign keys and one-to-one relations come with each instance,
     in the same query, and the followed reverse foreign keys and many-to-many
-    fields in one more query each for all the instances.
+    relations, forward or reverse, in one more query each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
     # select_related() without a field is deprecated
