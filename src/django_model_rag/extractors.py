@@ -220,7 +220,8 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         The text of the relations in ``follow`` comes after the fields.
         ``language_field`` (if any) names the field holding the language: an
         own field, or a lookup path such as ``page__language``.
-        ``language`` (if any) is the constant language of every document.
+        ``language`` (if any), stripped, is the constant language of every
+        document.
         ``url_field`` (if any) names the field whose stripped value is the
         document url: an own field, or a lookup path such as
         ``bookmark__link``.
@@ -230,12 +231,13 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         self.title_field = title_field
         self.follow = follow
         self.language_field = language_field
-        self.language = language
+        self.language = None if language is None else language.strip()
         self.url_field = url_field
         self.permissions = permissions
-        # guessed once per related model, and resolved once per lookup path;
-        # the registry builds a fresh extractor for each run, so a redefined
-        # model is never served stale
+        # guessed once per model, and resolved once per lookup path; the
+        # registry builds a fresh extractor for each run, so a redefined model
+        # is never served stale
+        self._guessed_language_fields: dict[type[Model], str | None] = {}
         self._related_text_fields: dict[type[Model], list[str]] = {}
         self._path_accessors: dict[tuple[type[Model], str], list[str]] = {}
 
@@ -274,17 +276,21 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         That field is the declared one, or one guessed by name.
         """
         if self.language is not None:
-            return self.language.strip()
-        if self.language_field and LOOKUP_SEP in self.language_field:
-            path_end = self._path_end(instance, self.language_field)
-            if path_end is None:
-                return None
-            owner, field_name = path_end
-            return _stripped_text(getattr(owner, field_name)) or None
-        name = language_field_name(type(instance), self.language_field)
-        if name is None:
+            return self.language
+        path = self.language_field or self._guessed_language_field(type(instance))
+        if path is None:
             return None
-        return _stripped_text(getattr(instance, name)) or None
+        path_end = self._path_end(instance, path)
+        if path_end is None:
+            return None
+        owner, name = path_end
+        return _stripped_text(getattr(owner, name)) or None
+
+    def _guessed_language_field(self, model: type[Model]) -> str | None:
+        """Name the own field of ``model`` guessed as the language, on first use."""
+        if model not in self._guessed_language_fields:
+            self._guessed_language_fields[model] = language_field_name(model, None)
+        return self._guessed_language_fields[model]
 
     def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
