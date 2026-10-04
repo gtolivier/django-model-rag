@@ -589,6 +589,42 @@ def test_followed_reverse_many_to_many_appends_the_related_texts_in_pk_order() -
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("unordered_selects_reversed")
+def test_followed_reverse_many_to_many_is_read_in_one_query_for_all_instances(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three topics in two courses each, some courses shared: one query per
+    # topic would show as more than two queries, and the courses are linked in
+    # an order other than their primary keys', so neither the link order nor
+    # the reversed selects can give each topic its texts in pk order.
+    joinery = Topic.objects.create(
+        summary="Joints and finishes.", title="Joinery", slug="joinery"
+    )
+    turning = Topic.objects.create(
+        summary="Bowls and spindles.", title="Turning", slug="turning"
+    )
+    carving = Topic.objects.create(
+        summary="Spoons and reliefs.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    furniture = Course.objects.create(title="Furniture making")
+    restoration = Course.objects.create(title="Antique restoration")
+    joinery.courses.add(furniture, basics)
+    turning.courses.add(restoration, basics)
+    carving.courses.add(restoration, furniture)
+    rag.register(Topic, follow=["courses"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Joinery\n\nJoints and finishes.\n\nWoodworking basics\n\nFurniture making",
+        "Turning\n\nBowls and spindles.\n\nWoodworking basics\n\nAntique restoration",
+        "Carving\n\nSpoons and reliefs.\n\nFurniture making\n\nAntique restoration",
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_relations_append_their_texts_in_the_order_follow_names_them() -> None:
     # TextPlugin is declared before AccordionItem: the order of ``follow``
     # differs from the declaration order of the related models.
