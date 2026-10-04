@@ -165,4 +165,7 @@ class SyncPipeline:
             NotRegistered: the model of ``instance`` is not registered.
         """
         extractor = rag.new_extractor(type(instance))
-        _hand_over([instance], extractor, self._output)
+        groups = _groups([instance], extractor)
+        # an empty group still replaces what the output holds for the instance
+        groups.setdefault(f"{instance._meta.label_lower}:{instance.pk}", [])
+        self._output.replace(groups)
