@@ -413,6 +413,13 @@ def _unread_columns(
     relation ``followed``, are read: they stay, with the own fields named.
     """
     read = {name.split(LOOKUP_SEP)[0] for name in (*read_fields, *followed)}
+    relations = relations_by_accessor(model)
+    for accessor in followed:
+        relation = relations.get(accessor)
+        # the prefetch matches a reverse foreign key to its parent by the column
+        # the key targets, which may not be the primary key
+        if isinstance(relation, ForeignObjectRel) and relation.one_to_many:
+            read.add(relation.field.target_field.name)
     return _unread_field_names(model, read)
 
 
