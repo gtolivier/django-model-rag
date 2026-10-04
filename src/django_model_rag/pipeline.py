@@ -26,11 +26,17 @@ def _declared_fields(extractor: BaseExtractor[Any]) -> Sequence[str]:
     return fields
 
 
+def _read_paths(extractor: BaseExtractor[Any]) -> list[str]:
+    """Return the fields ``extractor`` declares, and its title field, if any."""
+    title_field: str | None = getattr(extractor, "title_field", None)
+    return [*_declared_fields(extractor), *([title_field] if title_field else [])]
+
+
 def _lookup_path_relations(extractor: BaseExtractor[Any]) -> list[str]:
-    """Return the first relation of each lookup path ``extractor`` declares."""
+    """Return the first relation of each lookup path ``extractor`` reads."""
     return [
         name.split(LOOKUP_SEP)[0]
-        for name in _declared_fields(extractor)
+        for name in _read_paths(extractor)
         if LOOKUP_SEP in name
     ]
 
@@ -101,7 +107,7 @@ def _selected_path_prefixes(
 ) -> list[str]:
     """Return the longest run of single-object relations of each lookup path."""
     prefixes: list[str] = []
-    for path in _declared_fields(extractor):
+    for path in _read_paths(extractor):
         relation_names = _selected_run(model, path)
         # a run of one relation is already among the first relations of the
         # lookup paths
