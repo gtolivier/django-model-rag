@@ -166,6 +166,13 @@ class SyncPipeline:
         """
         extractor = rag.new_extractor(type(instance))
         groups = _groups([instance], extractor)
+        key = build_source_key(instance._meta.label_lower, instance.pk)
+        foreign = set(groups) - {key}
+        if foreign:
+            raise TypeError(
+                f"{type(extractor).__name__}.extract() returned a document "
+                f"whose source is not {key}"
+            )
         # an empty group still replaces what the output holds for the instance
-        groups.setdefault(build_source_key(instance._meta.label_lower, instance.pk), [])
+        groups.setdefault(key, [])
         self._output.replace(groups)
