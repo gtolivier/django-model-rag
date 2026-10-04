@@ -274,7 +274,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         That field is the declared one, or one guessed by name.
         """
         if self.language is not None:
-            return self.language
+            return self.language.strip()
         if self.language_field and LOOKUP_SEP in self.language_field:
             path_end = self._path_end(instance, self.language_field)
             if path_end is None:
