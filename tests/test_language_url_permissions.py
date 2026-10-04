@@ -367,6 +367,26 @@ def test_model_without_permissions_option_gives_empty_frozenset_permissions() ->
     assert all(isinstance(document.permissions, frozenset) for document in documents)
 
 
+@pytest.mark.django_db
+def test_permissions_option_gives_every_document_those_permissions() -> None:
+    Category.objects.create(name="Tools")
+    Category.objects.create(name="Garden")
+    rag.register(
+        Category,
+        fields=["name"],
+        permissions=["testapp.view_category", "testapp.change_category"],
+    )
+
+    documents = SyncPipeline().run()
+
+    expected = frozenset({"testapp.view_category", "testapp.change_category"})
+    assert {document.text: document.permissions for document in documents} == {
+        "Tools": expected,
+        "Garden": expected,
+    }
+    assert all(isinstance(document.permissions, frozenset) for document in documents)
+
+
 def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
     with pytest.raises(ImproperlyConfigured, match="nonexistent"):
         rag.register(Notice, fields=["title"], language_field="nonexistent")
