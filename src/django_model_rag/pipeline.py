@@ -7,7 +7,7 @@ from typing import Any
 from django.db.models import Model, QuerySet
 from django.db.models.query import ModelIterable
 
-from django_model_rag.documents import NormalizedDocument
+from django_model_rag.documents import NormalizedDocument, build_source_key
 from django_model_rag.extractors import BaseExtractor
 from django_model_rag.output import DocumentOutput
 from django_model_rag.registry import rag
@@ -167,5 +167,5 @@ class SyncPipeline:
         extractor = rag.new_extractor(type(instance))
         groups = _groups([instance], extractor)
         # an empty group still replaces what the output holds for the instance
-        groups.setdefault(f"{instance._meta.label_lower}:{instance.pk}", [])
+        groups.setdefault(build_source_key(instance._meta.label_lower, instance.pk), [])
         self._output.replace(groups)
