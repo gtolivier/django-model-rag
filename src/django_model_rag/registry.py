@@ -282,6 +282,7 @@ class Registry:
         """
         self._require_unregistered(model)
         _require_field_names(model, exclude, "exclude")
+        _require_field_names(model, follow, "follow")
         _require_fields_or_exclude(model, fields, exclude)
         if fields is None:
             _require_distinct_content_fields(model, exclude, "excluded")
@@ -290,7 +291,6 @@ class Registry:
             _require_content_fields(model, fields)
         if title_field is not None:
             _require_content_field(model, title_field)
-        _require_field_names(model, follow, "follow")
         if follow:
             _require_models_ready(model)
             _require_followable_relations(model, follow)
