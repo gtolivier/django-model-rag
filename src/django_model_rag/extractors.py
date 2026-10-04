@@ -226,7 +226,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         """Read the language field of ``instance``, if one is declared."""
         if self.language_field is None:
             return None
-        return _stripped_text(getattr(instance, self.language_field))
+        return _stripped_text(getattr(instance, self.language_field)) or None
 
     def _declared_text(self, instance: Model, path: str) -> str:
         """Read the declared field ``path`` of ``instance`` as stripped text.
