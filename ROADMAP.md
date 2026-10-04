@@ -98,16 +98,25 @@ refactoring, not from the prototype.
   them all. For a document, joining their texts in primary key order would
   be the natural reading — decide whether to allow it, and how it then
   differs from `follow`.
-- [ ] **7. Language, URL and permissions** — from configured fields
-  (`language_field`, `url_field`) or guessed (common attribute names,
-  `get_absolute_url`), with their fallbacks; permissions passed through.
-  Once this feature settles everything the pipeline reads from an instance,
-  reconsider loading only those columns (`QuerySet.only()`): until then,
-  each attribute read outside the loaded ones would cost a query per
-  instance. Likewise for custom extractors that read relations: an
+- [x] **7. Language, URL and permissions** — each document's language
+  comes from a constant `language=`, a `language_field` (an own field or a
+  lookup path), or an own field guessed by name (`language`, then
+  `language_code`, then `lang`), else `None`; its URL from a `url_field`,
+  else `get_absolute_url()` (left relative, its exceptions propagated), else
+  `""`. A configured or guessed field is authoritative: blank gives `None`
+  or `""`, never the next source. `permissions=["app_label.codename", ...]`
+  puts a `frozenset` on every document of the model, and custom extractors
+  pass their own through `build_document`.
+- [ ] **7b. The shape of the queryset** — now that the pipeline reads a
+  known set of attributes from an instance, load only those columns
+  (`QuerySet.only()`): each attribute read outside them would then cost a
+  query per instance, so the set must be exact. Give custom extractors an
   optional hook to shape their queryset (`select_related`,
-  `prefetch_related`, iterated with `iterator(chunk_size=...)`) would avoid
-  a query per instance.
+  `prefetch_related`, iterated with `iterator(chunk_size=...)`), so that
+  one reading relations does not make a query per instance. The pipeline
+  reads `follow` by duck typing today: replace that with the hook. The
+  single-field options (`title_field`, `language_field`, `url_field`) are
+  also listed twice, in the registry and in the pipeline.
 - [ ] **8. The output** — each document goes to an output that the project
   supplies, instead of only being returned. The questions below are settled
   before it starts.
@@ -136,6 +145,11 @@ django-minimal-rag all depend on.
 - **Where the output comes from.** The command and the signals run outside
   project code, so they need a configured destination (a setting, for
   instance).
+- **A project-wide default language.** A model with no language source
+  gives `None` today. A setting (`DEFAULT_LANGUAGE`, or Django's
+  `LANGUAGE_CODE`) could fill it in, but `None` then no longer tells a
+  retrieval side that the language is unknown: decide whether the fallback
+  belongs here or in the output.
 - **Project-wide defaults for guessed fields.** The same setting could hold
   names excluded from every guessed model (`password`, `token`…) and the
   title-like names and their order, which `exclude=` and the built-in list
