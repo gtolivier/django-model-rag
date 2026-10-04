@@ -438,6 +438,12 @@ class Registry:
             fields = _guessed_fields(model, exclude, follow, metadata_fields)
         else:
             _require_content_fields(model, fields)
+        for single_field in (title_field, read_language_field, url_field):
+            if single_field is not None:
+                _require_content_field(model, single_field)
+        if follow:
+            _require_models_ready(model, "follow relations")
+            _require_followable_relations(model, follow)
         declared = tuple(fields)
         followed = tuple(follow)
         granted = tuple(permissions)
@@ -453,11 +459,6 @@ class Registry:
                 granted,
             )
 
-        for single_field in build_extractor().single_fields:
-            _require_content_field(model, single_field)
-        if follow:
-            _require_models_ready(model, "follow relations")
-            _require_followable_relations(model, follow)
         self._registrations[model] = build_extractor
 
     def register_extractor(
