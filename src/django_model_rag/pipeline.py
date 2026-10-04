@@ -32,10 +32,23 @@ def _read_paths(extractor: BaseExtractor[Any]) -> list[str]:
     return [*_declared_fields(extractor), *([title_field] if title_field else [])]
 
 
-def _lookup_path_relations(extractor: BaseExtractor[Any]) -> list[str]:
-    """Return the first relation of each lookup path ``extractor`` reads."""
+def _accessor(model: type[Model], step: str) -> str:
+    """Return the accessor of the relation a lookup path names ``step``.
+
+    A lookup path names a reverse relation by its query name.
+    """
+    relation = model._meta.get_field(step)
+    if isinstance(relation, ForeignObjectRel):
+        return relation.get_accessor_name() or step
+    return step
+
+
+def _lookup_path_relations(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> list[str]:
+    """Return the accessor of the first relation of each lookup path read."""
     return [
-        name.split(LOOKUP_SEP)[0]
+        _accessor(model, name.split(LOOKUP_SEP)[0])
         for name in _read_paths(extractor)
         if LOOKUP_SEP in name
     ]
@@ -128,7 +141,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     """
     queryset = model._default_manager.order_by("pk")
     selected, prefetched = _sorted_relations(
-        model, [*_followed(extractor), *_lookup_path_relations(extractor)]
+        model, [*_followed(extractor), *_lookup_path_relations(model, extractor)]
     )
     selected.extend(_selected_path_prefixes(model, extractor))
     # never select_related() without a field: it would follow every non-null
