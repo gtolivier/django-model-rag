@@ -4,6 +4,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from typing import Any
 
 from django.db.models import Field, ForeignObjectRel, Model
+from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
@@ -17,6 +18,12 @@ def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
     """Return the names of the relations ``extractor`` follows, if any."""
     followed: Sequence[str] = getattr(extractor, "follow", ())
     return followed
+
+
+def _lookup_path_relations(extractor: BaseExtractor[Any]) -> list[str]:
+    """Return the first relation of each lookup path ``extractor`` declares."""
+    fields: Sequence[str] = getattr(extractor, "fields", ())
+    return [name.split(LOOKUP_SEP)[0] for name in fields if LOOKUP_SEP in name]
 
 
 # quoted: Django's Field is generic for the type checker only, and before
@@ -76,7 +83,9 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
-    selected, prefetched = _sorted_relations(model, _followed(extractor))
+    selected, prefetched = _sorted_relations(
+        model, [*_followed(extractor), *_lookup_path_relations(extractor)]
+    )
     # never select_related() without a field: it would follow every non-null
     # foreign key, followed or not
     if selected:
