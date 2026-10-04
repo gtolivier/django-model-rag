@@ -240,6 +240,29 @@ def test_constant_language_is_every_document_language_and_frees_the_guessed_fiel
     }
 
 
+@pytest.mark.parametrize(
+    ("language", "expected"),
+    [
+        pytest.param(" fr ", "fr", id="spaces"),
+        pytest.param("en\n", "en", id="newline"),
+    ],
+)
+@pytest.mark.django_db
+def test_constant_language_is_stripped_for_every_document(
+    language: str, expected: str
+) -> None:
+    Category.objects.create(name="Tools")
+    Category.objects.create(name="Garden")
+    rag.register(Category, fields=["name"], language=language)
+
+    documents = SyncPipeline().run()
+
+    assert {document.text: document.language for document in documents} == {
+        "Tools": expected,
+        "Garden": expected,
+    }
+
+
 @pytest.mark.django_db
 def test_model_without_get_absolute_url_or_url_field_gives_an_empty_url() -> None:
     Category.objects.create(name="Tools")
