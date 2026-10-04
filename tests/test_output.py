@@ -47,3 +47,23 @@ def test_a_class_without_prune_is_not_a_document_output() -> None:
     output: DocumentOutput = ReplaceOnlyOutput()  # type: ignore[assignment]
 
     assert not hasattr(output, "prune")
+
+
+class FlatReplaceOutput:
+    """An output whose replace takes the documents one after the other."""
+
+    def replace(self, documents: Sequence[NormalizedDocument]) -> None:
+        pass
+
+    def prune(self, model_label: str, kept_keys: set[str]) -> None:
+        pass
+
+
+def test_a_class_whose_replace_takes_a_flat_sequence_is_not_a_document_output() -> None:
+    # The type checker must reject the assignment: replace receives the
+    # documents grouped by source key, not one after the other. If the
+    # protocol ever accepted a flat sequence, warn_unused_ignores would flag
+    # this line.
+    output: DocumentOutput = FlatReplaceOutput()  # type: ignore[assignment]
+
+    assert hasattr(output, "prune")
