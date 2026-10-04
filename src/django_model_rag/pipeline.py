@@ -20,7 +20,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     """
     queryset = model._default_manager.order_by("pk")
     hooked = _checked_queryset(extractor.get_queryset(queryset), extractor)
-    return hooked.iterator(chunk_size=_CHUNK_SIZE)
+    return hooked.order_by("pk").iterator(chunk_size=_CHUNK_SIZE)
 
 
 def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet[Model]:
