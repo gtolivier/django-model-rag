@@ -257,3 +257,28 @@ def test_pipeline_does_not_prune_a_model_whose_extractor_raises() -> None:
 
     assert output.pruned == []
     assert "prune" not in output.calls
+
+
+@pytest.mark.django_db
+def test_pipeline_hands_over_each_chunk_before_extracting_the_next() -> None:
+    # The failure is on the first instance of the second chunk: a pipeline
+    # extracting the whole model before handing anything over would lose the
+    # 1000 documents already extracted.
+    Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(1001)
+    )
+    pks = list(Category.objects.order_by("pk").values_list("pk", flat=True))
+    keys = [f"testapp.category:{pk}" for pk in pks]
+
+    @rag.register_extractor(Category)
+    class FailingLastCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            if instance.pk == pks[-1]:
+                raise ExtractionFailedError(instance.name)
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    with pytest.raises(ExtractionFailedError, match="Category 1000"):
+        SyncPipeline(output).run()
+
+    assert [list(groups) for groups in output.replaced] == [keys[:1000]]
