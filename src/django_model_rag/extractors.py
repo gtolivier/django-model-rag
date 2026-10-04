@@ -180,6 +180,10 @@ def _document_text(field_texts: list[str]) -> str:
     return _FIELD_SEPARATOR.join(text for text in field_texts if text)
 
 
+_GUESSED_LANGUAGE_FIELD = "language"
+"""The name of the own field read as the language when none is declared."""
+
+
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
     """Build one document from the fields a model declares when registered."""
 
@@ -224,7 +228,7 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
 
     def _language(self, instance: Model) -> str | None:
         """Read the language field of ``instance``, declared or named ``language``."""
-        name = self.language_field or "language"
+        name = self.language_field or _GUESSED_LANGUAGE_FIELD
         if name not in {field.name for field in instance._meta.get_fields()}:
             return None
         return _stripped_text(getattr(instance, name)) or None
