@@ -1,4 +1,5 @@
 import pytest
+from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
@@ -33,6 +34,27 @@ def test_foreign_key_lookup_path_adds_each_instance_its_related_field_text() -> 
     assert [document.text for document in documents] == [
         "Chair\n\nFurniture",
         "Hammer\n\nTools",
+    ]
+
+
+@pytest.mark.django_db
+def test_one_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Three products, each in its own category: one query per product would
+    # show as more than one query.
+    _create_product(name="Chair", category_name="Furniture")
+    _create_product(name="Hammer", category_name="Tools")
+    _create_product(name="Lamp", category_name="Lighting")
+    rag.register(Product, fields=["name", "category__name"])
+
+    with django_assert_num_queries(1):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Chair\n\nFurniture",
+        "Hammer\n\nTools",
+        "Lamp\n\nLighting",
     ]
 
 
