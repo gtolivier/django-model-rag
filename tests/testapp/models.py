@@ -694,3 +694,28 @@ class Guild(models.Model):
 class Membership(models.Model):
     guild = models.ForeignKey(Guild, to_field="code", on_delete=models.CASCADE)
     craftsman = models.ForeignKey(Craftsman, on_delete=models.CASCADE)
+
+
+# --- A reverse many-to-many through a foreign key to a unique column ----
+# A Musician reaches its Bands by the reverse many-to-many ``bands``: the Band
+# declares the many-to-many ``musicians``, through an Engagement model of its
+# own whose foreign key points to the Musician by the Musician's unique handle,
+# a slug, not by its primary key: the join table matches each engagement to its
+# Musician by that handle.
+
+
+class Musician(models.Model):
+    name = models.CharField(max_length=200)
+    handle = models.SlugField(unique=True)
+
+
+class Band(models.Model):
+    name = models.CharField(max_length=200)
+    musicians = models.ManyToManyField(
+        Musician, through="Engagement", related_name="bands"
+    )
+
+
+class Engagement(models.Model):
+    band = models.ForeignKey(Band, on_delete=models.CASCADE)
+    musician = models.ForeignKey(Musician, to_field="handle", on_delete=models.CASCADE)

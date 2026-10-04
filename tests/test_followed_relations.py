@@ -12,6 +12,7 @@ from pytest_django import DjangoAssertNumQueries
 from django_model_rag import SyncPipeline, rag
 from tests.testapp.models import (
     AccordionItem,
+    Band,
     Category,
     Course,
     Craftsman,
@@ -20,6 +21,7 @@ from tests.testapp.models import (
     FeaturedProduct,
     Guild,
     Lesson,
+    Musician,
     Note,
     Page,
     PageIntro,
@@ -802,6 +804,32 @@ def test_followed_many_to_many_through_a_key_to_a_unique_column_keeps_it_loaded(
     assert [document.text for document in documents] == [
         "North guild\n\nCarpenter\n\nWeaver",
         "South guild\n\nSmith\n\nWeaver",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_many_to_many_through_a_key_to_a_unique_column_keeps_it(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Two musicians in two bands each: Engagement.musician points to the
+    # musician's handle, not its primary key, so the prefetch matches the bands
+    # to their musician by that handle. It is not declared, yet left out of the
+    # select it would show as one more query per musician.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    duo = Band.objects.create(name="Duo")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    ada.bands.add(quartet, duo)
+    ben.bands.add(trio, duo)
+    rag.register(Musician, fields=["name"], follow=["bands"])
+
+    with django_assert_num_queries(2):
+        documents = SyncPipeline().run()
+
+    assert [document.text for document in documents] == [
+        "Ada\n\nQuartet\n\nDuo",
+        "Ben\n\nTrio\n\nDuo",
     ]
 
 
