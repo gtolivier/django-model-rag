@@ -7,7 +7,16 @@ from dataclasses import dataclass
 from typing import Any, Generic, TypeAlias, TypeGuard, TypeVar, cast
 
 from django.core.exceptions import ObjectDoesNotExist
-from django.db.models import CharField, Field, Model, Prefetch, QuerySet, TextField
+from django.db.models import (
+    CharField,
+    Field,
+    ForeignKey,
+    ManyToManyField,
+    Model,
+    Prefetch,
+    QuerySet,
+    TextField,
+)
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.fields.reverse_related import ForeignObjectRel
 from django.db.models.manager import BaseManager
@@ -470,11 +479,20 @@ def _reverse_foreign_key_targets(
     relations = relations_by_accessor(model)
     # the prefetch matches a reverse foreign key to its parent by the column
     # the key targets, which may not be the primary key
-    return {
+    targets = {
         relation.field.target_field.name
         for accessor in followed
         if _is_reverse_foreign_key(relation := relations.get(accessor))
     }
+    # likewise a many-to-many matches its through model's foreign key to the parent
+    for accessor in followed:
+        field = relations.get(accessor)
+        if isinstance(field, ManyToManyField):
+            through = field.remote_field.through
+            key = through._meta.get_field(field.m2m_field_name()) if through else None
+            if isinstance(key, ForeignKey):
+                targets.add(key.target_field.name)
+    return targets
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
