@@ -386,3 +386,13 @@ class Leaflet(models.Model):
         max_length=10,
         choices=[("fr", "Français"), ("en", "English")],
     )
+
+
+# --- An optional language -----------------------------------------------
+# A Memo keeps its language code under a name of its own like Bulletin's, but
+# in a nullable field: its language may be unknown, stored as None.
+
+
+class Memo(models.Model):
+    title = models.CharField(max_length=200)
+    locale = models.CharField(max_length=10, blank=True, null=True)  # noqa: DJ001 -- the test bench needs a language field whose value can be None
