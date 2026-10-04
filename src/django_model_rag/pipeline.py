@@ -111,13 +111,17 @@ def _extractors_to_run(
 
 def _hand_over(
     instance: Model, extractor: BaseExtractor[Any], output: DocumentOutput
-) -> None:
-    """Hand the documents of ``instance`` to ``output``, grouped by source key."""
+) -> set[str]:
+    """Hand the documents of ``instance`` to ``output``, grouped by source key.
+
+    Returns the source keys handed over.
+    """
     groups: dict[str, list[NormalizedDocument]] = {}
     for document in _instance_documents(instance, extractor):
         groups.setdefault(document.source_key, []).append(document)
     if groups:
         output.replace(groups)
+    return set(groups)
 
 
 class SyncPipeline:
@@ -137,9 +141,10 @@ class SyncPipeline:
             NotRegistered: one of ``models`` is not registered.
         """
         for model, extractor in _extractors_to_run(models):
+            kept_keys: set[str] = set()
             for instance in _instances(model, extractor):
-                _hand_over(instance, extractor, self._output)
-            self._output.prune(model._meta.label_lower, set())
+                kept_keys |= _hand_over(instance, extractor, self._output)
+            self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
         """Produce the documents of ``instance`` only.
