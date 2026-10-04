@@ -11,6 +11,8 @@ from django_model_rag.registry import rag
 
 # iterator() prefetches per chunk: this many instances share one query
 _CHUNK_SIZE = 1000
+# the order of a model's documents, whatever its extractor's get_queryset() asks
+_DOCUMENT_ORDER = "pk"
 
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
@@ -18,9 +20,9 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
 
     ``extractor``'s get_queryset() shapes how they are loaded.
     """
-    queryset = model._default_manager.order_by("pk")
+    queryset = model._default_manager.order_by(_DOCUMENT_ORDER)
     hooked = _checked_queryset(extractor.get_queryset(queryset), extractor)
-    return hooked.order_by("pk").iterator(chunk_size=_CHUNK_SIZE)
+    return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
 
 
 def _checked_queryset(hooked: object, extractor: BaseExtractor[Any]) -> QuerySet[Model]:
