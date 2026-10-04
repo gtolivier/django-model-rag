@@ -1,4 +1,5 @@
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import SyncPipeline, rag
@@ -195,3 +196,11 @@ def test_language_field_lookup_path_is_read_with_its_instances_in_a_single_query
         "Hello": "en",
         "Hallo": "de",
     }
+
+
+def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
+    with pytest.raises(ImproperlyConfigured, match="nonexistent"):
+        rag.register(Notice, fields=["title"], language_field="nonexistent")
+
+    with pytest.raises(ImproperlyConfigured, match="notice__nonexistent"):
+        rag.register(Excerpt, fields=["title"], language_field="notice__nonexistent")
