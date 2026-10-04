@@ -107,7 +107,10 @@ def _field_text(instance: Model, name: str) -> str:
     """
     *path, name = name.split(LOOKUP_SEP)
     for step in path:
-        instance = getattr(instance, _accessor_name(instance, step))
+        try:
+            instance = getattr(instance, _accessor_name(instance, step))
+        except ObjectDoesNotExist:
+            return ""
         if instance is None:
             return ""
     value = getattr(instance, name)
