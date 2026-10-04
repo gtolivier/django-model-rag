@@ -20,13 +20,12 @@ def _followed(extractor: BaseExtractor[Any]) -> Sequence[str]:
 
 
 def _followed_to_one_relations(
-    model: type[Model], extractor: BaseExtractor[Any]
+    model: type[Model], followed: Sequence[str]
 ) -> list[str]:
-    """List the relations to a single object ``extractor`` follows.
+    """List the relations of ``model`` to a single object among ``followed``.
 
     These are the foreign keys and the one-to-one relations, forward or reverse.
     """
-    followed = _followed(extractor)
     # a followed name may be a reverse accessor, which is no field name:
     # look among the concrete fields instead of calling get_field()
     forward = [
@@ -36,17 +35,16 @@ def _followed_to_one_relations(
     ]
     reverse = [
         accessor
-        for relation, accessor in _followed_reverse_relations(model, extractor)
+        for relation, accessor in _followed_reverse_relations(model, followed)
         if relation.one_to_one
     ]
     return [*forward, *reverse]
 
 
 def _followed_reverse_relations(
-    model: type[Model], extractor: BaseExtractor[Any]
+    model: type[Model], followed: Sequence[str]
 ) -> Iterator[tuple[ForeignObjectRel, str]]:
-    """Yield each reverse relation ``extractor`` follows, with its accessor."""
-    followed = _followed(extractor)
+    """Yield ``model``'s reverse relations among ``followed``, with their accessor."""
     for relation in model._meta.related_objects:
         accessor = relation.get_accessor_name()
         if accessor is not None and accessor in followed:
@@ -54,30 +52,27 @@ def _followed_reverse_relations(
 
 
 def _followed_reverse_foreign_keys(
-    model: type[Model], extractor: BaseExtractor[Any]
+    model: type[Model], followed: Sequence[str]
 ) -> list[str]:
-    """List the accessors of the reverse foreign keys ``extractor`` follows."""
+    """List the accessors of ``model``'s reverse foreign keys among ``followed``."""
     return [
         accessor
-        for relation, accessor in _followed_reverse_relations(model, extractor)
+        for relation, accessor in _followed_reverse_relations(model, followed)
         if relation.one_to_many
     ]
 
 
-def _followed_many_to_many(
-    model: type[Model], extractor: BaseExtractor[Any]
-) -> list[str]:
-    """List the many-to-many relations of ``model`` ``extractor`` follows.
+def _followed_many_to_many(model: type[Model], followed: Sequence[str]) -> list[str]:
+    """List the many-to-many relations of ``model`` among ``followed``.
 
     These are the many-to-many fields and their reverse accessors.
     """
-    followed = _followed(extractor)
     forward = [
         field.name for field in model._meta.many_to_many if field.name in followed
     ]
     reverse = [
         accessor
-        for relation, accessor in _followed_reverse_relations(model, extractor)
+        for relation, accessor in _followed_reverse_relations(model, followed)
         if relation.many_to_many
     ]
     return [*forward, *reverse]
@@ -91,12 +86,14 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     relations, forward or reverse, in one more query each for all the instances.
     """
     queryset = model._default_manager.order_by("pk")
-    # select_related() without a field is deprecated
-    if to_one_relations := _followed_to_one_relations(model, extractor):
+    followed = _followed(extractor)
+    # never select_related() without a field: it would follow every non-null
+    # foreign key, followed or not
+    if to_one_relations := _followed_to_one_relations(model, followed):
         queryset = queryset.select_related(*to_one_relations)
     prefetched = [
-        *_followed_reverse_foreign_keys(model, extractor),
-        *_followed_many_to_many(model, extractor),
+        *_followed_reverse_foreign_keys(model, followed),
+        *_followed_many_to_many(model, followed),
     ]
     if prefetched:
         queryset = queryset.prefetch_related(*prefetched)

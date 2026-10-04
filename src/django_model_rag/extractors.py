@@ -125,9 +125,10 @@ def _followed_text(instance: Model, name: str) -> str:
     A reverse one-to-one without an object raises, where it has no text.
     """
     try:
-        return _related_text(getattr(instance, name))
+        related = getattr(instance, name)
     except ObjectDoesNotExist:
         return ""
+    return _related_text(related)
 
 
 class DeclaredFieldsExtractor(BaseExtractor[Model]):
@@ -148,7 +149,10 @@ class DeclaredFieldsExtractor(BaseExtractor[Model]):
         self.follow = follow
 
     def extract(self, instance: Model) -> NormalizedDocument | None:
-        """Build the document of ``instance``, or nothing when its fields are blank."""
+        """Build the document of ``instance``, or nothing when it has no text.
+
+        Its text is that of its fields, then of its followed relations.
+        """
         field_texts = [_field_text(instance, name) for name in self.fields]
         followed_texts = [_followed_text(instance, name) for name in self.follow]
         text = _document_text(field_texts + followed_texts)
