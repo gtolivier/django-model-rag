@@ -375,19 +375,65 @@ reference.
   promises never happens. Fix it in `run()`: just before the `prune`, read
   the primary keys that exist again, and keep those the run did not see.
   Still open: a chunk read before an update puts the old text back until
-  the next save, a short window.
-- [ ] **10c. Signals on several databases** (before 10b). The signals
-  follow the default database only: `transaction.on_commit` is attached to
-  it, and the commit callback reloads from it. A save or a delete on another
-  alias is not skipped today: it waits for the default database's commit and
-  reloads, or empties, the default database's group with the same primary
-  key, so it can corrupt the index. A save or a delete on another alias
-  should attach its callback to the signal's `using` and reload from that
-  database. The reload should also read from the database the save wrote,
-  with `.using(alias)`, not from the one the router picks for reads: a
-  lagging replica would miss a new instance (taken for deleted since the
-  save, so nothing is sent) or return the old row. The test needs a second
-  database in the test settings.
+  the next save, a short window; and with a replica router, the primary keys
+  read again come from the replica, which may not have the new instance yet
+  (see 10c).
+- [ ] **10c. Signals on several databases** — postponed: no project needs
+  several databases yet, and nothing here depends on it. The signals follow
+  the default database only: `transaction.on_commit` is attached to it, and
+  the commit callback reloads from it, through the database router. With a
+  single database, nothing goes wrong. Then, from the most likely case:
+  - **A replica router**: the reload reads a lagging replica, which may miss
+    a new instance (taken for deleted, so nothing is sent), return the old
+    row, or still see a row that `get_queryset()` now keeps out. Stale, not
+    corrupt: the next save or `sync_model_rag` repairs it.
+  - **A model on another alias** (routed by app, or `using=`): the save or
+    the delete waits for the default database's commit and reloads, or
+    empties, the group of the default database's row with the same primary
+    key — a live document removed until its next save or the next sync.
+
+  Already documented in the README. The design discussed when the feature
+  was first started:
+  - **Which aliases.** Follow the signal's `using` only when it is the
+    database the router writes the model to (`router.db_for_write(model)`,
+    without instance hints): the callback is attached to that alias, and
+    the instance reloaded from it with `.using(alias)`, not from the
+    router's read database. A write elsewhere (a backup or archive copy)
+    is ignored, and does not check `MODEL_RAG_OUTPUT`. Without a router,
+    only `default` is followed. Rejected: following every alias (a delete
+    on a copy empties the live group, and `sync_model_rag` never reads that
+    database), ignoring every alias but `default` (a model routed elsewhere
+    is never indexed, silently), a setting listing the aliases (one more
+    setting, and listing two databases that hold the same model brings back
+    the key collision below).
+  - **The alias reaches `run_instance()` through the instance**:
+    `instance._state.db`, which Django documents. Its `get_queryset()`
+    check runs on `.using(instance._state.db)`, and an extractor can read
+    `queryset.db`. No public signature changes: a `using=` argument would
+    be a second source of truth, and changing `get_queryset()` would break
+    the contract of feature 8.
+  - **The group key keeps no alias.** Adding it would break `source_key`
+    (feature 1) and the split that `prune` makes at the colon, make `run()`
+    know the alias, and re-key every index. With one followed database per
+    model, two databases share keys only when a router writes the same
+    model to several of them without instance hints (tenants chosen by a
+    thread-local, say): to be documented as unsupported, and left open.
+  - **No `--database` for `sync_model_rag`**: the command already reads the
+    router's database, and a `prune` run on another alias would delete the
+    default database's sources (the key collision above). Left open.
+  - **The test bench**: a second in-memory SQLite alias in
+    `tests/settings.py` (pytest-django sets up only the databases a test
+    asks for, with `@pytest.mark.django_db(databases=[...])`), commit
+    callbacks captured with `django_capture_on_commit_callbacks(using=...)`,
+    and two test routers installed through the `settings` fixture: one
+    reading and writing the test app's models on the second alias, one
+    writing to `default` and reading from the second alias — a replica that
+    never receives the writes, hence the worst lag, with an older row put
+    there by `bulk_create`, which sends no signal.
+
+  Still open after it: the related objects that `extract()` reads (inlines,
+  `follow`, lookup paths on an instance already loaded) go where the router
+  sends reads, so a lagging replica can still give them stale text.
 
 ## Not planned here
 

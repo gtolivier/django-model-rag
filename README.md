@@ -390,7 +390,9 @@ default database — its work waits for the default database's commit, and its
 group is reloaded from, or emptied under the key of, the default database's
 row — so it can update the wrong group. The reload also goes through the
 database router: one that sends reads to a lagging replica can miss an
-instance just created. Both are planned.
+instance just created. Both are listed in the
+[roadmap](ROADMAP.md) as feature 10c, postponed until a project needs
+several databases.
 
 **Proxies and multi-table inheritance.** Saving or deleting through a proxy
 of a registered model updates the registered model's group, under its own
