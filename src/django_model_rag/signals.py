@@ -49,6 +49,9 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     if sender not in rag.registered_models():
         return
 
+    # Fail at the delete, not at the commit, if the output is misconfigured.
+    check_output_configuration()
+
     # delete() clears the primary key of the instance: keep it for the commit.
     deleted_pk = instance.pk
 
