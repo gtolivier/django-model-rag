@@ -33,6 +33,15 @@ def test_the_command_with_an_output_setting_that_is_not_a_dict_names_the_setting
         call_command("sync_model_rag")
 
 
+def test_the_command_with_an_output_setting_without_a_backend_names_the_backend_key(
+    settings: Settings,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"OPTIONS": {}}
+
+    with pytest.raises(ImproperlyConfigured, match="BACKEND"):
+        call_command("sync_model_rag")
+
+
 @pytest.mark.django_db
 def test_the_command_runs_a_registered_model_into_the_configured_backend(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
