@@ -247,6 +247,38 @@ def test_deleting_a_queryset_empties_the_group_of_each_deleted_instance(
 
 
 @pytest.mark.django_db
+def test_deleting_through_a_proxy_empties_the_group_of_the_registered_model(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the concrete model is registered, not its proxy.
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of its own, so that only the delete's commit is
+    # observed below.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    lighting_pk = lighting.pk
+    built_outputs.clear()
+
+    # Django sends post_delete with the proxy as its sender, not Category.
+    with django_capture_on_commit_callbacks(execute=True):
+        CategoryProxy.objects.get(pk=lighting_pk).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The empty group is the registered model's, under its label, not the
+    # proxy's.
+    assert _replaced(built_outputs) == [{f"testapp.category:{lighting_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
