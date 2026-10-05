@@ -10,7 +10,7 @@ from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import FailingReplaceError, TrackedRecordingOutput
-from tests.testapp.models import Category, Product
+from tests.testapp.models import Category, CategoryProxy, Product
 
 # The dotted path of the backend whose built instances the tests read back.
 TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
@@ -50,6 +50,40 @@ def test_saving_a_registered_instance_replaces_its_group_once_its_transaction_co
         # may reach it before the commit.
         assert _replaced(built_outputs) == []
 
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_through_a_proxy_replaces_the_group_of_the_registered_model(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the concrete model is registered, not its proxy.
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Django sends post_save with the proxy as its sender, not Category.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = CategoryProxy.objects.create(name="Lighting")
+        assert _replaced(built_outputs) == []
+
+    # The group is the registered model's, under its label, not the proxy's.
     assert _replaced(built_outputs) == [
         {
             f"testapp.category:{lighting.pk}": [

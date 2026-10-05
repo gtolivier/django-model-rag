@@ -719,3 +719,14 @@ class Band(models.Model):
 class Engagement(models.Model):
     band = models.ForeignKey(Band, on_delete=models.CASCADE)
     musician = models.ForeignKey(Musician, to_field="handle", on_delete=models.CASCADE)
+
+
+# --- A proxy model ------------------------------------------------------
+# A CategoryProxy is a Category under another class, with no table of its own:
+# saving one writes the Category's row, yet Django sends the save's signals
+# with the proxy, not Category, as their sender.
+
+
+class CategoryProxy(Category):
+    class Meta:
+        proxy = True
