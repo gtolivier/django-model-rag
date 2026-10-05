@@ -53,16 +53,27 @@ def _is_synced(registered_models: list[type[Model]]) -> bool:
 
 def _schedule_commit_callbacks(
     registered_models: list[type[Model]],
-    pk: Any,
+    instance: Model,
     build_callback: Callable[[type[Model], Any], Callable[[], None]],
 ) -> None:
     """Run, at the commit, the callback ``build_callback`` returns per registered model.
 
-    Each callback gets ``pk`` as it is now: delete() clears the primary key of
-    the instance before the commit.
+    Each callback gets the primary key of the group as it is now: delete()
+    clears the primary key of the instance before the commit.
     """
     for registered_model in registered_models:
+        pk = _group_pk(instance, registered_model)
         transaction.on_commit(build_callback(registered_model, pk))
+
+
+def _group_pk(instance: Model, registered_model: type[Model]) -> Any:
+    """Return the primary key of the ``registered_model`` row ``instance`` is."""
+    # A multi-table child may have a primary key of its own: the parent row is
+    # reached by the parent link.
+    link = instance._meta.get_ancestor_link(registered_model)
+    if link is None:
+        return instance.pk
+    return getattr(instance, link.attname)
 
 
 def _send_group(send: Callable[[], None], source_key: str) -> None:
@@ -110,7 +121,7 @@ def sync_saved_instance(
     if raw or not _is_synced(registered_models):
         return
 
-    _schedule_commit_callbacks(registered_models, instance.pk, _group_replacer)
+    _schedule_commit_callbacks(registered_models, instance, _group_replacer)
 
 
 def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
@@ -135,9 +146,7 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
-    _schedule_commit_callbacks(
-        nearest_registered_model_only, instance.pk, _group_emptier
-    )
+    _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
 
 
 def _group_emptier(
