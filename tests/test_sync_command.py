@@ -237,12 +237,12 @@ def test_the_command_writes_one_synced_line_per_model_in_run_order(
     ]
 
 
-@pytest.mark.django_db
-def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
-    settings: Settings, built_outputs: list[TrackedRecordingOutput]
-) -> None:
-    # Category fails and is registered first: stopping at the failure would
-    # leave Product unrun; a Category row makes its extraction actually run.
+def _register_a_failing_category_then_product() -> None:
+    """Register Category, whose run raises, then Product, whose run succeeds.
+
+    Category's extraction raises ``RuntimeError("cannot extract Tools")``: a
+    Category row named Tools makes that extraction actually run.
+    """
     Category.objects.create(name="Tools")
 
     @rag.register_extractor(Category)
@@ -252,6 +252,15 @@ def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
             raise RuntimeError(message)
 
     rag.register(Product, fields=["name"])
+
+
+@pytest.mark.django_db
+def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Category fails and is registered first: stopping at the failure would
+    # leave Product unrun.
+    _register_a_failing_category_then_product()
     settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
 
     with pytest.raises(CommandError, match=re.escape("testapp.category")):
@@ -259,6 +268,28 @@ def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
 
     [output] = built_outputs
     assert output.pruned == [("testapp.product", set())]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("built_outputs")
+def test_the_command_writes_a_failed_model_and_its_error_on_stderr_then_goes_on(
+    settings: Settings,
+) -> None:
+    # Category fails and is registered first: Product, synced after it, shows
+    # the command went on past the failure instead of reporting it only at
+    # the end.
+    _register_a_failing_category_then_product()
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with pytest.raises(CommandError):
+        call_command("sync_model_rag", stdout=stdout, stderr=stderr)
+
+    assert stderr.getvalue().splitlines() == [
+        "testapp.category: RuntimeError: cannot extract Tools"
+    ]
+    assert stdout.getvalue().splitlines() == ["testapp.product: synced"]
 
 
 @pytest.mark.django_db
