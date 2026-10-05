@@ -69,6 +69,35 @@ class TrackedRecordingOutput(RecordingOutput):
         TrackedRecordingOutput.built.append(self)
 
 
+# The dotted path of the backend whose built instances the tests read back.
+TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
+
+
+class FailingReplaceError(Exception):
+    """Raised by FailingOnKeyOutput on the group of its failing source key."""
+
+
+class FailingOnKeyOutput(TrackedRecordingOutput):
+    """A tracked recording output whose replace fails on one source key.
+
+    A replace call holding the group of ``failing_source_key`` raises before
+    recording anything; every other call is recorded as usual.
+    """
+
+    def __init__(self, failing_source_key: str, **options: object) -> None:
+        super().__init__(**options)
+        self.failing_source_key = failing_source_key
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        if self.failing_source_key in groups:
+            raise FailingReplaceError(self.failing_source_key)
+        super().replace(groups)
+
+
+# The dotted path of the tracked backend that fails on one source key.
+FAILING_ON_KEY_BACKEND = "tests.recording.FailingOnKeyOutput"
+
+
 class PruneOnlyOutput:
     """A broken output backend: a callable prune, but no replace at all.
 

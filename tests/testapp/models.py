@@ -326,6 +326,23 @@ class FeaturedProduct(Product):
     tagline = models.CharField(max_length=200)
 
 
+# --- Multi-table inheritance under a primary key of its own -------------
+# A ClearanceProduct is a Product whose child row has a primary key of its
+# own, a code such as "CLR-1", next to an explicit parent link, ``product``:
+# its primary key is not the Product's, and a code can never equal the
+# Product's integer primary key.
+
+
+class ClearanceProduct(Product):
+    code = models.CharField(max_length=20, primary_key=True)
+    product = models.OneToOneField(
+        Product,
+        parent_link=True,
+        related_name="clearance",
+        on_delete=models.CASCADE,
+    )
+
+
 # --- A related model whose manager is not a Manager ---------------------
 # A Step's default manager is built with BaseManager.from_queryset(), as some
 # third-party apps do: its class derives from BaseManager, not from Manager. A
@@ -719,3 +736,14 @@ class Band(models.Model):
 class Engagement(models.Model):
     band = models.ForeignKey(Band, on_delete=models.CASCADE)
     musician = models.ForeignKey(Musician, to_field="handle", on_delete=models.CASCADE)
+
+
+# --- A proxy model ------------------------------------------------------
+# A CategoryProxy is a Category under another class, with no table of its own:
+# saving one writes the Category's row, yet Django sends the save's signals
+# with the proxy, not Category, as their sender.
+
+
+class CategoryProxy(Category):
+    class Meta:
+        proxy = True

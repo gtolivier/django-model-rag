@@ -7,7 +7,7 @@ from typing import Any
 from django.db.models import Model, QuerySet
 from django.db.models.query import ModelIterable
 
-from django_model_rag.documents import NormalizedDocument, build_source_key
+from django_model_rag.documents import NormalizedDocument, model_source_key
 from django_model_rag.extractors import BaseExtractor
 from django_model_rag.output import DocumentOutput
 from django_model_rag.registry import rag
@@ -102,7 +102,7 @@ def _foreign_source(extractor: BaseExtractor[Any], source_key: str) -> TypeError
 
 def _source_key(instance: Model) -> str:
     """Return the source key of ``instance``'s documents."""
-    return build_source_key(instance._meta.label_lower, instance.pk)
+    return model_source_key(instance._meta.model, instance.pk)
 
 
 def _instance_documents(

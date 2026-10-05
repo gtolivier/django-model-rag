@@ -1,6 +1,5 @@
 import io
 import re
-from collections.abc import Iterator
 from typing import TypeVar
 
 import pytest
@@ -12,6 +11,7 @@ from pytest_django import Settings
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
     RECORDING_OUTPUT_INSTANCE,
+    TRACKED_BACKEND,
     PruneOnlyOutput,
     ReplaceOnlyOutput,
     TrackedRecordingOutput,
@@ -19,35 +19,6 @@ from tests.recording import (
 from tests.testapp.models import Category, Page, Product
 
 M = TypeVar("M", bound=Model)
-T = TypeVar("T")
-
-# The dotted path of the backend whose built instances the tests read back.
-TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
-
-
-def _only_built_during_the_test(built: list[T]) -> Iterator[list[T]]:
-    """Yield a class's `built` list emptied, and empty it again after the test."""
-    built.clear()
-    yield built
-    built.clear()
-
-
-@pytest.fixture
-def built_outputs() -> Iterator[list[TrackedRecordingOutput]]:
-    """The TrackedRecordingOutput instances built during the test, and only those."""
-    yield from _only_built_during_the_test(TrackedRecordingOutput.built)
-
-
-@pytest.fixture
-def built_prune_only_outputs() -> Iterator[list[PruneOnlyOutput]]:
-    """The PruneOnlyOutput instances built during the test, and only those."""
-    yield from _only_built_during_the_test(PruneOnlyOutput.built)
-
-
-@pytest.fixture
-def built_replace_only_outputs() -> Iterator[list[ReplaceOnlyOutput]]:
-    """The ReplaceOnlyOutput instances built during the test, and only those."""
-    yield from _only_built_during_the_test(ReplaceOnlyOutput.built)
 
 
 def _create_a_hammer() -> Product:

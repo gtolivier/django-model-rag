@@ -364,6 +364,81 @@ ends with a `CommandError` naming every failed model, in run order, so it
 exits with a non-zero status. Running it again, or with only the failed
 models, is the retry.
 
+## Keeping in step: the signals
+
+Once the package is in `INSTALLED_APPS`, saving or deleting an instance of a
+registered model updates the output named by `MODEL_RAG_OUTPUT`:
+
+- **A save** replaces the instance's group with its documents, even an empty
+  group when the extractor now returns nothing.
+- **A delete** — of an instance or of a queryset — replaces each deleted
+  instance's group with an empty one, sent straight to the output: the
+  extractor and its `get_queryset` are not called, as the row is gone.
+
+**After the commit.** Nothing is sent while the transaction is open: the
+signal schedules the work with `transaction.on_commit`, and the instance is
+reloaded and extracted then. The documents are those of the committed
+instance, including what the same transaction changed after the save —
+the inlines and many-to-many relations an admin form saves, for instance. A
+rolled-back transaction sends nothing; outside a transaction (autocommit),
+the work runs at once. Each commit builds a new output from
+`MODEL_RAG_OUTPUT`, with its `OPTIONS`, and the work runs in the process
+that commits: a slow output delays the response that saved the instance.
+The signals follow the default database only, for now: a save or a delete
+on another database alias is not skipped, but handled as if it were on the
+default database — its work waits for the default database's commit, and its
+group is reloaded from, or emptied under the key of, the default database's
+row — so it can update the wrong group. The reload also goes through the
+database router: one that sends reads to a lagging replica can miss an
+instance just created. Both are planned.
+
+**Proxies and multi-table inheritance.** Saving or deleting through a proxy
+of a registered model updates the registered model's group, under its own
+label. Saving a multi-table child updates each registered model among the
+child and its parents, each under its own label; deleting it empties the
+group of the nearest registered one. Each group is keyed by its own model's
+primary key, even for a child that declares a primary key of its own next
+to an explicit `parent_link`. Saving through a registered parent
+does not update a registered child's group, though the child's documents
+include the fields it inherits: they stay stale until the child is saved or
+`sync_model_rag` runs. A proxy defined after its concrete
+model is registered gets no delete listener, so deleting through it empties
+nothing: register from `model_rag.py`, once every model is loaded. A proxy
+registered instead of its concrete model is not updated by the signals.
+
+**What is not sent.** Unregistered models: they keep Django's fast delete,
+since the package listens to `post_delete` only for registered models and
+their proxies. Raw saves, such as `loaddata` loading a fixture. Changes the
+ORM signals do not see: `QuerySet.update()`, `bulk_create()`, raw SQL. A
+change to a related object whose text a registered model reads — through
+`follow` or a lookup path — leaves that model's documents stale until they
+are saved again. For all of these, run `sync_model_rag`, or call
+`SyncPipeline(output).run_instance(instance)` from a receiver of your own.
+
+**Failures.** An extractor, an output or a database error reloading the
+instance that raises at the commit is logged with `logger.exception` on the
+`django_model_rag` logger, naming the instance's source key, and the commit
+goes on: the instance keeps its previous documents until its next save or
+the next `sync_model_rag`, and the other instances of the transaction are
+still sent. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
+its `BACKEND` class does not accept, when Python can read the class's
+signature — is not logged: it raises
+`ImproperlyConfigured` at the save or the delete, so that a forgotten
+setting cannot silently stop the indexing. A save checks it in `pre_save`,
+before the row is written, so that it writes nothing even in autocommit; a
+delete raising this way is rolled back.
+
+**Turning them off.** `MODEL_RAG_SIGNALS = False` (default `True`) makes the
+signals send nothing and check nothing. Your test settings need either
+that, or a `MODEL_RAG_OUTPUT` pointing to a test output — as with
+`EMAIL_BACKEND` — or every save of a registered model in your tests raises
+`ImproperlyConfigured`.
+
+```python
+# settings_test.py
+MODEL_RAG_SIGNALS = False
+```
+
 ## Requirements
 
 - Python 3.11+

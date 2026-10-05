@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from django.db.models import Model
+
 _REPR_TEXT_LENGTH = 60
 
 
@@ -31,6 +33,11 @@ def _frozen_permissions(permissions: Iterable[str]) -> frozenset[str]:
 def build_source_key(model_label: str, pk: object) -> str:
     """Identify a source instance as ``app_label.model:pk``."""
     return f"{model_label}:{pk}"
+
+
+def model_source_key(model: type[Model], pk: object) -> str:
+    """Identify the instance of ``model`` with primary key ``pk`` as a source."""
+    return build_source_key(model._meta.label_lower, pk)
 
 
 @dataclass(frozen=True, kw_only=True, repr=False)

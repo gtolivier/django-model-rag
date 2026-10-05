@@ -68,7 +68,7 @@ features 9 and 10 need.
   documents, and its own deletion would remove nothing. The pipeline refuses
   it. Content gathered from other models is indexed by an extractor on the
   model that owns it (a `Page` extractor reading its plugins); keeping it
-  fresh when those models change is feature 10's open question.
+  fresh when those models change is still open (see feature 10).
 - **Removal is replacement.** Every run of an instance sends its complete
   set of documents, empty included: an extractor returning `None` means
   "nothing to index any more", hence removal. An extractor that raises sends
@@ -296,25 +296,98 @@ reference.
     embedding API's quota and cost are the output's to manage
     (django-minimal-rag). Reading from a replica is untested: a custom
     extractor's `get_queryset()` could route it with `using()`.
-- [ ] **10. Signals** — `post_save` re-extracts the saved instance and
+- [x] **10. Signals** — `post_save` re-extracts the saved instance and
   replaces its group, even empty; `post_delete` replaces it with an empty
-  group. Both build their output from the same setting as the command.
-  Open: whether they write at once or after the transaction commits
-  (`transaction.on_commit`). Open: text
-  that comes from another model — through `follow`, or a parent that a
-  custom extractor reads — goes stale when that model changes, unless the
-  dependent instances are found and re-extracted. Also open: a proxy model
-  or a multi-table child of a registered model sends its own class as the
-  signal's sender, and `run_instance` looks the exact class up, so such an
-  instance is not registered today. Open: a signal that fires while the
-  command runs — the run's final `prune` deletes an instance created
-  since the run read the table, and a chunk read before an update puts the
-  old text back. Open: a failed signal sends nothing; whether
-  to retry it through a queue (Celery…) is probably the project's call.
-  Open: a signal runs in the request that saves the instance, so a slow
-  output (an embedding API call) delays that response; whether to hand the
-  work to a background task — Django's `django.tasks`, or a queue on Redis
-  or RabbitMQ — and what the output must then accept.
+  group. Both build a new output from `MODEL_RAG_OUTPUT` each time, as the
+  command does. Decided in this feature:
+  - **After the commit.** The signal keeps only the model and the primary
+    key; `transaction.on_commit` reloads the instance and extracts it then,
+    so the output sees only committed data, including the inlines and
+    many-to-many relations an admin form saves after `post_save`. An
+    instance saved then deleted before the commit gets only the delete's
+    empty group. A rolled-back transaction sends nothing.
+  - **Synchronously**, in the process that commits: extraction costs a few
+    queries, and the slow part (embedding) is the output's, which may queue
+    its own work.
+  - **A failure is logged**, not raised: an extractor, an output or a
+    database error reloading the instance that raises in a commit callback
+    is logged on the `django_model_rag` logger with the source key, and the
+    other callbacks still run. The instance keeps its previous documents
+    until its next save or the next `sync_model_rag`. A missing or invalid
+    `MODEL_RAG_OUTPUT` — `OPTIONS` its `BACKEND` does not accept included —
+    is the exception: it raises `ImproperlyConfigured` at the save (in
+    `pre_save`, so no row is written, even in autocommit) or the delete
+    (rolled back), so a forgotten setting never silently stops the indexing.
+  - **A delete sends its empty group directly**, without the extractor: the
+    row is gone, so there is nothing for `get_queryset` to filter.
+  - **Proxies and multi-table children.** Saving or deleting through a
+    proxy of a registered model syncs the registered model's group, under
+    its label. Saving a multi-table child syncs each registered model among
+    the child and its parents, each under its own label and its own primary
+    key (a child may declare a primary key of its own next to its
+    `parent_link`); deleting it empties the nearest registered one's group.
+    Unregistering a proxy keeps the delete listener its registered concrete
+    model needs.
+  - **Off switch:** `MODEL_RAG_SIGNALS = False`. A raw save (`loaddata`) is
+    ignored; the command catches up.
+  - **Fast delete kept.** `post_delete` is connected per registered model
+    (and its proxies), never globally, so unregistered models keep Django's
+    fast delete.
+
+  Still open:
+  - text that comes from another model — through `follow`, a lookup path,
+    or a parent that a custom extractor reads — goes stale when that model
+    changes, unless the dependent instances are found and re-extracted.
+    Doing it automatically needs `m2m_changed` too, and a category followed
+    by thousands of products means thousands of extractions: it waits for
+    background tasks. Until then, a project connects its own receiver that
+    runs `run_instance` on the dependent instances, and the command repairs
+    the rest;
+  - background tasks: a slow output delays the response that saves the
+    instance. A task — Django's `django.tasks` (6.0+; a separate package
+    on 5.2), or a queue on Redis or RabbitMQ — would receive the model
+    label and the primary key, as the commit callback already does, so the
+    output would need nothing new;
+  - retrying a failed signal: the output's job (transient errors) or a
+    queue's, probably the project's call;
+  - a context manager pausing the signals for a bulk import followed by a
+    sync (`with rag.signals_paused():`), on top of the setting;
+  - batching: each saved or deleted instance gets its own commit callback,
+    which builds its own output and makes its own `replace()` call, so
+    deleting a queryset of 10,000 rows makes 10,000 of each, in the
+    committing request. Batching them per transaction needs state shared
+    by the callbacks of one transaction; background tasks may settle it;
+  - a proxy registered instead of its concrete model gets no sync from the
+    signals, which look up the concrete model and its parents;
+  - a proxy defined after its concrete model is registered gets no
+    `post_delete` listener: deleting through it empties nothing. Registering
+    from `model_rag.py`, once every model is loaded, avoids it;
+  - an instance saved, then deleted by raw SQL in the same transaction,
+    gets no empty group: no `post_delete` fires. The command prunes it;
+  - saving through a registered multi-table parent does not re-sync a
+    registered child, whose documents include the inherited fields: only
+    `post_save` with the parent as sender fires. Finding the child row costs
+    a query per registered child model on every parent save; it belongs with
+    the text that comes from another model, above.
+- [ ] **10b. Signals during a sync.** A signal that fires while
+  `sync_model_rag` runs: the run's final `prune` deletes an instance created
+  since the run read the table — a live source lost, which the contract
+  promises never happens. Fix it in `run()`: just before the `prune`, read
+  the primary keys that exist again, and keep those the run did not see.
+  Still open: a chunk read before an update puts the old text back until
+  the next save, a short window.
+- [ ] **10c. Signals on several databases** (before 10b). The signals
+  follow the default database only: `transaction.on_commit` is attached to
+  it, and the commit callback reloads from it. A save or a delete on another
+  alias is not skipped today: it waits for the default database's commit and
+  reloads, or empties, the default database's group with the same primary
+  key, so it can corrupt the index. A save or a delete on another alias
+  should attach its callback to the signal's `using` and reload from that
+  database. The reload should also read from the database the save wrote,
+  with `.using(alias)`, not from the one the router picks for reads: a
+  lagging replica would miss a new instance (taken for deleted since the
+  save, so nothing is sent) or return the old row. The test needs a second
+  database in the test settings.
 
 ## Not planned here
 
