@@ -158,17 +158,22 @@ def _extractors_to_run(
     return [(model, rag.new_extractor(model)) for model in models]
 
 
+def _distinct(instances: Iterable[Model]) -> Iterator[Model]:
+    """Yield ``instances``, skipping the ones whose source key was already yielded."""
+    seen_keys: set[str] = set()
+    for instance in instances:
+        source_key = _source_key(instance)
+        if source_key not in seen_keys:
+            seen_keys.add(source_key)
+            yield instance
+
+
 def _groups(
     instances: Iterable[Model], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
-    """Group the documents of ``instances`` by source key."""
+    """Group the documents of ``instances`` by source key, each instance once."""
     groups: dict[str, list[NormalizedDocument]] = {}
-    seen: set[str] = set()
-    for instance in instances:
-        key = _source_key(instance)
-        if key in seen:
-            continue
-        seen.add(key)
+    for instance in _distinct(instances):
         for document in _own_documents(instance, extractor):
             groups.setdefault(document.source_key, []).append(document)
     return groups
