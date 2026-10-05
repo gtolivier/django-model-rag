@@ -22,7 +22,7 @@ _DOCUMENT_ORDER = "pk"
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    ``extractor``'s get_queryset() shapes how they are loaded.
+    ``extractor``'s get_queryset() decides which are loaded, and how.
     """
     hooked = _hooked_queryset(
         model._default_manager.order_by(_DOCUMENT_ORDER), extractor, model
