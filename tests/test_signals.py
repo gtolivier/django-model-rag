@@ -60,6 +60,39 @@ def test_saving_a_registered_instance_replaces_its_group_once_its_transaction_co
     ]
 
 
+@pytest.mark.django_db
+def test_a_save_sends_the_documents_of_the_instance_as_committed(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        # A queryset update sends no signal and leaves the saved Python object
+        # as it was: only the committed row carries the new name.
+        Category.objects.filter(pk=lighting.pk).update(name="Lamps")
+
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lamps",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
