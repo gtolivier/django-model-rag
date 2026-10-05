@@ -94,6 +94,10 @@ class FailingOnKeyOutput(TrackedRecordingOutput):
         super().replace(groups)
 
 
+# The dotted path of the tracked backend that fails on one source key.
+FAILING_ON_KEY_BACKEND = "tests.recording.FailingOnKeyOutput"
+
+
 class PruneOnlyOutput:
     """A broken output backend: a callable prune, but no replace at all.
 

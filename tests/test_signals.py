@@ -12,6 +12,7 @@ from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
+    FAILING_ON_KEY_BACKEND,
     TRACKED_BACKEND,
     FailingReplaceError,
     TrackedRecordingOutput,
@@ -770,7 +771,7 @@ def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_g
     built_outputs.clear()
 
     settings.MODEL_RAG_OUTPUT = {
-        "BACKEND": "tests.recording.FailingOnKeyOutput",
+        "BACKEND": FAILING_ON_KEY_BACKEND,
         "OPTIONS": {"failing_source_key": f"testapp.category:{lighting.pk}"},
     }
 
@@ -828,7 +829,7 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     built_outputs.clear()
 
     settings.MODEL_RAG_OUTPUT = {
-        "BACKEND": "tests.recording.FailingOnKeyOutput",
+        "BACKEND": FAILING_ON_KEY_BACKEND,
         "OPTIONS": {"failing_source_key": f"testapp.category:{lighting_pk}"},
     }
 
