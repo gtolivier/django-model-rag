@@ -205,14 +205,15 @@ refactoring, not from the prototype.
   shapes the queryset the instances are loaded from (`select_related`,
   `prefetch_related`…); it must return a `QuerySet`, and the pipeline
   iterates it with `iterator(chunk_size=1000)`. A single-instance run only
-  asks it whether it keeps the instance (feature 8). The extractor built by `register()` uses it to load
-  only the columns it reads: its own declared fields and single-field
-  options, the related columns its lookup paths name, and the text columns
-  of followed relations with the fields that link them back. Every own
-  column stays loaded when `get_absolute_url()` or `str(instance)` may read
-  any of them. The pipeline no longer duck-types extractors, and the
-  single-field options (`title_field`, `language_field`, `url_field`) are
-  listed once. Two cases are left open, with no test:
+  asks it whether it keeps the instance (feature 8). The extractor built
+  by `register()` uses it to load only the columns it reads: its own
+  declared fields and single-field options, the related columns its lookup
+  paths name, and the text columns of followed relations with the fields
+  that link them back. Every own column stays loaded when
+  `get_absolute_url()` or `str(instance)` may read any of them. The
+  pipeline no longer duck-types extractors, and the single-field options
+  (`title_field`, `language_field`, `url_field`) are listed once. Two
+  cases are left open, with no test:
   - `get_queryset()` must return a queryset of the registered model itself,
     so the queryset of one of its proxy models is refused — although it
     holds the same rows, under a class whose methods (`__str__`,
