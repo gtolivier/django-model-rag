@@ -12,6 +12,7 @@ from django_model_rag import DocumentOutput, SyncPipeline
 _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 _BACKEND_KEY = "BACKEND"
 _OPTIONS_KEY = "OPTIONS"
+_REPLACE_METHOD = "replace"
 
 
 class Command(BaseCommand):
@@ -28,6 +29,7 @@ def _configured_output() -> DocumentOutput:
     """
     output_setting = _output_setting()
     output_class = _backend_class(output_setting[_BACKEND_KEY])
+    _require_callable_replace(output_class)
     return output_class(**output_setting.get(_OPTIONS_KEY, {}))
 
 
@@ -38,10 +40,16 @@ def _backend_class(backend: str) -> type[DocumentOutput]:
     except ImportError as error:
         message = f"The {_BACKEND_KEY} {backend} cannot be imported."
         raise ImproperlyConfigured(message) from error
-    if not callable(getattr(output_class, "replace", None)):
-        message = f"The output {output_class.__name__} needs a callable replace."
-        raise ImproperlyConfigured(message)
     return output_class
+
+
+def _require_callable_replace(output_class: type[DocumentOutput]) -> None:
+    """Fail if `output_class` has no callable replace method."""
+    if not callable(getattr(output_class, _REPLACE_METHOD, None)):
+        message = (
+            f"The output {output_class.__name__} needs a callable {_REPLACE_METHOD}."
+        )
+        raise ImproperlyConfigured(message)
 
 
 def _output_setting() -> dict[str, Any]:
