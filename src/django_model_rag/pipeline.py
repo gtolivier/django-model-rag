@@ -199,5 +199,13 @@ class SyncPipeline:
         if instance.pk is None:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
-        documents = list(_own_documents(instance, extractor))
+        model = type(instance)
+        hooked = _checked_queryset(
+            extractor.get_queryset(model._default_manager.all()), extractor, model
+        )
+        documents = (
+            list(_own_documents(instance, extractor))
+            if hooked.filter(pk=instance.pk).exists()
+            else []
+        )
         self._output.replace({_source_key(instance): documents})
