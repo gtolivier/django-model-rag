@@ -26,16 +26,17 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         pipeline = SyncPipeline(_configured_output())
-        failed: list[str] = []
+        failed_labels: list[str] = []
         for model in _models_to_sync(options[_LABELS_ARGUMENT]):
+            label = model._meta.label_lower
             try:
                 pipeline.run([model])
             except Exception:  # one model's failure must not stop the others
-                failed.append(model._meta.label_lower)
+                failed_labels.append(label)
                 continue
-            self.stdout.write(f"{model._meta.label_lower}: synced")
-        if failed:
-            message = f"Failed to sync: {', '.join(failed)}."
+            self.stdout.write(f"{label}: synced")
+        if failed_labels:
+            message = f"Failed to sync: {', '.join(failed_labels)}."
             raise CommandError(message)
 
 
