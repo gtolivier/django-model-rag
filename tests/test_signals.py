@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
@@ -469,4 +470,42 @@ def test_saving_a_registered_instance_in_a_rolled_back_transaction_sends_nothing
         Category.objects.create(name="Lighting")
         raise _RolledBackError
 
+    assert _replaced(built_outputs) == []
+
+
+class _ExtractionError(Exception):
+    """Raised by an extractor that fails on the instance it is given."""
+
+
+@pytest.mark.django_db
+def test_an_extractor_failing_at_the_commit_of_a_save_is_logged_without_raising(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            raise _ExtractionError
+
+    # The commit callbacks run, and an error escaping them would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger="django_model_rag"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting = Category.objects.create(name="Lighting")
+
+    [record] = [
+        record for record in caplog.records if record.name == "django_model_rag"
+    ]
+    assert record.levelno == logging.ERROR
+    # The record says which instance failed, and carries the error itself.
+    assert f"testapp.category:{lighting.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], _ExtractionError)
+    # Not even an empty group: what the output held for the instance is kept.
     assert _replaced(built_outputs) == []
