@@ -30,5 +30,8 @@ def _configured_output() -> DocumentOutput:
         message = f"The {_OUTPUT_SETTING} setting is required."
         raise ImproperlyConfigured(message)
     output_setting = getattr(settings, _OUTPUT_SETTING)
+    if not isinstance(output_setting, dict):
+        message = f"The {_OUTPUT_SETTING} setting must be a dict."
+        raise ImproperlyConfigured(message)
     output_class: type[DocumentOutput] = import_string(output_setting[_BACKEND_KEY])
     return output_class(**output_setting.get(_OPTIONS_KEY, {}))
