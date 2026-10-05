@@ -34,3 +34,7 @@ class ConsoleOutput:
             for document in documents:
                 print(document.title)
                 print(document.text)
+
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
+        """Write the model label and the number of source keys kept."""
+        print(f"{model_label} kept {len(kept_keys)}")
