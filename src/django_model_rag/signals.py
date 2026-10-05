@@ -6,7 +6,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Model
 
-from django_model_rag.output import configured_output
+from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
 
@@ -28,6 +28,9 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
     """Replace the group of a saved registered instance once its transaction commits."""
     if sender not in rag.registered_models():
         return
+
+    # Fail at the save, not at the commit, if the output is misconfigured.
+    check_output_configuration()
 
     # delete() clears the primary key of the instance: keep it for the commit.
     saved_pk = instance.pk

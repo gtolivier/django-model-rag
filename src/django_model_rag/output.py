@@ -64,9 +64,20 @@ def configured_output() -> DocumentOutput:
     Its OPTIONS, if any, are passed to that class as keyword arguments.
     """
     output_setting = _output_setting()
+    output_class = _validated_output_class(output_setting)
+    return output_class(**_options(output_setting))
+
+
+def check_output_configuration() -> None:
+    """Fail unless the output setting names a usable output, building nothing."""
+    _validated_output_class(_output_setting())
+
+
+def _validated_output_class(output_setting: dict[str, Any]) -> type[DocumentOutput]:
+    """Return the class named by the BACKEND of `output_setting`, if usable."""
     output_class = _backend_class(output_setting[_BACKEND_KEY])
     _require_callable_methods(output_class)
-    return output_class(**_options(output_setting))
+    return output_class
 
 
 def _options(output_setting: dict[str, Any]) -> Any:
