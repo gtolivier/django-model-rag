@@ -14,6 +14,9 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
     """Replace the group of a saved registered instance once its transaction commits."""
     if sender not in rag.registered_models():
         return
-    transaction.on_commit(
-        lambda: SyncPipeline(configured_output()).run_instance(instance)
-    )
+
+    def run() -> None:
+        committed = sender._base_manager.get(pk=instance.pk)
+        SyncPipeline(configured_output()).run_instance(committed)
+
+    transaction.on_commit(run)
