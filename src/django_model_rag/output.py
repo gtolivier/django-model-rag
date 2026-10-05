@@ -82,7 +82,12 @@ def _require_accepted_options(
 ) -> None:
     """Fail unless `output_class` can be built with `options`, building nothing."""
     try:
-        inspect.signature(output_class).bind(**options)
+        signature = inspect.signature(output_class)
+    except ValueError:
+        # No readable signature (e.g. a C class): nothing to check against.
+        return
+    try:
+        signature.bind(**options)
     except TypeError as error:
         message = f"The output {output_class.__name__} rejects its options: {error}"
         raise ImproperlyConfigured(message) from error
