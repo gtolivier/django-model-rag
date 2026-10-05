@@ -26,6 +26,13 @@ def _configured_output() -> DocumentOutput:
 
     Its OPTIONS, if any, are passed to that class as keyword arguments.
     """
+    output_setting = _output_setting()
+    output_class: type[DocumentOutput] = import_string(output_setting[_BACKEND_KEY])
+    return output_class(**output_setting.get(_OPTIONS_KEY, {}))
+
+
+def _output_setting() -> dict[str, Any]:
+    """Return the output setting, failing if it is missing or not a dict."""
     if not hasattr(settings, _OUTPUT_SETTING):
         message = f"The {_OUTPUT_SETTING} setting is required."
         raise ImproperlyConfigured(message)
@@ -33,5 +40,4 @@ def _configured_output() -> DocumentOutput:
     if not isinstance(output_setting, dict):
         message = f"The {_OUTPUT_SETTING} setting must be a dict."
         raise ImproperlyConfigured(message)
-    output_class: type[DocumentOutput] = import_string(output_setting[_BACKEND_KEY])
-    return output_class(**output_setting.get(_OPTIONS_KEY, {}))
+    return output_setting
