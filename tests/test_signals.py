@@ -10,7 +10,7 @@ from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import FailingReplaceError, TrackedRecordingOutput
-from tests.testapp.models import Category, CategoryProxy, Product
+from tests.testapp.models import Category, CategoryProxy, FeaturedProduct, Product
 
 # The dotted path of the backend whose built instances the tests read back.
 TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
@@ -92,6 +92,53 @@ def test_saving_through_a_proxy_replaces_the_group_of_the_registered_model(
                     source_app_label="testapp",
                     source_model="category",
                     source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_multi_table_child_replaces_the_group_of_its_registered_parent(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the parent is registered, not its multi-table child.
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of its own, unregistered: only the child's save
+    # below is observed.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    built_outputs.clear()
+
+    # Django sends post_save once, with the child as its sender, not Product.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp = FeaturedProduct.objects.create(
+            name="Desk lamp",
+            description="A lamp for the desk.",
+            price="25.00",
+            category=lighting,
+            tagline="Light up your work",
+        )
+        assert _replaced(built_outputs) == []
+
+    # The group is the parent row's, under the parent's label, and its
+    # document is extracted from a Product, not from the child.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
                 ),
             ],
         }
