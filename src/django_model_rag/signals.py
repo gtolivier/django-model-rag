@@ -1,4 +1,4 @@
-"""Signal receivers that keep the output in step with saved instances."""
+"""Signal receivers that keep the output in step with saved and deleted instances."""
 
 from typing import Any
 
@@ -19,6 +19,11 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
+def _replace_group(instance: Model) -> None:
+    """Send the group of ``instance`` to a newly built configured output."""
+    SyncPipeline(configured_output()).run_instance(instance)
+
+
 def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
     if sender not in rag.registered_models():
@@ -31,7 +36,7 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
         committed_instance = _committed_instance(sender, saved_pk)
         # Deleted since the save: the delete's own callback sends the empty group.
         if committed_instance is not None:
-            SyncPipeline(configured_output()).run_instance(committed_instance)
+            _replace_group(committed_instance)
 
     transaction.on_commit(replace_group_as_committed)
 
@@ -47,6 +52,6 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     def replace_group_with_an_empty_one() -> None:
         # A bare instance makes run_instance() send an empty group, as the row
         # is gone.
-        SyncPipeline(configured_output()).run_instance(sender(pk=deleted_pk))
+        _replace_group(sender(pk=deleted_pk))
 
     transaction.on_commit(replace_group_with_an_empty_one)
