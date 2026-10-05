@@ -44,10 +44,12 @@ def _backend_class(backend: str) -> type[DocumentOutput]:
 
 
 def _require_callable_methods(output_class: type[DocumentOutput]) -> None:
-    """Fail if `output_class` lacks a callable replace or prune method."""
-    for method in _REQUIRED_METHODS:
-        if not callable(getattr(output_class, method, None)):
-            message = f"The output {output_class.__name__} needs a callable {method}."
+    """Fail if `output_class` lacks a callable for any of `_REQUIRED_METHODS`."""
+    for method_name in _REQUIRED_METHODS:
+        if not callable(getattr(output_class, method_name, None)):
+            message = (
+                f"The output {output_class.__name__} needs a callable {method_name}."
+            )
             raise ImproperlyConfigured(message)
 
 
