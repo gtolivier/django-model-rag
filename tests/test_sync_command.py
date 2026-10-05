@@ -7,7 +7,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management import CommandError, call_command
 from pytest_django import Settings
 
-from django_model_rag import rag
+from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
     PruneOnlyOutput,
     ReplaceOnlyOutput,
@@ -235,6 +235,30 @@ def test_the_command_writes_one_synced_line_per_model_in_run_order(
         "testapp.product: synced",
         "testapp.category: synced",
     ]
+
+
+@pytest.mark.django_db
+def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Category fails and is registered first: stopping at the failure would
+    # leave Product unrun; a Category row makes its extraction actually run.
+    Category.objects.create(name="Tools")
+
+    @rag.register_extractor(Category)
+    class FailingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            message = f"cannot extract {instance.name}"
+            raise RuntimeError(message)
+
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    with pytest.raises(CommandError, match=re.escape("testapp.category")):
+        call_command("sync_model_rag")
+
+    [output] = built_outputs
+    assert output.pruned == [("testapp.product", set())]
 
 
 @pytest.mark.django_db
