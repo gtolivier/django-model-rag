@@ -35,9 +35,17 @@ def _registered_model(sender: type[Model]) -> type[Model] | None:
     """Return the registered model whose group ``sender``'s instances feed, if any."""
     # A proxy sends signals under its own sender: its group is the concrete model's.
     concrete_model = sender._meta.concrete_model
-    if concrete_model not in rag.registered_models():
+    if concrete_model is None:
         return None
-    return concrete_model
+    # A multi-table child feeds the group of its registered parent.
+    candidates: tuple[type[Model], ...] = (
+        concrete_model,
+        *concrete_model._meta.get_parent_list(),
+    )
+    for candidate in candidates:
+        if candidate in rag.registered_models():
+            return candidate
+    return None
 
 
 def _replace_group(instance: Model) -> None:
