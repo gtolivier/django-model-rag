@@ -40,15 +40,21 @@ class Command(BaseCommand):
                 pipeline.run([model])
             except Exception as error:  # one model's failure must not stop the others
                 failed_labels.append(label)
-                self.stderr.write(f"{label}: {type(error).__name__}: {error}")
-                if options[_TRACEBACK_OPTION]:
-                    self.stderr.write(traceback.format_exc().rstrip())
+                self._write_failure(label, error, options)
                 continue
             if options[_VERBOSITY_OPTION] > _SILENT:
                 self.stdout.write(f"{label}: synced")
         if failed_labels:
             message = f"Failed to sync: {', '.join(failed_labels)}."
             raise CommandError(message)
+
+    def _write_failure(
+        self, label: str, error: Exception, options: dict[str, Any]
+    ) -> None:
+        """Write the failure of model `label` on stderr, with its traceback if asked."""
+        self.stderr.write(f"{label}: {type(error).__name__}: {error}")
+        if options[_TRACEBACK_OPTION]:
+            self.stderr.write("".join(traceback.format_exception(error)).rstrip())
 
 
 def _models_to_sync(labels: list[str]) -> list[type[Model]]:
