@@ -139,6 +139,22 @@ def test_the_command_runs_a_registered_model_into_the_configured_backend(
 
 
 @pytest.mark.django_db
+def test_the_command_prunes_every_registered_model_in_registration_order(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Product registered before Category: the reverse of alphabetical and of
+    # declaration order, so neither could pass for registration order.
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    call_command("sync_model_rag")
+
+    [output] = built_outputs
+    assert output.pruned == [("testapp.product", set()), ("testapp.category", set())]
+
+
+@pytest.mark.django_db
 def test_the_command_passes_the_output_options_to_the_backend_as_keyword_arguments(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
