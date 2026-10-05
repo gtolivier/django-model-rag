@@ -1,6 +1,7 @@
 """Signal receivers that keep the output in step with saved and deleted instances."""
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from django.conf import settings
@@ -31,21 +32,26 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
-def _registered_model(sender: type[Model]) -> type[Model] | None:
-    """Return the registered model whose group ``sender``'s instances feed, if any."""
+def _registered_models(sender: type[Model]) -> list[type[Model]]:
+    """Return the registered models whose groups ``sender``'s instances feed."""
     # A proxy sends signals under its own sender: its group is the concrete model's.
     concrete_model = sender._meta.concrete_model
     if concrete_model is None:
-        return None
-    # A multi-table child feeds the group of its registered parent.
+        return []
+    # A multi-table child feeds the group of its registered parents too.
     candidates: tuple[type[Model], ...] = (
         concrete_model,
         *concrete_model._meta.get_parent_list(),
     )
-    for candidate in candidates:
-        if candidate in rag.registered_models():
-            return candidate
-    return None
+    return [
+        candidate for candidate in candidates if candidate in rag.registered_models()
+    ]
+
+
+def _registered_model(sender: type[Model]) -> type[Model] | None:
+    """Return the nearest registered model whose group ``sender`` feeds, if any."""
+    registered_models = _registered_models(sender)
+    return registered_models[0] if registered_models else None
 
 
 def _replace_group(instance: Model) -> None:
@@ -60,8 +66,8 @@ def sync_saved_instance(
     if raw or not _signals_enabled():
         return
 
-    registered_model = _registered_model(sender)
-    if registered_model is None:
+    registered_models = _registered_models(sender)
+    if not registered_models:
         return
 
     # Fail at the save, not at the commit, if the output is misconfigured.
@@ -69,6 +75,13 @@ def sync_saved_instance(
 
     # delete() clears the primary key of the instance: keep it for the commit.
     saved_pk = instance.pk
+
+    for registered_model in registered_models:
+        transaction.on_commit(_group_replacer(registered_model, saved_pk))
+
+
+def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
+    """Return a commit callback replacing the group of a saved instance."""
 
     def replace_group_as_committed() -> None:
         committed_instance = _committed_instance(registered_model, saved_pk)
@@ -85,7 +98,7 @@ def sync_saved_instance(
                 build_source_key(registered_model._meta.label_lower, saved_pk),
             )
 
-    transaction.on_commit(replace_group_as_committed)
+    return replace_group_as_committed
 
 
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
