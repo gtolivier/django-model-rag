@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from django_model_rag import NormalizedDocument
@@ -87,3 +89,25 @@ def test_console_output_states_the_removal_of_each_empty_group_key(
     kept_lines = [line for line in lines if "testapp.page:42" in line]
     assert kept_lines, "the key with documents is not written"
     assert not any("removed" in line for line in kept_lines)
+
+
+def test_console_output_prune_writes_each_model_label_with_its_kept_key_count(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    kept_pages = {"testapp.page:7", "testapp.page:42", "testapp.page:99"}
+
+    output = ConsoleOutput()
+    output.prune("testapp.page", kept_pages)
+    output.prune("testapp.product", set())
+
+    # No exact wording is frozen: each label must share a line with its own
+    # count and no other number, so a constant count cannot pass; the kept
+    # keys themselves are not listed.
+    written = capsys.readouterr().out
+    lines = written.splitlines()
+    for label, count in (("testapp.page", "3"), ("testapp.product", "0")):
+        assert any(
+            label in line and re.findall(r"\d+", line) == [count] for line in lines
+        ), f"no line writes {label!r} with its count {count}"
+    for key in kept_pages:
+        assert key not in written, f"kept key {key!r} is written"
