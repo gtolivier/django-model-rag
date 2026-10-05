@@ -47,6 +47,11 @@ def _registered_models(sender: type[Model]) -> list[type[Model]]:
     return [candidate for candidate in candidates if candidate in registered]
 
 
+def _is_synced(registered_models: list[type[Model]]) -> bool:
+    """Return whether a change feeding the groups of ``registered_models`` is synced."""
+    return bool(registered_models) and _signals_enabled()
+
+
 def _schedule_commit_callbacks(
     registered_models: list[type[Model]],
     pk: Any,
@@ -57,7 +62,7 @@ def _schedule_commit_callbacks(
     Each callback gets ``pk`` as it is now: delete() clears the primary key of
     the instance before the commit. Nothing runs while the signals are off.
     """
-    if not registered_models or not _signals_enabled():
+    if not _is_synced(registered_models):
         return
 
     # Fail at the save or the delete, not at the commit, if the output is
@@ -100,7 +105,7 @@ def check_output_before_save(
     In autocommit the row is committed as soon as it is written, too late for
     the check made when the commit callbacks are scheduled.
     """
-    if raw or not _registered_models(sender) or not _signals_enabled():
+    if raw or not _is_synced(_registered_models(sender)):
         return
 
     check_output_configuration()
