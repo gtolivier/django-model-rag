@@ -393,6 +393,33 @@ def test_saving_a_registered_instance_with_signals_off_sends_nothing_and_raises_
     assert callbacks == []
 
 
+@pytest.mark.django_db
+def test_deleting_a_registered_instance_with_signals_off_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_SIGNALS = False
+    # A working output, so that only the setting can keep the delete from
+    # sending to it.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    lighting = Category.objects.create(name="Lighting")
+
+    # The commit callbacks run: one sending anything would build an output.
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        lighting.delete()
+
+    # Nothing is even deferred to the commit, and no output is built.
+    assert callbacks == []
+    assert built_outputs == []
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
