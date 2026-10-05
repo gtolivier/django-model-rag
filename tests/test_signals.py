@@ -168,6 +168,47 @@ def test_deleting_a_registered_instance_replaces_its_group_with_an_empty_one(
 
 
 @pytest.mark.django_db
+def test_deleting_a_queryset_empties_the_group_of_each_deleted_instance(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of their own, so that only the delete's commit is
+    # observed below.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        lamps = Category.objects.create(name="Lamps")
+        tools = Category.objects.create(name="Tools")
+    built_outputs.clear()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # One queryset delete for several instances; Tools is kept.
+        Category.objects.exclude(pk=tools.pk).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per instance is not what this test is about.
+    received = {
+        source_key: list(group)
+        for groups in _replaced(built_outputs)
+        for source_key, group in groups.items()
+    }
+    # An empty group per deleted instance, and nothing for the kept one.
+    assert received == {
+        f"testapp.category:{lighting.pk}": [],
+        f"testapp.category:{lamps.pk}": [],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
