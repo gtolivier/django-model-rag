@@ -409,7 +409,10 @@ previous documents until its next save or the next `sync_model_rag`, and
 the other instances of the transaction are still sent. A missing or invalid
 `MODEL_RAG_OUTPUT` is not logged: it raises `ImproperlyConfigured` at the
 save or the delete, so that a forgotten setting cannot silently stop the
-indexing.
+indexing. A delete raising this way is rolled back. A save is not, by
+itself: Django sends `post_save` once the row is written, so in autocommit
+the row stays written although `save()` raised; inside a transaction
+(`atomic()`, `ATOMIC_REQUESTS`), the exception rolls it back.
 
 **Turning them off.** `MODEL_RAG_SIGNALS = False` (default `True`) makes the
 signals send nothing and check nothing. Your test settings need either

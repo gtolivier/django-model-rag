@@ -345,6 +345,11 @@ reference.
     queue's, probably the project's call;
   - a context manager pausing the signals for a bulk import followed by a
     sync (`with rag.signals_paused():`), on top of the setting;
+  - batching: each saved or deleted instance gets its own commit callback,
+    which builds its own output and makes its own `replace()` call, so
+    deleting a queryset of 10,000 rows makes 10,000 of each, in the
+    committing request. Batching them per transaction needs state shared
+    by the callbacks of one transaction; background tasks may settle it;
   - a proxy registered instead of its concrete model gets no sync from the
     signals, which look up the concrete model and its parents;
   - a proxy defined after its concrete model is registered gets no
