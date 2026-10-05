@@ -1,6 +1,7 @@
 from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
+from django.db import transaction
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
@@ -57,3 +58,28 @@ def test_saving_a_registered_instance_replaces_its_group_once_its_transaction_co
             ],
         }
     ]
+
+
+class _RolledBackError(Exception):
+    """Raised inside an atomic block to roll its transaction back."""
+
+
+@pytest.mark.django_db(transaction=True)
+def test_saving_a_registered_instance_in_a_rolled_back_transaction_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # A real transaction (transaction=True), so that leaving the atomic block
+    # on an exception rolls it back rather than a savepoint of the test's own.
+    with pytest.raises(_RolledBackError), transaction.atomic():
+        Category.objects.create(name="Lighting")
+        raise _RolledBackError
+
+    assert _replaced(built_outputs) == []
