@@ -14,6 +14,11 @@ from django_model_rag.registry import rag
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 
 
+def _signals_enabled() -> bool:
+    """Return whether the signal receivers sync anything, as the settings say."""
+    return bool(getattr(settings, _SIGNALS_SETTING, True))
+
+
 def _committed_instance(model: type[Model], pk: Any) -> Model | None:
     """Return the instance of ``model`` with primary key ``pk`` as committed, if any."""
     try:
@@ -29,7 +34,7 @@ def _replace_group(instance: Model) -> None:
 
 def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
-    if not getattr(settings, _SIGNALS_SETTING, True):
+    if not _signals_enabled():
         return
 
     if sender not in rag.registered_models():
@@ -52,7 +57,7 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
 
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a deleted registered instance with an empty one."""
-    if not getattr(settings, _SIGNALS_SETTING, True):
+    if not _signals_enabled():
         return
 
     if sender not in rag.registered_models():
