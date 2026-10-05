@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 
 import pytest
 from django.db.models import QuerySet
@@ -52,7 +53,7 @@ class FlatReplaceOutput:
     def replace(self, documents: Sequence[NormalizedDocument]) -> None:
         pass
 
-    def prune(self, model_label: str, kept_keys: set[str]) -> None:
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
         pass
 
 
@@ -62,6 +63,26 @@ def test_a_class_whose_replace_takes_a_flat_sequence_is_not_a_document_output() 
     # protocol ever accepted a flat sequence, warn_unused_ignores would flag
     # this line.
     output: DocumentOutput = FlatReplaceOutput()  # type: ignore[assignment]
+
+    assert hasattr(output, "prune")
+
+
+class MutableSetPruneOutput:
+    """An output whose prune requires the kept keys as a mutable set."""
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        pass
+
+    def prune(self, model_label: str, kept_keys: set[str]) -> None:
+        pass
+
+
+def test_a_class_whose_prune_takes_a_mutable_set_is_not_a_document_output() -> None:
+    # The type checker must reject the assignment: prune receives the kept
+    # keys read-only, so an output may not rely on mutating them, and the
+    # pipeline may hand a frozenset. If the protocol ever required a mutable
+    # set, warn_unused_ignores would flag this line.
+    output: DocumentOutput = MutableSetPruneOutput()  # type: ignore[assignment]
 
     assert hasattr(output, "prune")
 

@@ -1,6 +1,7 @@
 """An output that records what the pipeline hands it, and runs that read it back."""
 
 from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 
 from django.db.models import Model
 
@@ -23,7 +24,7 @@ class RecordingOutput:
         self.replaced.append({key: list(group) for key, group in groups.items()})
         self.calls.append("replace")
 
-    def prune(self, model_label: str, kept_keys: set[str]) -> None:
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
         self.pruned.append((model_label, set(kept_keys)))
         self.calls.append("prune")
 
