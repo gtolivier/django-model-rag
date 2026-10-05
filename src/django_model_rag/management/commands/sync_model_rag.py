@@ -27,13 +27,18 @@ def _configured_output() -> DocumentOutput:
     Its OPTIONS, if any, are passed to that class as keyword arguments.
     """
     output_setting = _output_setting()
-    backend = output_setting[_BACKEND_KEY]
+    output_class = _backend_class(output_setting[_BACKEND_KEY])
+    return output_class(**output_setting.get(_OPTIONS_KEY, {}))
+
+
+def _backend_class(backend: str) -> type[DocumentOutput]:
+    """Import the output class at the dotted path `backend`."""
     try:
         output_class: type[DocumentOutput] = import_string(backend)
     except ImportError as error:
         message = f"The {_BACKEND_KEY} {backend} cannot be imported."
         raise ImproperlyConfigured(message) from error
-    return output_class(**output_setting.get(_OPTIONS_KEY, {}))
+    return output_class
 
 
 def _output_setting() -> dict[str, Any]:
