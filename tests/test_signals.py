@@ -17,7 +17,13 @@ from tests.recording import (
     FailingReplaceError,
     TrackedRecordingOutput,
 )
-from tests.testapp.models import Category, CategoryProxy, FeaturedProduct, Product
+from tests.testapp.models import (
+    Category,
+    CategoryProxy,
+    ClearanceProduct,
+    FeaturedProduct,
+    Product,
+)
 
 # The logger the package reports a failed commit callback on.
 PACKAGE_LOGGER = "django_model_rag"
@@ -168,6 +174,52 @@ def test_saving_a_multi_table_child_replaces_the_group_of_its_registered_parent(
                     source_app_label="testapp",
                     source_model="product",
                     source_pk=lamp.pk,
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_child_with_a_primary_key_of_its_own_replaces_its_parents_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the parent is registered, not its multi-table child.
+    _register_products_by_name()
+
+    # Created in a commit of its own, unregistered: only the child's save
+    # below is observed.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    built_outputs.clear()
+
+    # The child's primary key is its code, not the Product's: the parent row
+    # is reached by the explicit parent link, ``product``.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp = ClearanceProduct.objects.create(
+            code="CLR-1",
+            name="Desk lamp",
+            description="A lamp for the desk.",
+            price="25.00",
+            category=lighting,
+        )
+        assert _replaced(built_outputs) == []
+
+    # The group is the parent row's, under the parent's label and the parent's
+    # primary key, not the child's code, and its document is extracted from
+    # the Product row.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.product_id}": [
+                NormalizedDocument(
+                    text="Desk lamp",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.product_id,
                 ),
             ],
         }
