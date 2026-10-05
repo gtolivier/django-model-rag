@@ -21,7 +21,11 @@ class ConsoleOutput:
     """Writes the documents to standard output."""
 
     def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
-        """Write each group: its source key, then its documents' titles and texts."""
+        """Write each group: its source key, then its documents' titles and texts.
+
+        An empty group means its source key's documents are removed: it is
+        written as that removal.
+        """
         for key, documents in groups.items():
             if not documents:
                 print(f"{key} removed")
