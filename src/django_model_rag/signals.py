@@ -68,19 +68,27 @@ def _schedule_commit_callbacks(
         transaction.on_commit(build_callback(registered_model, pk))
 
 
-def _replace_group(instance: Model, registered_model: type[Model], pk: Any) -> None:
-    """Send the group of ``instance`` to a newly built configured output.
-
-    A failure is logged with the source key of ``registered_model`` and ``pk``.
-    """
+def _send_group(
+    send: Callable[[], None], registered_model: type[Model], pk: Any
+) -> None:
+    """Run ``send``, logging a failure with the source key of the model and ``pk``."""
     try:
-        SyncPipeline(configured_output()).run_instance(instance)
+        send()
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception(
             "Syncing %s failed",
             build_source_key(registered_model._meta.label_lower, pk),
         )
+
+
+def _replace_group(instance: Model, registered_model: type[Model], pk: Any) -> None:
+    """Send the group of ``instance`` to a newly built configured output."""
+    _send_group(
+        lambda: SyncPipeline(configured_output()).run_instance(instance),
+        registered_model,
+        pk,
+    )
 
 
 def sync_saved_instance(
@@ -123,8 +131,13 @@ def _group_emptier(
     """Return a commit callback emptying the group of a deleted instance."""
 
     def replace_group_with_an_empty_one() -> None:
-        # A bare instance makes run_instance() send an empty group, as the row
-        # is gone.
-        _replace_group(registered_model(pk=deleted_pk), registered_model, deleted_pk)
+        # The row is gone: the empty group goes straight to the output, with no
+        # extractor involved.
+        source_key = build_source_key(registered_model._meta.label_lower, deleted_pk)
+        _send_group(
+            lambda: configured_output().replace({source_key: []}),
+            registered_model,
+            deleted_pk,
+        )
 
     return replace_group_with_an_empty_one
