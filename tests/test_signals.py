@@ -1,10 +1,11 @@
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import pytest
 from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
-from django.db import transaction
+from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
 from django.db.models.signals import post_delete
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
@@ -814,3 +815,69 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     assert isinstance(record.exc_info[1], FailingReplaceError)
     # The other instance's empty group still reaches an output.
     assert _replaced(built_outputs) == [{f"testapp.category:{tools_pk}": []}]
+
+
+@pytest.mark.django_db
+def test_a_database_error_reloading_a_saved_instance_is_logged_without_raising(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_categories_by_name()
+
+    # Created in a commit of their own, so that the database can be made to
+    # fail on reading one of them back.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        tools = Category.objects.create(name="Tools")
+    built_outputs.clear()
+
+    reload_error = DatabaseError("the database is unreachable")
+
+    def fail_reading_lighting(
+        execute: Callable[[str, Any, bool, dict[str, Any]], Any],
+        sql: str,
+        params: Any,
+        many: bool,
+        context: dict[str, Any],
+    ) -> Any:
+        # Only reading Lighting's row fails: its save, an UPDATE, goes through.
+        if sql.startswith("SELECT") and params and lighting.pk in params:
+            raise reload_error
+        return execute(sql, params, many, context)
+
+    # The failing instance is saved first, so that its failure comes before the
+    # other instance's group is sent. An error escaping the commit callbacks
+    # would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        connection.execute_wrapper(fail_reading_lighting),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+        tools.name = "Hardware"
+        tools.save()
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record says which instance failed, and carries the error itself.
+    assert f"testapp.category:{lighting.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert record.exc_info[1] is reload_error
+    # The other instance's group still reaches an output.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.category:{tools.pk}": [
+                NormalizedDocument(
+                    text="Hardware",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=tools.pk,
+                ),
+            ],
+        }
+    ]
