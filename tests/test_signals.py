@@ -9,7 +9,7 @@ from django.db.models.signals import post_delete
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
-from tests.recording import TrackedRecordingOutput
+from tests.recording import FailingReplaceError, TrackedRecordingOutput
 from tests.testapp.models import Category, Product
 
 # The dotted path of the backend whose built instances the tests read back.
@@ -509,3 +509,64 @@ def test_an_extractor_failing_at_the_commit_of_a_save_is_logged_without_raising(
     assert isinstance(record.exc_info[1], _ExtractionError)
     # Not even an empty group: what the output held for the instance is kept.
     assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of their own, so that their source keys are known
+    # before the output is configured to fail on one of them.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        tools = Category.objects.create(name="Tools")
+    built_outputs.clear()
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": "tests.recording.FailingOnKeyOutput",
+        "OPTIONS": {"failing_source_key": f"testapp.category:{lighting.pk}"},
+    }
+
+    # The failing instance is saved first, so that its failure comes before the
+    # other instance's group is sent. An error escaping the commit callbacks
+    # would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger="django_model_rag"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+        tools.name = "Hardware"
+        tools.save()
+
+    [record] = [
+        record for record in caplog.records if record.name == "django_model_rag"
+    ]
+    assert record.levelno == logging.ERROR
+    # The record says which instance failed, and carries the error itself.
+    assert f"testapp.category:{lighting.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+    # The other instance's group still reaches an output.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.category:{tools.pk}": [
+                NormalizedDocument(
+                    text="Hardware",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=tools.pk,
+                ),
+            ],
+        }
+    ]
