@@ -11,6 +11,7 @@ from django_model_rag import DocumentOutput, SyncPipeline
 
 _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 _BACKEND_KEY = "BACKEND"
+_OPTIONS_KEY = "OPTIONS"
 
 
 class Command(BaseCommand):
@@ -25,7 +26,6 @@ def _configured_output() -> DocumentOutput:
     if not hasattr(settings, _OUTPUT_SETTING):
         message = f"The {_OUTPUT_SETTING} setting is required."
         raise ImproperlyConfigured(message)
-    output_class: type[DocumentOutput] = import_string(
-        getattr(settings, _OUTPUT_SETTING)[_BACKEND_KEY]
-    )
-    return output_class()
+    output_setting = getattr(settings, _OUTPUT_SETTING)
+    output_class: type[DocumentOutput] = import_string(output_setting[_BACKEND_KEY])
+    return output_class(**output_setting.get(_OPTIONS_KEY, {}))
