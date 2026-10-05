@@ -1,6 +1,7 @@
 from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.models.signals import post_delete
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
@@ -298,6 +299,25 @@ def test_each_commit_builds_a_new_output_with_the_configured_options(
     assert [list(groups) for groups in second_output.replaced] == [
         [f"testapp.category:{tools.pk}"]
     ]
+
+
+@pytest.mark.django_db
+def test_saving_a_registered_instance_without_an_output_setting_fails_at_the_save(
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # The commit callbacks are captured and never run: only an error raised by
+    # the save itself is caught, not one deferred to the commit.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"),
+    ):
+        Category.objects.create(name="Lighting")
 
 
 class _RolledBackError(Exception):
