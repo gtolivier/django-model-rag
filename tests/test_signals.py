@@ -6,7 +6,7 @@ from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import TrackedRecordingOutput
-from tests.testapp.models import Category
+from tests.testapp.models import Category, Product
 
 # The dotted path of the backend whose built instances the tests read back.
 TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
@@ -136,6 +136,27 @@ def test_an_instance_saved_then_deleted_before_the_commit_sends_an_empty_group(
 
     # An empty group, so the output holds nothing for the deleted instance.
     assert _replaced(built_outputs) == [{f"testapp.category:{lighting_pk}": []}]
+
+
+@pytest.mark.django_db
+def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Another model is registered, so the registry is not simply empty.
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Category.objects.create(name="Lighting")
+
+    # Not even an output built: nothing reaches the backend.
+    assert built_outputs == []
 
 
 class _RolledBackError(Exception):
