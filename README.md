@@ -149,23 +149,23 @@ permission that is not a string of the form `app_label.codename`.
 
 ## Where to register
 
-Register your models in a `rag.py` module of your app, imported from the
-app's `AppConfig.ready()`, when every model is loaded:
+Add the package to `INSTALLED_APPS`, then register your models in a
+`model_rag.py` module of your app. Once every model is loaded, the package
+imports the `model_rag` module of each installed app that has one, as
+`django.contrib.admin` does with `admin.py`. It does so in the order of
+`INSTALLED_APPS`, and skips an app without one:
 
 ```python
-# shop/apps.py
-from django.apps import AppConfig
-
-
-class ShopConfig(AppConfig):
-    name = "shop"
-
-    def ready(self) -> None:
-        from . import rag  # noqa: F401 -- imported for its registrations
+# settings.py
+INSTALLED_APPS = [
+    # ...
+    "django_model_rag",
+    "shop",
+]
 ```
 
 ```python
-# shop/rag.py
+# shop/model_rag.py
 from django.contrib.auth import get_user_model
 
 from django_model_rag import rag
@@ -176,6 +176,21 @@ rag.register(Product, follow=["category"])
 rag.register(Page, follow=["text_plugins", "accordion_items"])
 # A model from an app you do not own, registered from your own app.
 rag.register(get_user_model(), fields=["first_name", "last_name"])
+```
+
+**Changing a third-party app's registration.** Suppose an app registers its
+models in its own `model_rag.py` and you want them indexed differently. Undo
+its registration and register them again from an app listed after it in
+`INSTALLED_APPS`, whose `model_rag.py` is imported later:
+
+```python
+# shop/model_rag.py — "shop" comes after "blog" in INSTALLED_APPS
+from blog.models import Article
+
+from django_model_rag import rag
+
+rag.unregister(Article)
+rag.register(Article, fields=["title", "body"])
 ```
 
 ## Following relations
@@ -291,6 +306,58 @@ class MyOutput:
 
 `run()` and `run_instance()` return `None`: the documents go only to the
 output.
+
+## Synchronizing: `sync_model_rag`
+
+```sh
+python manage.py sync_model_rag                    # every registered model
+python manage.py sync_model_rag shop.product blog.article
+```
+
+The command runs the pipeline (`run()`, with its final `prune()`) into the
+output named by the `MODEL_RAG_OUTPUT` setting. It runs every registered
+model, in registration order, or only the models it is given, as
+`app_label.model_name` and in the given order. Run it once after installing
+the package or registering a new model: until then, the output holds none
+of that model's documents. Run it again whenever you want to repair what
+saving instances did not keep up to date.
+
+The setting has the shape of Django's `STORAGES`:
+
+```python
+MODEL_RAG_OUTPUT = {
+    "BACKEND": "myproject.rag.MyOutput",  # a dotted path to the output class
+    "OPTIONS": {"collection": "site"},    # optional: keyword arguments
+}
+```
+
+The command imports `BACKEND`, builds a new instance with `OPTIONS` as its
+keyword arguments, and checks the class has a callable `replace` and
+`prune`. It does all this before running any model. A missing setting,
+a setting that is not a dict or has no `BACKEND`, a `BACKEND` that cannot be
+imported, and a class without one of the two methods fail with
+`ImproperlyConfigured`. So does a label naming no model of an installed app,
+or a model that is not registered, but with `CommandError`. Both are raised
+before anything is sent.
+
+**Trying it out.** `django_model_rag.output.ConsoleOutput` writes what it
+receives to standard output, or to the stream it is given
+(`ConsoleOutput(stream=...)`): each source key, then its documents' titles and
+texts, `<key> removed` for an empty group, and `<model label> kept <n>` for
+each prune:
+
+```python
+MODEL_RAG_OUTPUT = {"BACKEND": "django_model_rag.output.ConsoleOutput"}
+```
+
+**Failures.** When a model's run raises, the command writes
+`<app_label.model_name>: <ExceptionType>: <message>` on stderr and goes on
+with the next model. That model is not pruned, and the batches it already
+sent stay sent (see "The output", above). Each model that succeeds writes
+`<app_label.model_name>: synced` on stdout. If any model failed, the command
+ends with a `CommandError` naming every failed model, in run order, so it
+exits with a non-zero status. Running it again, or with only the failed
+models, is the retry.
 
 ## Requirements
 
