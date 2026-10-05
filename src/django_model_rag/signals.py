@@ -52,6 +52,9 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
 
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a deleted registered instance with an empty one."""
+    if not getattr(settings, _SIGNALS_SETTING, True):
+        return
+
     if sender not in rag.registered_models():
         return
 
