@@ -1,6 +1,5 @@
 """The output protocol: where the pipeline hands over the documents it builds."""
 
-import sys
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from typing import Protocol, TextIO
@@ -25,7 +24,7 @@ class ConsoleOutput:
         self._stream = stream
 
     def _print(self, text: object) -> None:
-        print(text, file=self._stream or sys.stdout)
+        print(text, file=self._stream)
 
     def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
         """Write each group: its source key, then its documents' titles and texts.
