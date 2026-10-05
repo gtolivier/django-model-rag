@@ -7,30 +7,25 @@ from django_model_rag import NormalizedDocument
 from django_model_rag.output import ConsoleOutput
 
 
+def _page_document(*, pk: int, title: str, text: str) -> NormalizedDocument:
+    """A document extracted from the testapp page with primary key `pk`."""
+    return NormalizedDocument(
+        text=text,
+        source_app_label="testapp",
+        source_model="page",
+        source_pk=pk,
+        title=title,
+    )
+
+
 def test_console_output_writes_each_group_key_then_its_documents_titles_and_texts(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    shipping = NormalizedDocument(
-        text="We ship within two days.",
-        source_app_label="testapp",
-        source_model="page",
-        source_pk=7,
-        title="Shipping",
+    shipping = _page_document(pk=7, title="Shipping", text="We ship within two days.")
+    refunds = _page_document(
+        pk=7, title="Refunds", text="Returns are free for thirty days."
     )
-    refunds = NormalizedDocument(
-        text="Returns are free for thirty days.",
-        source_app_label="testapp",
-        source_model="page",
-        source_pk=7,
-        title="Refunds",
-    )
-    history = NormalizedDocument(
-        text="Founded in a garage.",
-        source_app_label="testapp",
-        source_model="page",
-        source_pk=42,
-        title="History",
-    )
+    history = _page_document(pk=42, title="History", text="Founded in a garage.")
 
     ConsoleOutput().replace(
         {
@@ -63,13 +58,7 @@ def test_console_output_writes_each_group_key_then_its_documents_titles_and_text
 def test_console_output_states_the_removal_of_each_empty_group_key(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    history = NormalizedDocument(
-        text="Founded in a garage.",
-        source_app_label="testapp",
-        source_model="page",
-        source_pk=42,
-        title="History",
-    )
+    history = _page_document(pk=42, title="History", text="Founded in a garage.")
 
     ConsoleOutput().replace(
         {
@@ -117,13 +106,7 @@ def test_console_output_prune_writes_each_model_label_with_its_kept_key_count(
 def test_console_output_writes_replace_and_prune_to_the_given_stream(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    history = NormalizedDocument(
-        text="Founded in a garage.",
-        source_app_label="testapp",
-        source_model="page",
-        source_pk=42,
-        title="History",
-    )
+    history = _page_document(pk=42, title="History", text="Founded in a garage.")
     stream = io.StringIO()
 
     output = ConsoleOutput(stream=stream)

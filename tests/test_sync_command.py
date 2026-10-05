@@ -18,30 +18,43 @@ from tests.recording import (
 from tests.testapp.models import Category, Page, Product
 
 M = TypeVar("M", bound=Model)
+T = TypeVar("T")
+
+# The dotted path of the backend whose built instances the tests read back.
+TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
+
+
+def _only_built_during_the_test(built: list[T]) -> Iterator[list[T]]:
+    """Yield a class's `built` list emptied, and empty it again after the test."""
+    built.clear()
+    yield built
+    built.clear()
 
 
 @pytest.fixture
 def built_outputs() -> Iterator[list[TrackedRecordingOutput]]:
     """The TrackedRecordingOutput instances built during the test, and only those."""
-    TrackedRecordingOutput.built.clear()
-    yield TrackedRecordingOutput.built
-    TrackedRecordingOutput.built.clear()
+    yield from _only_built_during_the_test(TrackedRecordingOutput.built)
 
 
 @pytest.fixture
 def built_prune_only_outputs() -> Iterator[list[PruneOnlyOutput]]:
     """The PruneOnlyOutput instances built during the test, and only those."""
-    PruneOnlyOutput.built.clear()
-    yield PruneOnlyOutput.built
-    PruneOnlyOutput.built.clear()
+    yield from _only_built_during_the_test(PruneOnlyOutput.built)
 
 
 @pytest.fixture
 def built_replace_only_outputs() -> Iterator[list[ReplaceOnlyOutput]]:
     """The ReplaceOnlyOutput instances built during the test, and only those."""
-    ReplaceOnlyOutput.built.clear()
-    yield ReplaceOnlyOutput.built
-    ReplaceOnlyOutput.built.clear()
+    yield from _only_built_during_the_test(ReplaceOnlyOutput.built)
+
+
+def _create_a_hammer() -> Product:
+    """Create a Hammer product, in a Tools category: one row to extract."""
+    category = Category.objects.create(name="Tools")
+    return Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
 
 
 def test_the_command_without_an_output_setting_names_the_missing_setting() -> None:
@@ -53,7 +66,7 @@ def test_the_command_without_an_output_setting_names_the_missing_setting() -> No
 def test_the_command_with_an_output_setting_that_is_not_a_dict_names_the_setting(
     settings: Settings,
 ) -> None:
-    settings.MODEL_RAG_OUTPUT = "tests.recording.TrackedRecordingOutput"
+    settings.MODEL_RAG_OUTPUT = TRACKED_BACKEND
 
     with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
         call_command("sync_model_rag")
@@ -107,10 +120,7 @@ def test_the_command_with_a_backend_without_prune_names_it_before_running_a_mode
 ) -> None:
     # Registered with a row: running it would call replace before prune, so
     # only a check made up front keeps the documents from reaching the output.
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    _create_a_hammer()
     rag.register(Product, fields=["name"])
     settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.ReplaceOnlyOutput"}
 
@@ -129,12 +139,9 @@ def test_the_command_with_a_backend_without_prune_names_it_before_running_a_mode
 def test_the_command_runs_a_registered_model_into_the_configured_backend(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
-    category = Category.objects.create(name="Tools")
-    hammer = Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    hammer = _create_a_hammer()
     rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     call_command("sync_model_rag")
 
@@ -152,7 +159,7 @@ def test_the_command_prunes_every_registered_model_in_registration_order(
     # declaration order, so neither could pass for registration order.
     rag.register(Product, fields=["name"])
     rag.register(Category, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     call_command("sync_model_rag")
 
@@ -169,7 +176,7 @@ def test_the_command_with_model_labels_prunes_only_those_models_in_the_given_ord
     rag.register(Category, fields=["name"])
     rag.register(Product, fields=["name"])
     rag.register(Page, fields=["title"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     call_command("sync_model_rag", "testapp.product", "testapp.category")
 
@@ -184,12 +191,9 @@ def test_the_command_with_a_label_naming_no_model_names_it_before_running_a_mode
 ) -> None:
     # The bad label comes after a valid one with a row: resolving the labels
     # one by one while running would send that model's documents first.
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    _create_a_hammer()
     rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     with pytest.raises(CommandError, match=re.escape(bad_label)):
         call_command("sync_model_rag", "testapp.product", bad_label)
@@ -206,12 +210,9 @@ def test_the_command_with_a_label_naming_an_unregistered_model_names_it_up_front
     # Category exists but is not registered, and comes after a registered
     # model with a row: running the models before checking them would send
     # Product's documents first.
-    category = Category.objects.create(name="Tools")
-    Product.objects.create(
-        name="Hammer", description="Drives nails.", price="9.90", category=category
-    )
+    _create_a_hammer()
     rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     with pytest.raises(CommandError, match=re.escape("testapp.category")):
         call_command("sync_model_rag", "testapp.product", "testapp.category")
@@ -230,7 +231,7 @@ def test_the_command_writes_one_synced_line_per_model_in_run_order(
     # alphabetical order, cannot pass.
     rag.register(Product, fields=["name"])
     rag.register(Category, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
     stdout = io.StringIO()
 
     call_command("sync_model_rag", stdout=stdout)
@@ -273,7 +274,7 @@ def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
     # Category fails and is registered first: stopping at the failure would
     # leave Product unrun.
     _register_a_failing_category_then_product()
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     with pytest.raises(CommandError, match=re.escape("testapp.category")):
         call_command("sync_model_rag")
@@ -292,7 +293,7 @@ def test_the_command_fails_naming_every_failed_model_in_run_order(
     _register_a_failing_category_then_product()
     Page.objects.create(title="Home", slug="home")
     _register_a_failing_extractor(Page)
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     with pytest.raises(CommandError) as excinfo:
         call_command("sync_model_rag", stdout=io.StringIO(), stderr=io.StringIO())
@@ -313,7 +314,7 @@ def test_the_command_writes_a_failed_model_and_its_error_on_stderr_then_goes_on(
     # the command went on past the failure instead of reporting it only at
     # the end.
     _register_a_failing_category_then_product()
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
     stdout = io.StringIO()
     stderr = io.StringIO()
 
@@ -331,7 +332,7 @@ def test_the_command_passes_the_output_options_to_the_backend_as_keyword_argumen
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {
-        "BACKEND": "tests.recording.TrackedRecordingOutput",
+        "BACKEND": TRACKED_BACKEND,
         "OPTIONS": {"collection": "catalog", "batch_size": 50},
     }
 
