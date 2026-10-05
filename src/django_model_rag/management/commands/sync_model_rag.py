@@ -31,7 +31,10 @@ class Command(BaseCommand):
     def handle(self, *args: Any, **options: Any) -> None:
         pipeline = SyncPipeline(_configured_output())
         failed_labels: list[str] = []
-        for model in _models_to_sync(options[_LABELS_ARGUMENT]):
+        models = _models_to_sync(options[_LABELS_ARGUMENT])
+        if not models:
+            self.stderr.write("Warning: no model is registered, nothing to sync.")
+        for model in models:
             label = model._meta.label_lower
             try:
                 pipeline.run([model])
