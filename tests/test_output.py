@@ -11,7 +11,7 @@ from django_model_rag import (
     rag,
 )
 from tests.recording import RecordingOutput
-from tests.testapp.models import AccordionItem, Category, Page
+from tests.testapp.models import AccordionItem, Category, Page, Product
 
 
 def test_a_class_with_replace_and_prune_is_a_document_output() -> None:
@@ -217,6 +217,42 @@ def test_run_instance_hands_the_documents_of_an_instance_its_queryset_keeps() ->
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_pipeline_hands_once_the_documents_of_an_instance_a_join_repeats() -> None:
+    # Filtering across the reverse foreign key without distinct() yields
+    # lighting once per matching product: a pipeline extracting every row
+    # would hand its document twice in its group.
+    lighting = Category.objects.create(name="Lighting")
+    Product.objects.create(
+        name="Desk lamp", description="A lamp.", price="20.00", category=lighting
+    )
+    Product.objects.create(
+        name="Floor lamp", description="A tall lamp.", price="50.00", category=lighting
+    )
+
+    @rag.register_extractor(Category)
+    class LampCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.filter(products__name__in=["Desk lamp", "Floor lamp"])
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert output.received_groups() == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
