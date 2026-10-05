@@ -393,6 +393,44 @@ def test_deleting_through_a_proxy_empties_the_group_of_the_registered_model(
 
 
 @pytest.mark.django_db
+def test_deleting_a_multi_table_child_empties_the_group_of_its_registered_parent(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the parent is registered, not its multi-table child.
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of their own, so that only the delete's commit is
+    # observed below.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        lamp = FeaturedProduct.objects.create(
+            name="Desk lamp",
+            description="A lamp for the desk.",
+            price="25.00",
+            category=lighting,
+            tagline="Light up your work",
+        )
+    lamp_pk = lamp.pk
+    built_outputs.clear()
+
+    # Deleting the child deletes its parent row too.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The empty group is the parent row's, under the parent's label.
+    assert _replaced(built_outputs) == [{f"testapp.product:{lamp_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
