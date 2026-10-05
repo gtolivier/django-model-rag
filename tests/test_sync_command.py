@@ -243,6 +243,25 @@ def test_the_command_with_model_labels_prunes_only_those_models_in_the_given_ord
 
 
 @pytest.mark.django_db
+def test_the_command_with_a_model_named_twice_runs_it_once_where_first_named(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Product named twice, in two letter cases, around Category: dropping
+    # duplicates by the label's text keeps both, and keeping the last
+    # occurrence runs Category first.
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    call_command(
+        "sync_model_rag", "testapp.product", "testapp.category", "testapp.Product"
+    )
+
+    [output] = built_outputs
+    assert output.pruned == [("testapp.product", set()), ("testapp.category", set())]
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize("bad_label", ["testapp.nosuchmodel", "product"])
 def test_the_command_with_a_label_naming_no_model_names_it_before_running_a_model(
     settings: Settings, built_outputs: list[TrackedRecordingOutput], bad_label: str
