@@ -43,7 +43,9 @@ def sync_saved_instance(
     if raw or not _signals_enabled():
         return
 
-    if sender not in rag.registered_models():
+    # A proxy is saved under its own sender: its group is the concrete model's.
+    registered_model = sender._meta.concrete_model
+    if registered_model not in rag.registered_models():
         return
 
     # Fail at the save, not at the commit, if the output is misconfigured.
@@ -53,7 +55,7 @@ def sync_saved_instance(
     saved_pk = instance.pk
 
     def replace_group_as_committed() -> None:
-        committed_instance = _committed_instance(sender, saved_pk)
+        committed_instance = _committed_instance(registered_model, saved_pk)
         # Deleted since the save: the delete's own callback sends the empty group.
         if committed_instance is None:
             return
@@ -64,7 +66,7 @@ def sync_saved_instance(
             # An error escaping a commit callback would break the commit.
             logger.exception(
                 "Syncing %s failed",
-                build_source_key(sender._meta.label_lower, saved_pk),
+                build_source_key(registered_model._meta.label_lower, saved_pk),
             )
 
     transaction.on_commit(replace_group_as_committed)
