@@ -68,26 +68,25 @@ def _schedule_commit_callbacks(
         transaction.on_commit(build_callback(registered_model, pk))
 
 
-def _send_group(
-    send: Callable[[], None], registered_model: type[Model], pk: Any
-) -> None:
-    """Run ``send``, logging a failure with the source key of the model and ``pk``."""
+def _source_key(registered_model: type[Model], pk: Any) -> str:
+    """Return the source key of the group of ``registered_model`` for ``pk``."""
+    return build_source_key(registered_model._meta.label_lower, pk)
+
+
+def _send_group(send: Callable[[], None], source_key: str) -> None:
+    """Run ``send``, logging a failure with the ``source_key`` of the group."""
     try:
         send()
     except Exception:
         # An error escaping a commit callback would break the commit.
-        logger.exception(
-            "Syncing %s failed",
-            build_source_key(registered_model._meta.label_lower, pk),
-        )
+        logger.exception("Syncing %s failed", source_key)
 
 
 def _replace_group(instance: Model, registered_model: type[Model], pk: Any) -> None:
     """Send the group of ``instance`` to a newly built configured output."""
     _send_group(
         lambda: SyncPipeline(configured_output()).run_instance(instance),
-        registered_model,
-        pk,
+        _source_key(registered_model, pk),
     )
 
 
@@ -133,11 +132,7 @@ def _group_emptier(
     def replace_group_with_an_empty_one() -> None:
         # The row is gone: the empty group goes straight to the output, with no
         # extractor involved.
-        source_key = build_source_key(registered_model._meta.label_lower, deleted_pk)
-        _send_group(
-            lambda: configured_output().replace({source_key: []}),
-            registered_model,
-            deleted_pk,
-        )
+        source_key = _source_key(registered_model, deleted_pk)
+        _send_group(lambda: configured_output().replace({source_key: []}), source_key)
 
     return replace_group_with_an_empty_one
