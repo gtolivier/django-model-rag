@@ -445,6 +445,35 @@ def test_deleting_through_a_proxy_empties_the_group_of_the_registered_model(
 
 
 @pytest.mark.django_db
+def test_unregistering_a_proxy_keeps_deleting_through_it_emptying_the_models_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # The concrete model and its proxy are both registered, then the proxy
+    # alone is unregistered: Category stays registered.
+    _register_categories_by_name()
+    rag.register(CategoryProxy, fields=["name"])
+    rag.unregister(CategoryProxy)
+
+    # Created in a commit of its own, so that only the delete's commit is
+    # observed below.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    lighting_pk = lighting.pk
+    built_outputs.clear()
+
+    # Django sends post_delete with the proxy as its sender, not Category.
+    with django_capture_on_commit_callbacks(execute=True):
+        CategoryProxy.objects.get(pk=lighting_pk).delete()
+
+    # Category's registration still listens to its proxy's deletions.
+    assert _replaced(built_outputs) == [{f"testapp.category:{lighting_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_deleting_a_multi_table_child_empties_the_group_of_its_registered_parent(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
