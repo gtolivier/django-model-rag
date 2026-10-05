@@ -1,9 +1,10 @@
 import io
+import re
 from collections.abc import Iterator
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management import call_command
+from django.core.management import CommandError, call_command
 from pytest_django import Settings
 
 from django_model_rag import rag
@@ -170,6 +171,28 @@ def test_the_command_with_model_labels_prunes_only_those_models_in_the_given_ord
 
     [output] = built_outputs
     assert output.pruned == [("testapp.product", set()), ("testapp.category", set())]
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_label", ["testapp.nosuchmodel", "product"])
+def test_the_command_with_a_label_naming_no_model_names_it_before_running_a_model(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput], bad_label: str
+) -> None:
+    # The bad label comes after a valid one with a row: resolving the labels
+    # one by one while running would send that model's documents first.
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    with pytest.raises(CommandError, match=re.escape(bad_label)):
+        call_command("sync_model_rag", "testapp.product", bad_label)
+
+    # The check may come before or after the backend is built: either way,
+    # nothing reaches it.
+    assert [output.calls for output in built_outputs] in ([], [[]])
 
 
 @pytest.mark.django_db
