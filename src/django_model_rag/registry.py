@@ -509,6 +509,10 @@ class Registry:
         self._require_registered(model)
         del self._registrations[model]
         for sender in _model_and_proxies(model):
+            # A proxy of a model that stays registered keeps its listener.
+            concrete_model = sender._meta.concrete_model
+            if concrete_model is not None and self.is_registered(concrete_model):
+                continue
             post_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
 
     def _add(
