@@ -5,7 +5,7 @@ from typing import Any
 from django.db import transaction
 from django.db.models import Model
 
-from django_model_rag.management.commands.sync_model_rag import _configured_output
+from django_model_rag.output import configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
 
@@ -15,5 +15,5 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
     if sender not in rag.registered_models():
         return
     transaction.on_commit(
-        lambda: SyncPipeline(_configured_output()).run_instance(instance)
+        lambda: SyncPipeline(configured_output()).run_instance(instance)
     )
