@@ -15,6 +15,7 @@ _LABELS_ARGUMENT = "labels"
 _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 _BACKEND_KEY = "BACKEND"
 _OPTIONS_KEY = "OPTIONS"
+_VERBOSITY_OPTION = "verbosity"
 _SILENT = 0
 _REQUIRED_METHODS = ("replace", "prune")
 
@@ -36,7 +37,7 @@ class Command(BaseCommand):
                 failed_labels.append(label)
                 self.stderr.write(f"{label}: {type(error).__name__}: {error}")
                 continue
-            if options["verbosity"] > _SILENT:
+            if options[_VERBOSITY_OPTION] > _SILENT:
                 self.stdout.write(f"{label}: synced")
         if failed_labels:
             message = f"Failed to sync: {', '.join(failed_labels)}."
