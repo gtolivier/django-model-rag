@@ -196,6 +196,28 @@ def test_the_command_with_a_label_naming_no_model_names_it_before_running_a_mode
 
 
 @pytest.mark.django_db
+def test_the_command_with_a_label_naming_an_unregistered_model_names_it_up_front(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Category exists but is not registered, and comes after a registered
+    # model with a row: running the models before checking them would send
+    # Product's documents first.
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    with pytest.raises(CommandError, match=re.escape("testapp.category")):
+        call_command("sync_model_rag", "testapp.product", "testapp.category")
+
+    # The check may come before or after the backend is built: either way,
+    # nothing reaches it.
+    assert [output.calls for output in built_outputs] in ([], [[]])
+
+
+@pytest.mark.django_db
 @pytest.mark.usefixtures("built_outputs")
 def test_the_command_writes_one_synced_line_per_model_in_run_order(
     settings: Settings,
