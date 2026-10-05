@@ -117,6 +117,9 @@ def _output_setting() -> dict[str, Any]:
     if _BACKEND_KEY not in output_setting:
         message = f"The {_OUTPUT_SETTING} setting requires a {_BACKEND_KEY} key."
         raise ImproperlyConfigured(message)
+    if not isinstance(output_setting[_BACKEND_KEY], str):
+        message = f"The {_BACKEND_KEY} of {_OUTPUT_SETTING} must be a string."
+        raise ImproperlyConfigured(message)
     if not isinstance(_options(output_setting), dict):
         message = f"The {_OPTIONS_KEY} of the {_OUTPUT_SETTING} setting must be a dict."
         raise ImproperlyConfigured(message)
