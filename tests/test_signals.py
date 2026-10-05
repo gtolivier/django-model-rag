@@ -535,6 +535,28 @@ def test_saving_a_registered_instance_with_a_backend_lacking_replace_fails_at_th
 
 
 @pytest.mark.django_db
+def test_saving_a_registered_instance_with_options_the_backend_rejects_fails_at_save(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # RecordingOutput is built with no argument at all: it accepts no option.
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": "tests.recording.RecordingOutput",
+        "OPTIONS": {"collection": "catalog"},
+    }
+
+    _register_categories_by_name()
+
+    # The commit callbacks are captured and never run: only an error raised by
+    # the save itself is caught, not one deferred to the commit.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        pytest.raises(ImproperlyConfigured, match="RecordingOutput.*collection"),
+    ):
+        Category.objects.create(name="Lighting")
+
+
+@pytest.mark.django_db
 def test_deleting_a_registered_instance_without_an_output_setting_fails_at_the_delete(
     settings: Settings,
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
