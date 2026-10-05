@@ -6,10 +6,12 @@ from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandParser
+from django.db.models import Model
 from django.utils.module_loading import import_string
 
 from django_model_rag import DocumentOutput, SyncPipeline, rag
 
+_LABELS_ARGUMENT = "labels"
 _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 _BACKEND_KEY = "BACKEND"
 _OPTIONS_KEY = "OPTIONS"
@@ -20,19 +22,20 @@ class Command(BaseCommand):
     help = "Synchronize the registered models into the configured output."
 
     def add_arguments(self, parser: CommandParser) -> None:
-        parser.add_argument("labels", nargs="*", metavar="app_label.model_name")
+        parser.add_argument(_LABELS_ARGUMENT, nargs="*", metavar="app_label.model_name")
 
     def handle(self, *args: Any, **options: Any) -> None:
         pipeline = SyncPipeline(_configured_output())
-        labels = options["labels"]
-        models = (
-            [apps.get_model(label) for label in labels]
-            if labels
-            else rag.registered_models()
-        )
-        for model in models:
+        for model in _models_to_sync(options[_LABELS_ARGUMENT]):
             pipeline.run([model])
             self.stdout.write(f"{model._meta.label_lower}: synced")
+
+
+def _models_to_sync(labels: list[str]) -> list[type[Model]]:
+    """Return the models named by `labels`, or every registered model if none."""
+    if not labels:
+        return rag.registered_models()
+    return [apps.get_model(label) for label in labels]
 
 
 def _configured_output() -> DocumentOutput:
