@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Model
@@ -26,6 +27,9 @@ def _replace_group(instance: Model) -> None:
 
 def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
+    if not getattr(settings, "MODEL_RAG_SIGNALS", True):
+        return
+
     if sender not in rag.registered_models():
         return
 
