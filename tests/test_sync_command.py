@@ -1,3 +1,4 @@
+import io
 from collections.abc import Iterator
 
 import pytest
@@ -152,6 +153,26 @@ def test_the_command_prunes_every_registered_model_in_registration_order(
 
     [output] = built_outputs
     assert output.pruned == [("testapp.product", set()), ("testapp.category", set())]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("built_outputs")
+def test_the_command_writes_one_synced_line_per_model_in_run_order(
+    settings: Settings,
+) -> None:
+    # Product registered before Category: a constant line, or one in
+    # alphabetical order, cannot pass.
+    rag.register(Product, fields=["name"])
+    rag.register(Category, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+    stdout = io.StringIO()
+
+    call_command("sync_model_rag", stdout=stdout)
+
+    assert stdout.getvalue().splitlines() == [
+        "testapp.product: synced",
+        "testapp.category: synced",
+    ]
 
 
 @pytest.mark.django_db
