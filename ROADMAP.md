@@ -204,8 +204,8 @@ refactoring, not from the prototype.
 - [x] **7b. The shape of the queryset** — `BaseExtractor.get_queryset()`
   shapes the queryset the instances are loaded from (`select_related`,
   `prefetch_related`…); it must return a `QuerySet`, and the pipeline
-  iterates it with `iterator(chunk_size=1000)`. A single-instance run does
-  not go through it. The extractor built by `register()` uses it to load
+  iterates it with `iterator(chunk_size=1000)`. A single-instance run only
+  asks it whether it keeps the instance (feature 8). The extractor built by `register()` uses it to load
   only the columns it reads: its own declared fields and single-field
   options, the related columns its lookup paths name, and the text columns
   of followed relations with the fields that link them back. Every own

@@ -225,7 +225,9 @@ one-to-one relations, and every relation along a lookup path, in the same
 query as the instances (`select_related`), and each followed reverse foreign
 key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
-in chunks of 1000. `run_instance` makes at most one query per relation it crosses.
+in chunks of 1000. `run_instance` makes one query to ask the extractor's
+queryset whether it keeps the instance, then at most one query per relation
+it crosses.
 
 Those queries load only the columns the documents read: the declared
 fields, the title, language and URL fields, the related columns a lookup
@@ -240,10 +242,10 @@ instances are loaded from by overriding `get_queryset(queryset)` — to add
 `select_related` or `prefetch_related`, say — and must return a `QuerySet`
 of the model's instances: a `values()` queryset, or another model's, raises
 `TypeError`. The documents stay in primary key order whatever order the hook
-sets. `run_instance` does not go through it, so a hook that filters
-instances out makes `run()` skip documents that `run_instance` still
-hands to the output, where they stay until the next `run()` prunes them:
-leave an instance out by returning `None` from `extract()` instead.
+sets, and an instance repeated by a join is extracted once. An instance
+the hook filters out is not extracted: `run()` skips it and prunes its
+documents, and `run_instance`, which already holds the instance, only asks
+the hook's queryset whether it keeps it, and sends an empty group if not.
 
 ## The output
 
@@ -255,6 +257,7 @@ checker verify it:
 
 ```python
 from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 
 from django_model_rag import NormalizedDocument
 
@@ -263,7 +266,7 @@ class MyOutput:
     def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
         """Replace the stored documents of each source key with its group."""
 
-    def prune(self, model_label: str, kept_keys: set[str]) -> None:
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
         """Delete the documents of model_label whose source key is not kept."""
 ```
 
@@ -278,8 +281,10 @@ class MyOutput:
   the batches already sent stay sent, and that model is not pruned.
   Running again is the retry.
 - **`run_instance(instance)`** sends that instance's group, even empty, so
-  that an instance whose extractor now returns `None` is removed. It never
-  prunes, and sends nothing if the extractor raises.
+  that an instance whose extractor now returns `None`, or that its
+  extractor's queryset filters out, is removed. It never prunes, and sends
+  nothing if the extractor raises. An unsaved instance (no primary key)
+  raises `ValueError`.
 - **A document's source is the instance it was extracted from.** An
   extractor returning a document whose source is another instance fails
   with `TypeError`: it would replace that other instance's documents.
