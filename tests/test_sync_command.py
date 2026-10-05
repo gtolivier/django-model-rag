@@ -405,6 +405,27 @@ def test_the_command_writes_a_failed_model_and_its_error_on_stderr_then_goes_on(
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("built_outputs")
+def test_the_command_at_verbosity_0_writes_no_synced_line_but_still_a_failed_model(
+    settings: Settings,
+) -> None:
+    # Category fails and Product succeeds: silencing every line, or none,
+    # cannot pass.
+    _register_a_failing_category_then_product()
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with pytest.raises(CommandError):
+        call_command("sync_model_rag", verbosity=0, stdout=stdout, stderr=stderr)
+
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue().splitlines() == [
+        "testapp.category: RuntimeError: cannot extract Tools"
+    ]
+
+
+@pytest.mark.django_db
 def test_the_command_passes_the_output_options_to_the_backend_as_keyword_arguments(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
