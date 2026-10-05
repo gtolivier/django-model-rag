@@ -48,10 +48,25 @@ def _registered_models(sender: type[Model]) -> list[type[Model]]:
     ]
 
 
-def _registered_model(sender: type[Model]) -> type[Model] | None:
-    """Return the nearest registered model whose group ``sender`` feeds, if any."""
-    registered_models = _registered_models(sender)
-    return registered_models[0] if registered_models else None
+def _schedule_commit_callbacks(
+    registered_models: list[type[Model]],
+    pk: Any,
+    build_callback: Callable[[type[Model], Any], Callable[[], None]],
+) -> None:
+    """Run, at the commit, the callback ``build_callback`` returns per registered model.
+
+    Each callback gets ``pk`` as it is now: delete() clears the primary key of
+    the instance before the commit. Nothing runs while the signals are off.
+    """
+    if not registered_models or not _signals_enabled():
+        return
+
+    # Fail at the save or the delete, not at the commit, if the output is
+    # misconfigured.
+    check_output_configuration()
+
+    for registered_model in registered_models:
+        transaction.on_commit(build_callback(registered_model, pk))
 
 
 def _replace_group(instance: Model, registered_model: type[Model], pk: Any) -> None:
@@ -73,21 +88,10 @@ def sync_saved_instance(
     sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
 ) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
-    if raw or not _signals_enabled():
+    if raw:
         return
 
-    registered_models = _registered_models(sender)
-    if not registered_models:
-        return
-
-    # Fail at the save, not at the commit, if the output is misconfigured.
-    check_output_configuration()
-
-    # delete() clears the primary key of the instance: keep it for the commit.
-    saved_pk = instance.pk
-
-    for registered_model in registered_models:
-        transaction.on_commit(_group_replacer(registered_model, saved_pk))
+    _schedule_commit_callbacks(_registered_models(sender), instance.pk, _group_replacer)
 
 
 def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
@@ -106,22 +110,22 @@ def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[]
 
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a deleted registered instance with an empty one."""
-    if not _signals_enabled():
-        return
+    # Django sends post_delete for each multi-table parent too, under its own
+    # sender: the nearest registered model is the only group to empty here.
+    nearest_registered_model_only = _registered_models(sender)[:1]
+    _schedule_commit_callbacks(
+        nearest_registered_model_only, instance.pk, _group_emptier
+    )
 
-    registered_model = _registered_model(sender)
-    if registered_model is None:
-        return
 
-    # Fail at the delete, not at the commit, if the output is misconfigured.
-    check_output_configuration()
-
-    # delete() clears the primary key of the instance: keep it for the commit.
-    deleted_pk = instance.pk
+def _group_emptier(
+    registered_model: type[Model], deleted_pk: Any
+) -> Callable[[], None]:
+    """Return a commit callback emptying the group of a deleted instance."""
 
     def replace_group_with_an_empty_one() -> None:
         # A bare instance makes run_instance() send an empty group, as the row
         # is gone.
         _replace_group(registered_model(pk=deleted_pk), registered_model, deleted_pk)
 
-    transaction.on_commit(replace_group_with_an_empty_one)
+    return replace_group_with_an_empty_one
