@@ -344,6 +344,17 @@ def _register_a_failing_category_then_product() -> None:
     rag.register(Product, fields=["name"])
 
 
+def _register_a_failing_page() -> Page:
+    """Register Page, whose run raises, and return its Home row.
+
+    Page's extraction raises ``RuntimeError("cannot extract <page>")``: the
+    Home row makes that extraction actually run.
+    """
+    page = Page.objects.create(title="Home", slug="home")
+    _register_a_failing_extractor(Page)
+    return page
+
+
 @pytest.mark.django_db
 def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
@@ -368,8 +379,7 @@ def test_the_command_fails_naming_every_failed_model_in_run_order(
     # Category and Page fail, around Product, which succeeds: naming only the
     # first or the last failure, or every model run, cannot pass.
     _register_a_failing_category_then_product()
-    Page.objects.create(title="Home", slug="home")
-    _register_a_failing_extractor(Page)
+    _register_a_failing_page()
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     with pytest.raises(CommandError) as excinfo:
@@ -441,8 +451,7 @@ def test_the_command_with_traceback_follows_each_failed_model_with_its_traceback
     # tracebacks only at the end, or only the first one, cannot pass, and
     # Product's synced line shows the command still went on.
     _register_a_failing_category_then_product()
-    page = Page.objects.create(title="Home", slug="home")
-    _register_a_failing_extractor(Page)
+    page = _register_a_failing_page()
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
     stdout = io.StringIO()
     stderr = io.StringIO()
