@@ -8,6 +8,7 @@ from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 from django.db.models.constants import LOOKUP_SEP
+from django.db.models.signals import post_delete
 
 from django_model_rag.apps import DISCOVERED_MODULE
 from django_model_rag.extractors import (
@@ -327,6 +328,11 @@ def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _delete_uid(model: type[Model]) -> str:
+    """Name the post_delete connection of ``model``."""
+    return f"django_model_rag.sync_delete.{model._meta.label}"
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -461,7 +467,7 @@ class Registry:
                 granted,
             )
 
-        self._registrations[model] = build_extractor
+        self._add(model, build_extractor)
 
     def register_extractor(
         self, model: type[M]
@@ -479,7 +485,7 @@ class Registry:
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
-            self._registrations[model] = extractor_class
+            self._add(model, extractor_class)
             return extractor_class
 
         return decorator
@@ -492,6 +498,22 @@ class Registry:
         """
         self._require_registered(model)
         del self._registrations[model]
+        post_delete.disconnect(dispatch_uid=_delete_uid(model), sender=model)
+
+    def _add(
+        self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
+    ) -> None:
+        """Register ``model`` and listen to its deletions, and its own only."""
+        from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
+            sync_deleted_instance,
+        )
+
+        self._registrations[model] = factory
+        # A listener without sender would also stop Django from fast-deleting
+        # the models that are not registered.
+        post_delete.connect(
+            sync_deleted_instance, sender=model, dispatch_uid=_delete_uid(model)
+        )
 
 
 rag = Registry()
