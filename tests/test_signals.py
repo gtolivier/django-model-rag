@@ -370,6 +370,29 @@ def test_deleting_a_registered_instance_without_an_output_setting_fails_at_the_d
         lighting.delete()
 
 
+@pytest.mark.django_db
+def test_saving_a_registered_instance_with_signals_off_sends_nothing_and_raises_nothing(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_SIGNALS = False
+    # tests/settings.py defines no MODEL_RAG_OUTPUT: with signals on, the save
+    # itself would raise ImproperlyConfigured.
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # The commit callbacks run: one sending anything would need an output and
+    # raise for lack of one.
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        Category.objects.create(name="Lighting")
+
+    # Nothing is even deferred to the commit.
+    assert callbacks == []
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
