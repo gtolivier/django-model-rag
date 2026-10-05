@@ -82,12 +82,14 @@ def _send_group(send: Callable[[], None], source_key: str) -> None:
         logger.exception("Syncing %s failed", source_key)
 
 
-def _replace_group(instance: Model, registered_model: type[Model], pk: Any) -> None:
-    """Send the group of ``instance`` to a newly built configured output."""
-    _send_group(
-        lambda: SyncPipeline(configured_output()).run_instance(instance),
-        _source_key(registered_model, pk),
-    )
+def _replace_group(registered_model: type[Model], pk: Any) -> None:
+    """Send the committed group of ``registered_model`` for ``pk`` to the output."""
+    committed_instance = _committed_instance(registered_model, pk)
+    # Deleted since the save: the delete's own callback sends the empty group.
+    if committed_instance is None:
+        return
+
+    SyncPipeline(configured_output()).run_instance(committed_instance)
 
 
 def sync_saved_instance(
@@ -104,15 +106,10 @@ def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[]
     """Return a commit callback replacing the group of a saved instance."""
 
     def replace_group_as_committed() -> None:
-        def reload_and_replace() -> None:
-            committed_instance = _committed_instance(registered_model, saved_pk)
-            # Deleted since the save: the delete's own callback sends the empty group.
-            if committed_instance is None:
-                return
-
-            _replace_group(committed_instance, registered_model, saved_pk)
-
-        _send_group(reload_and_replace, _source_key(registered_model, saved_pk))
+        _send_group(
+            lambda: _replace_group(registered_model, saved_pk),
+            _source_key(registered_model, saved_pk),
+        )
 
     return replace_group_as_committed
 
