@@ -55,15 +55,17 @@ def sync_saved_instance(
     def replace_group_as_committed() -> None:
         committed_instance = _committed_instance(sender, saved_pk)
         # Deleted since the save: the delete's own callback sends the empty group.
-        if committed_instance is not None:
-            try:
-                _replace_group(committed_instance)
-            except Exception:
-                # An error escaping a commit callback would break the commit.
-                logger.exception(
-                    "Syncing %s failed",
-                    build_source_key(sender._meta.label_lower, saved_pk),
-                )
+        if committed_instance is None:
+            return
+
+        try:
+            _replace_group(committed_instance)
+        except Exception:
+            # An error escaping a commit callback would break the commit.
+            logger.exception(
+                "Syncing %s failed",
+                build_source_key(sender._meta.label_lower, saved_pk),
+            )
 
     transaction.on_commit(replace_group_as_committed)
 
