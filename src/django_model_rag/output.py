@@ -1,8 +1,9 @@
 """The output protocol: where the pipeline hands over the documents it builds."""
 
+import sys
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from typing import Protocol
+from typing import Protocol, TextIO
 
 from django_model_rag.documents import NormalizedDocument
 
@@ -18,7 +19,13 @@ class DocumentOutput(Protocol):
 
 
 class ConsoleOutput:
-    """Writes the documents to standard output."""
+    """Writes the documents to a stream, standard output by default."""
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        self._stream = stream
+
+    def _print(self, text: object) -> None:
+        print(text, file=self._stream or sys.stdout)
 
     def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
         """Write each group: its source key, then its documents' titles and texts.
@@ -28,13 +35,13 @@ class ConsoleOutput:
         """
         for key, documents in groups.items():
             if not documents:
-                print(f"{key} removed")
+                self._print(f"{key} removed")
                 continue
-            print(key)
+            self._print(key)
             for document in documents:
-                print(document.title)
-                print(document.text)
+                self._print(document.title)
+                self._print(document.text)
 
     def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
         """Write the model label and the number of source keys kept."""
-        print(f"{model_label} kept {len(kept_keys)}")
+        self._print(f"{model_label} kept {len(kept_keys)}")
