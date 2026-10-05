@@ -163,7 +163,12 @@ def _groups(
 ) -> dict[str, list[NormalizedDocument]]:
     """Group the documents of ``instances`` by source key."""
     groups: dict[str, list[NormalizedDocument]] = {}
+    seen: set[str] = set()
     for instance in instances:
+        key = _source_key(instance)
+        if key in seen:
+            continue
+        seen.add(key)
         for document in _own_documents(instance, extractor):
             groups.setdefault(document.source_key, []).append(document)
     return groups
