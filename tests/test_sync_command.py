@@ -6,7 +6,7 @@ from django.core.management import call_command
 from pytest_django import Settings
 
 from django_model_rag import rag
-from tests.recording import TrackedRecordingOutput
+from tests.recording import PruneOnlyOutput, TrackedRecordingOutput
 from tests.testapp.models import Category, Product
 
 
@@ -16,6 +16,14 @@ def built_outputs() -> Iterator[list[TrackedRecordingOutput]]:
     TrackedRecordingOutput.built.clear()
     yield TrackedRecordingOutput.built
     TrackedRecordingOutput.built.clear()
+
+
+@pytest.fixture
+def built_prune_only_outputs() -> Iterator[list[PruneOnlyOutput]]:
+    """The PruneOnlyOutput instances built during the test, and only those."""
+    PruneOnlyOutput.built.clear()
+    yield PruneOnlyOutput.built
+    PruneOnlyOutput.built.clear()
 
 
 def test_the_command_without_an_output_setting_names_the_missing_setting() -> None:
@@ -53,6 +61,26 @@ def test_the_command_with_a_backend_that_cannot_be_imported_names_the_backend(
         call_command("sync_model_rag")
 
     assert isinstance(excinfo.value.__cause__, ImportError)
+
+
+@pytest.mark.django_db
+def test_the_command_with_a_backend_without_replace_names_it_before_running_a_model(
+    settings: Settings, built_prune_only_outputs: list[PruneOnlyOutput]
+) -> None:
+    # Registered but without rows: running it would call prune alone, never
+    # replace, so only a check made up front can notice the missing replace.
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.PruneOnlyOutput"}
+
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        call_command("sync_model_rag")
+
+    message = str(excinfo.value)
+    assert "PruneOnlyOutput" in message
+    assert "replace" in message
+    # The check may come before or after the backend is built: either way,
+    # nothing reaches it.
+    assert [output.pruned for output in built_prune_only_outputs] in ([], [[]])
 
 
 @pytest.mark.django_db

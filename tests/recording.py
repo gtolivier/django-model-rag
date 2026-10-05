@@ -69,6 +69,23 @@ class TrackedRecordingOutput(RecordingOutput):
         TrackedRecordingOutput.built.append(self)
 
 
+class PruneOnlyOutput:
+    """A broken output backend: a callable prune, but no replace at all.
+
+    Keeps every instance built of it and every prune call it receives, so a
+    test can tell that nothing was sent to it.
+    """
+
+    built: ClassVar[list["PruneOnlyOutput"]] = []
+
+    def __init__(self) -> None:
+        self.pruned: list[tuple[str, set[str]]] = []
+        PruneOnlyOutput.built.append(self)
+
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
+        self.pruned.append((model_label, set(kept_keys)))
+
+
 def run_documents(
     models: Sequence[type[Model]] | None = None,
 ) -> list[NormalizedDocument]:
