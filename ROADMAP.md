@@ -386,8 +386,8 @@ reference.
   database. The reload should also read from the database the save wrote,
   with `.using(alias)`, not from the one the router picks for reads: a
   lagging replica would miss a new instance (taken for deleted since the
-  save, so nothing is sent) or return the old row. The test needs a second database in the
-  test settings.
+  save, so nothing is sent) or return the old row. The test needs a second
+  database in the test settings.
 
 ## Not planned here
 
