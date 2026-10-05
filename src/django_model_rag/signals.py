@@ -77,7 +77,9 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     if not _signals_enabled():
         return
 
-    if sender not in rag.registered_models():
+    # A proxy is deleted under its own sender: its group is the concrete model's.
+    registered_model = sender._meta.concrete_model
+    if registered_model not in rag.registered_models():
         return
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
@@ -89,6 +91,6 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     def replace_group_with_an_empty_one() -> None:
         # A bare instance makes run_instance() send an empty group, as the row
         # is gone.
-        _replace_group(sender(pk=deleted_pk))
+        _replace_group(registered_model(pk=deleted_pk))
 
     transaction.on_commit(replace_group_with_an_empty_one)

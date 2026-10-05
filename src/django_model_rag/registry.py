@@ -333,6 +333,16 @@ def _delete_uid(model: type[Model]) -> str:
     return f"django_model_rag.sync_delete.{model._meta.label}"
 
 
+def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
+    """Return ``model`` and its proxies, which Django deletes under their own."""
+    # Not apps.get_models(): a model is registered while the apps still load.
+    found = [model]
+    for subclass in model.__subclasses__():
+        if subclass._meta.proxy:
+            found.extend(_model_and_proxies(subclass))
+    return found
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -498,7 +508,8 @@ class Registry:
         """
         self._require_registered(model)
         del self._registrations[model]
-        post_delete.disconnect(dispatch_uid=_delete_uid(model), sender=model)
+        for sender in _model_and_proxies(model):
+            post_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
 
     def _add(
         self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
@@ -511,9 +522,10 @@ class Registry:
         self._registrations[model] = factory
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
-        post_delete.connect(
-            sync_deleted_instance, sender=model, dispatch_uid=_delete_uid(model)
-        )
+        for sender in _model_and_proxies(model):
+            post_delete.connect(
+                sync_deleted_instance, sender=sender, dispatch_uid=_delete_uid(sender)
+            )
 
 
 rag = Registry()
