@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Model
 
@@ -15,8 +16,16 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
     if sender not in rag.registered_models():
         return
 
+    # delete() clears the primary key of the instance: keep it for the commit.
+    saved_pk = instance.pk
+
     def replace_group_as_committed() -> None:
-        committed_instance = sender._base_manager.get(pk=instance.pk)
+        try:
+            committed_instance = sender._base_manager.get(pk=saved_pk)
+        except ObjectDoesNotExist:
+            # Deleted since the save: a bare instance makes run_instance() send
+            # an empty group, as the row is gone.
+            committed_instance = sender(pk=saved_pk)
         SyncPipeline(configured_output()).run_instance(committed_instance)
 
     transaction.on_commit(replace_group_as_committed)
