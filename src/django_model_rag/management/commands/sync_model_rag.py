@@ -2,9 +2,10 @@
 
 from typing import Any
 
+from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandParser
 from django.utils.module_loading import import_string
 
 from django_model_rag import DocumentOutput, SyncPipeline, rag
@@ -18,9 +19,18 @@ _REQUIRED_METHODS = ("replace", "prune")
 class Command(BaseCommand):
     help = "Synchronize the registered models into the configured output."
 
+    def add_arguments(self, parser: CommandParser) -> None:
+        parser.add_argument("labels", nargs="*", metavar="app_label.model_name")
+
     def handle(self, *args: Any, **options: Any) -> None:
         pipeline = SyncPipeline(_configured_output())
-        for model in rag.registered_models():
+        labels = options["labels"]
+        models = (
+            [apps.get_model(label) for label in labels]
+            if labels
+            else rag.registered_models()
+        )
+        for model in models:
             pipeline.run([model])
             self.stdout.write(f"{model._meta.label_lower}: synced")
 
