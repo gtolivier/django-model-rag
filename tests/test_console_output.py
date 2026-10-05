@@ -1,3 +1,4 @@
+import io
 import re
 
 import pytest
@@ -111,3 +112,25 @@ def test_console_output_prune_writes_each_model_label_with_its_kept_key_count(
         ), f"no line writes {label!r} with its count {count}"
     for key in kept_pages:
         assert key not in written, f"kept key {key!r} is written"
+
+
+def test_console_output_writes_replace_and_prune_to_the_given_stream(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    history = NormalizedDocument(
+        text="Founded in a garage.",
+        source_app_label="testapp",
+        source_model="page",
+        source_pk=42,
+        title="History",
+    )
+    stream = io.StringIO()
+
+    output = ConsoleOutput(stream=stream)
+    output.replace({"testapp.page:42": [history]})
+    output.prune("testapp.product", {"testapp.product:13"})
+
+    written = stream.getvalue()
+    assert "testapp.page:42" in written
+    assert "testapp.product" in written
+    assert capsys.readouterr().out == ""
