@@ -104,12 +104,15 @@ def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[]
     """Return a commit callback replacing the group of a saved instance."""
 
     def replace_group_as_committed() -> None:
-        committed_instance = _committed_instance(registered_model, saved_pk)
-        # Deleted since the save: the delete's own callback sends the empty group.
-        if committed_instance is None:
-            return
+        def reload_and_replace() -> None:
+            committed_instance = _committed_instance(registered_model, saved_pk)
+            # Deleted since the save: the delete's own callback sends the empty group.
+            if committed_instance is None:
+                return
 
-        _replace_group(committed_instance, registered_model, saved_pk)
+            _replace_group(committed_instance, registered_model, saved_pk)
+
+        _send_group(reload_and_replace, _source_key(registered_model, saved_pk))
 
     return replace_group_as_committed
 
