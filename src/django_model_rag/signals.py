@@ -1,5 +1,6 @@
 """Signal receivers that keep the output in step with saved and deleted instances."""
 
+import logging
 from typing import Any
 
 from django.conf import settings
@@ -7,11 +8,14 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Model
 
+from django_model_rag.documents import build_source_key
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
+
+logger = logging.getLogger("django_model_rag")
 
 
 def _signals_enabled() -> bool:
@@ -52,7 +56,14 @@ def sync_saved_instance(
         committed_instance = _committed_instance(sender, saved_pk)
         # Deleted since the save: the delete's own callback sends the empty group.
         if committed_instance is not None:
-            _replace_group(committed_instance)
+            try:
+                _replace_group(committed_instance)
+            except Exception:
+                # An error escaping a commit callback would break the commit.
+                logger.exception(
+                    "Syncing %s failed",
+                    build_source_key(sender._meta.label_lower, saved_pk),
+                )
 
     transaction.on_commit(replace_group_as_committed)
 
