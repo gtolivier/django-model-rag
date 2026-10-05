@@ -38,6 +38,9 @@ def _backend_class(backend: str) -> type[DocumentOutput]:
     except ImportError as error:
         message = f"The {_BACKEND_KEY} {backend} cannot be imported."
         raise ImproperlyConfigured(message) from error
+    if not callable(getattr(output_class, "replace", None)):
+        message = f"The output {output_class.__name__} needs a callable replace."
+        raise ImproperlyConfigured(message)
     return output_class
 
 
