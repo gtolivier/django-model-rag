@@ -3,6 +3,7 @@
 Also builds the output configured by the ``MODEL_RAG_OUTPUT`` setting.
 """
 
+import inspect
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from typing import Any, Protocol, TextIO
@@ -70,7 +71,21 @@ def configured_output() -> DocumentOutput:
 
 def check_output_configuration() -> None:
     """Fail unless the output setting names a usable output, building nothing."""
-    _validated_output_class(_output_setting())
+    output_setting = _output_setting()
+    _require_accepted_options(
+        _validated_output_class(output_setting), _options(output_setting)
+    )
+
+
+def _require_accepted_options(
+    output_class: type[DocumentOutput], options: dict[str, Any]
+) -> None:
+    """Fail unless `output_class` can be built with `options`, building nothing."""
+    try:
+        inspect.signature(output_class).bind(**options)
+    except TypeError as error:
+        message = f"The output {output_class.__name__} rejects its options: {error}"
+        raise ImproperlyConfigured(message) from error
 
 
 def _validated_output_class(output_setting: dict[str, Any]) -> type[DocumentOutput]:
