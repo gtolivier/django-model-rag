@@ -74,7 +74,12 @@ def _configured_output() -> DocumentOutput:
     output_setting = _output_setting()
     output_class = _backend_class(output_setting[_BACKEND_KEY])
     _require_callable_methods(output_class)
-    return output_class(**output_setting.get(_OPTIONS_KEY, {}))
+    return output_class(**_options(output_setting))
+
+
+def _options(output_setting: dict[str, Any]) -> Any:
+    """Return the OPTIONS of `output_setting`, empty if it has none."""
+    return output_setting.get(_OPTIONS_KEY, {})
 
 
 def _backend_class(backend: str) -> type[DocumentOutput]:
@@ -98,7 +103,10 @@ def _require_callable_methods(output_class: type[DocumentOutput]) -> None:
 
 
 def _output_setting() -> dict[str, Any]:
-    """Return the output setting, failing if it is not a dict with a BACKEND."""
+    """Return the output setting, failing unless it is a dict with a BACKEND.
+
+    Its OPTIONS, if any, must be a dict too.
+    """
     if not hasattr(settings, _OUTPUT_SETTING):
         message = f"The {_OUTPUT_SETTING} setting is required."
         raise ImproperlyConfigured(message)
@@ -109,7 +117,7 @@ def _output_setting() -> dict[str, Any]:
     if _BACKEND_KEY not in output_setting:
         message = f"The {_OUTPUT_SETTING} setting requires a {_BACKEND_KEY} key."
         raise ImproperlyConfigured(message)
-    if not isinstance(output_setting.get(_OPTIONS_KEY, {}), dict):
+    if not isinstance(_options(output_setting), dict):
         message = f"The {_OPTIONS_KEY} of the {_OUTPUT_SETTING} setting must be a dict."
         raise ImproperlyConfigured(message)
     return output_setting
