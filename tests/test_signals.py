@@ -474,6 +474,45 @@ def test_deleting_a_multi_table_child_empties_the_group_of_its_registered_parent
 
 
 @pytest.mark.django_db
+def test_deleting_a_child_with_a_primary_key_of_its_own_empties_its_parents_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the parent is registered, not its multi-table child.
+    _register_products_by_name()
+
+    # Created in a commit of their own, so that only the delete's commit is
+    # observed below.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        lamp = ClearanceProduct.objects.create(
+            code="CLR-1",
+            name="Desk lamp",
+            description="A lamp for the desk.",
+            price="25.00",
+            category=lighting,
+        )
+    # The child's primary key is its code, not the Product's: the parent row
+    # is reached by the explicit parent link, ``product``.
+    product_pk = lamp.product_id
+    built_outputs.clear()
+
+    # Deleting the child deletes its parent row too: Django sends post_delete
+    # for each.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Exactly one empty group, the parent row's, under the parent's label and
+    # the parent's primary key, not the child's code.
+    assert _replaced(built_outputs) == [{f"testapp.product:{product_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
