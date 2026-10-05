@@ -22,7 +22,10 @@ class Command(BaseCommand):
 
 
 def _configured_output() -> DocumentOutput:
-    """Build the output named by the BACKEND of the output setting."""
+    """Build the output named by the BACKEND of the output setting.
+
+    Its OPTIONS, if any, are passed to that class as keyword arguments.
+    """
     if not hasattr(settings, _OUTPUT_SETTING):
         message = f"The {_OUTPUT_SETTING} setting is required."
         raise ImproperlyConfigured(message)
