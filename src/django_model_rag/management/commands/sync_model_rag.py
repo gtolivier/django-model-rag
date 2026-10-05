@@ -5,7 +5,7 @@ from typing import Any
 from django.apps import apps
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db.models import Model
 from django.utils.module_loading import import_string
 
@@ -35,7 +35,16 @@ def _models_to_sync(labels: list[str]) -> list[type[Model]]:
     """Return the models named by `labels`, or every registered model if none."""
     if not labels:
         return rag.registered_models()
-    return [apps.get_model(label) for label in labels]
+    return [_model_named(label) for label in labels]
+
+
+def _model_named(label: str) -> type[Model]:
+    """Return the model named by `label`, failing with CommandError if none."""
+    try:
+        return apps.get_model(label)
+    except (LookupError, ValueError) as error:
+        message = f"The label {label} names no model of an installed app."
+        raise CommandError(message) from error
 
 
 def _configured_output() -> DocumentOutput:
