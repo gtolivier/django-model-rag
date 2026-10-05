@@ -2,6 +2,7 @@ from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
 from django.db import transaction
+from django.db.models.signals import post_delete
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
@@ -227,6 +228,19 @@ def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
 
     # Not even an output built: nothing reaches the backend.
     assert built_outputs == []
+
+
+def test_an_unregistered_model_keeps_the_fast_delete_of_django() -> None:
+    # Another model is registered, so the registry is not simply empty.
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Django's deletion Collector fast-deletes (one DELETE query, no instance
+    # loaded) only a model with no post_delete listener; a receiver connected
+    # without a sender listens to every model.
+    assert not post_delete.has_listeners(Category)
 
 
 @pytest.mark.django_db
