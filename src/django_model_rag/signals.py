@@ -54,9 +54,19 @@ def _registered_model(sender: type[Model]) -> type[Model] | None:
     return registered_models[0] if registered_models else None
 
 
-def _replace_group(instance: Model) -> None:
-    """Send the group of ``instance`` to a newly built configured output."""
-    SyncPipeline(configured_output()).run_instance(instance)
+def _replace_group(instance: Model, registered_model: type[Model], pk: Any) -> None:
+    """Send the group of ``instance`` to a newly built configured output.
+
+    A failure is logged with the source key of ``registered_model`` and ``pk``.
+    """
+    try:
+        SyncPipeline(configured_output()).run_instance(instance)
+    except Exception:
+        # An error escaping a commit callback would break the commit.
+        logger.exception(
+            "Syncing %s failed",
+            build_source_key(registered_model._meta.label_lower, pk),
+        )
 
 
 def sync_saved_instance(
@@ -89,14 +99,7 @@ def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[]
         if committed_instance is None:
             return
 
-        try:
-            _replace_group(committed_instance)
-        except Exception:
-            # An error escaping a commit callback would break the commit.
-            logger.exception(
-                "Syncing %s failed",
-                build_source_key(registered_model._meta.label_lower, saved_pk),
-            )
+        _replace_group(committed_instance, registered_model, saved_pk)
 
     return replace_group_as_committed
 
@@ -119,13 +122,6 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     def replace_group_with_an_empty_one() -> None:
         # A bare instance makes run_instance() send an empty group, as the row
         # is gone.
-        try:
-            _replace_group(registered_model(pk=deleted_pk))
-        except Exception:
-            # An error escaping a commit callback would break the commit.
-            logger.exception(
-                "Syncing %s failed",
-                build_source_key(registered_model._meta.label_lower, deleted_pk),
-            )
+        _replace_group(registered_model(pk=deleted_pk), registered_model, deleted_pk)
 
     transaction.on_commit(replace_group_with_an_empty_one)
