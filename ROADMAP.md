@@ -78,6 +78,22 @@ features 9 and 10 need.
   django-minimal-rag's storage. Leaving stale documents to the next full
   sync was rejected too: on an authenticated intranet, an unpublished page
   would stay quotable until then.
+- **The retry is running again.** Every call replaces whole groups, so
+  replaying it gives the same result. A `run()` interrupted in a model
+  leaves the batches it sent up to date, the instances it had not reached
+  with their previous documents — stale, not missing — and that model
+  unpruned, since an incomplete list of kept keys would delete live
+  sources; the models after it are not run. The output never loses a
+  source that still exists, and running `run()` again (or `run([Model])`)
+  repairs the rest. A `run_instance()` that fails sends nothing: the
+  instance keeps its previous documents until its next save or the next
+  full run. What this leaves to the other layers: the atomicity of a batch
+  is the output's (django-minimal-rag applies each `replace()` in a
+  transaction), and so are transient errors such as a rate-limited
+  embedding API, retried with backoff — the pipeline cannot tell which
+  exceptions are transient. There is no checkpoint, so a run again
+  re-extracts everything; django-minimal-rag compares texts and re-embeds
+  only what changed.
 - **The destination is a setting, read by the command and the signals.**
   `SyncPipeline` receives its output explicitly, so tests and scripts pass
   their own. The command and the signals run outside project code: they
@@ -242,7 +258,9 @@ reference.
   registered are pruned by no run. Open: a default manager that returns
   subclass instances (django-polymorphic, `InheritanceManager`) keys their
   documents under the subclass's label, while the model is pruned under its
-  own, so they are pruned by no run. Open, to settle by this feature at the
+  own, so they are pruned by no run. Open: when one model's extractor
+  raises, the exception stops the run; should the command go on with the
+  other models and report the failure at the end? Open, to settle by this feature at the
   latest: does the package become a Django app that autodiscovers each
   app's `rag.py`, as `django.contrib.admin` does with `admin.py`? The
   command only sees the models registered by the time it runs; until then,
@@ -260,10 +278,8 @@ reference.
   instance is not registered today. Open: a signal that fires while the
   command runs — the run's final `prune` deletes an instance created
   since the run read the table, and a chunk read before an update puts the
-  old text back. Open: `run_instance` does not go through
-  `get_queryset()`, so a save of an instance that hook filters out (a
-  draft, say) puts its documents in the output until the next run prunes
-  them.
+  old text back. Open: a failed signal sends nothing; whether
+  to retry it through a queue (Celery…) is probably the project's call.
 
 ## Not planned here
 
