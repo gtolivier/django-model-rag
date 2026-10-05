@@ -89,6 +89,9 @@ def _backend_class(backend: str) -> type[DocumentOutput]:
     except ImportError as error:
         message = f"The {_BACKEND_KEY} {backend} cannot be imported."
         raise ImproperlyConfigured(message) from error
+    if not isinstance(output_class, type):
+        message = f"The {_BACKEND_KEY} {backend} is not a class."
+        raise ImproperlyConfigured(message)
     return output_class
 
 
