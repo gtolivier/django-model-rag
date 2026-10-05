@@ -93,6 +93,28 @@ def test_a_save_sends_the_documents_of_the_instance_as_committed(
     ]
 
 
+@pytest.mark.django_db
+def test_saving_an_instance_with_no_document_replaces_its_group_with_an_empty_one(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> None:
+            # Skipped: the instance produces no document.
+            return None
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        assert _replaced(built_outputs) == []
+
+    # An empty group, so the output drops what it held for the instance.
+    assert _replaced(built_outputs) == [{f"testapp.category:{lighting.pk}": []}]
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
