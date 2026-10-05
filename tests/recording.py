@@ -103,6 +103,12 @@ class ReplaceOnlyOutput:
         self.replaced.append({key: list(group) for key, group in groups.items()})
 
 
+# Not a class but an instance, with a callable replace and prune: a dotted
+# path to it names a misconfigured output backend. A test reads its calls
+# back to tell that nothing was sent to it.
+RECORDING_OUTPUT_INSTANCE = RecordingOutput()
+
+
 def run_documents(
     models: Sequence[type[Model]] | None = None,
 ) -> list[NormalizedDocument]:

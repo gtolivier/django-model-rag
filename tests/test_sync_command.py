@@ -11,6 +11,7 @@ from pytest_django import Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
+    RECORDING_OUTPUT_INSTANCE,
     PruneOnlyOutput,
     ReplaceOnlyOutput,
     TrackedRecordingOutput,
@@ -171,6 +172,25 @@ def test_the_command_with_a_backend_not_a_string_names_it_before_running_a_model
         call_command("sync_model_rag")
 
     assert [output.calls for output in built_outputs] in ([], [[]])
+
+
+@pytest.mark.django_db
+def test_the_command_with_a_backend_not_a_class_names_it_before_running_a_model(
+    settings: Settings,
+) -> None:
+    # Registered with a row: running it would send the documents to the
+    # instance, which has a callable replace and prune of its own, so only a
+    # check made up front keeps them from reaching it.
+    _create_a_hammer()
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.RECORDING_OUTPUT_INSTANCE"}
+
+    with pytest.raises(
+        ImproperlyConfigured, match=r"tests\.recording\.RECORDING_OUTPUT_INSTANCE"
+    ):
+        call_command("sync_model_rag")
+
+    assert RECORDING_OUTPUT_INSTANCE.calls == []
 
 
 @pytest.mark.django_db
