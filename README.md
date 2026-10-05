@@ -384,14 +384,24 @@ rolled-back transaction sends nothing; outside a transaction (autocommit),
 the work runs at once. Each commit builds a new output from
 `MODEL_RAG_OUTPUT`, with its `OPTIONS`, and the work runs in the process
 that commits: a slow output delays the response that saved the instance.
-The signals follow the default database only, for now: saves and deletes on
-another database alias are not supported yet.
+The signals follow the default database only, for now: a save or a delete
+on another database alias is not skipped, but handled as if it were on the
+default database — its work waits for the default database's commit, and its
+group is reloaded from, or emptied under the key of, the default database's
+row — so it can update the wrong group. The reload also goes through the
+database router: one that sends reads to a lagging replica can miss an
+instance just created. Both are planned.
 
 **Proxies and multi-table inheritance.** Saving or deleting through a proxy
 of a registered model updates the registered model's group, under its own
 label. Saving a multi-table child updates each registered model among the
 child and its parents, each under its own label; deleting it empties the
-group of the nearest registered one. A proxy defined after its concrete
+group of the nearest registered one. Each group is keyed by its own model's
+primary key, even for a child that declares a primary key of its own next
+to an explicit `parent_link`. Saving through a registered parent
+does not update a registered child's group, though the child's documents
+include the fields it inherits: they stay stale until the child is saved or
+`sync_model_rag` runs. A proxy defined after its concrete
 model is registered gets no delete listener, so deleting through it empties
 nothing: register from `model_rag.py`, once every model is loaded. A proxy
 registered instead of its concrete model is not updated by the signals.
@@ -411,7 +421,8 @@ instance that raises at the commit is logged with `logger.exception` on the
 goes on: the instance keeps its previous documents until its next save or
 the next `sync_model_rag`, and the other instances of the transaction are
 still sent. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
-its `BACKEND` class does not accept — is not logged: it raises
+its `BACKEND` class does not accept, when Python can read the class's
+signature — is not logged: it raises
 `ImproperlyConfigured` at the save or the delete, so that a forgotten
 setting cannot silently stop the indexing. A save checks it in `pre_save`,
 before the row is written, so that it writes nothing even in autocommit; a

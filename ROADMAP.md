@@ -323,8 +323,11 @@ reference.
   - **Proxies and multi-table children.** Saving or deleting through a
     proxy of a registered model syncs the registered model's group, under
     its label. Saving a multi-table child syncs each registered model among
-    the child and its parents, each under its own label; deleting it
-    empties the nearest registered one's group.
+    the child and its parents, each under its own label and its own primary
+    key (a child may declare a primary key of its own next to its
+    `parent_link`); deleting it empties the nearest registered one's group.
+    Unregistering a proxy keeps the delete listener its registered concrete
+    model needs.
   - **Off switch:** `MODEL_RAG_SIGNALS = False`. A raw save (`loaddata`) is
     ignored; the command catches up.
   - **Fast delete kept.** `post_delete` is connected per registered model
@@ -360,7 +363,12 @@ reference.
     `post_delete` listener: deleting through it empties nothing. Registering
     from `model_rag.py`, once every model is loaded, avoids it;
   - an instance saved, then deleted by raw SQL in the same transaction,
-    gets no empty group: no `post_delete` fires. The command prunes it.
+    gets no empty group: no `post_delete` fires. The command prunes it;
+  - saving through a registered multi-table parent does not re-sync a
+    registered child, whose documents include the inherited fields: only
+    `post_save` with the parent as sender fires. Finding the child row costs
+    a query per registered child model on every parent save; it belongs with
+    the text that comes from another model, above.
 - [ ] **10b. Signals during a sync.** A signal that fires while
   `sync_model_rag` runs: the run's final `prune` deletes an instance created
   since the run read the table — a live source lost, which the contract
@@ -368,11 +376,18 @@ reference.
   the primary keys that exist again, and keep those the run did not see.
   Still open: a chunk read before an update puts the old text back until
   the next save, a short window.
-- [ ] **10c. Signals on several databases.** The signals follow the default
-  database only: `transaction.on_commit` is attached to it, and the commit
-  callback reloads from it. A save or a delete on another alias should
-  attach its callback to the signal's `using` and reload from that
-  database. The test needs a second database in the test settings.
+- [ ] **10c. Signals on several databases** (before 10b). The signals
+  follow the default database only: `transaction.on_commit` is attached to
+  it, and the commit callback reloads from it. A save or a delete on another
+  alias is not skipped today: it waits for the default database's commit and
+  reloads, or empties, the default database's group with the same primary
+  key, so it can corrupt the index. A save or a delete on another alias
+  should attach its callback to the signal's `using` and reload from that
+  database. The reload should also read from the database the save wrote,
+  with `.using(alias)`, not from the one the router picks for reads: a
+  lagging replica would miss a new instance (taken for deleted since the
+  save, so nothing is sent) or return the old row. The test needs a second database in the
+  test settings.
 
 ## Not planned here
 
