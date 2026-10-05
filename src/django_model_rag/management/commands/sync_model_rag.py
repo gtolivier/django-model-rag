@@ -5,6 +5,9 @@ from typing import Any
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
+from django.utils.module_loading import import_string
+
+from django_model_rag import SyncPipeline
 
 _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 
@@ -16,3 +19,5 @@ class Command(BaseCommand):
         if not hasattr(settings, _OUTPUT_SETTING):
             message = f"The {_OUTPUT_SETTING} setting is required."
             raise ImproperlyConfigured(message)
+        output_class = import_string(getattr(settings, _OUTPUT_SETTING)["BACKEND"])
+        SyncPipeline(output_class()).run()
