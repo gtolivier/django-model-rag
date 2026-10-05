@@ -27,7 +27,12 @@ def _configured_output() -> DocumentOutput:
     Its OPTIONS, if any, are passed to that class as keyword arguments.
     """
     output_setting = _output_setting()
-    output_class: type[DocumentOutput] = import_string(output_setting[_BACKEND_KEY])
+    backend = output_setting[_BACKEND_KEY]
+    try:
+        output_class: type[DocumentOutput] = import_string(backend)
+    except ImportError as error:
+        message = f"The {_BACKEND_KEY} {backend} cannot be imported."
+        raise ImproperlyConfigured(message) from error
     return output_class(**output_setting.get(_OPTIONS_KEY, {}))
 
 
