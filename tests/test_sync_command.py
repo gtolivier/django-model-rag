@@ -465,6 +465,25 @@ def test_the_command_with_traceback_follows_each_failed_model_with_its_traceback
 
 
 @pytest.mark.django_db
+@pytest.mark.usefixtures("built_outputs")
+def test_the_command_without_a_registered_model_warns_on_stderr_and_ends_without_error(
+    settings: Settings,
+) -> None:
+    # A valid output setting: any error or warning can only come from the
+    # empty registry.
+    assert rag.registered_models() == []
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    call_command("sync_model_rag", stdout=stdout, stderr=stderr)
+
+    lines = stderr.getvalue().splitlines()
+    assert len(lines) == 1
+    assert re.search(r"\bno model\b.*\bregistered\b", lines[0], re.IGNORECASE)
+
+
+@pytest.mark.django_db
 def test_the_command_passes_the_output_options_to_the_backend_as_keyword_arguments(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
