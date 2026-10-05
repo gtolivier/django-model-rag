@@ -45,7 +45,8 @@ def _models_to_sync(labels: list[str]) -> list[type[Model]]:
     """Return the models named by `labels`, or every registered model if none."""
     if not labels:
         return rag.registered_models()
-    return [_registered_model_named(label) for label in labels]
+    models = [_registered_model_named(label) for label in labels]
+    return list(dict.fromkeys(models))
 
 
 def _registered_model_named(label: str) -> type[Model]:
