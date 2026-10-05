@@ -146,6 +146,73 @@ def test_saving_a_multi_table_child_replaces_the_group_of_its_registered_parent(
 
 
 @pytest.mark.django_db
+def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Both the parent and its multi-table child are registered, each with an
+    # extractor of its own, whose texts tell their documents apart.
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=f"Product: {instance.name}")
+
+    @rag.register_extractor(FeaturedProduct)
+    class FeaturedProductExtractor(BaseExtractor[FeaturedProduct]):
+        def extract(self, instance: FeaturedProduct) -> NormalizedDocument:
+            return self.build_document(instance, text=f"Featured: {instance.tagline}")
+
+    # Created in a commit of its own, unregistered: only the child's save
+    # below is observed.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    built_outputs.clear()
+
+    # Django sends post_save once, with the child as its sender, not Product.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp = FeaturedProduct.objects.create(
+            name="Desk lamp",
+            description="A lamp for the desk.",
+            price="25.00",
+            category=lighting,
+            tagline="Light up your work",
+        )
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per label is not what this test is about.
+    received = {
+        source_key: list(group)
+        for groups in _replaced(built_outputs)
+        for source_key, group in groups.items()
+    }
+    # Each group under its own label, from its own extractor: the child's
+    # document for the child, the parent's document for the parent row.
+    assert received == {
+        f"testapp.featuredproduct:{lamp.pk}": [
+            NormalizedDocument(
+                text="Featured: Light up your work",
+                source_app_label="testapp",
+                source_model="featuredproduct",
+                source_pk=lamp.pk,
+            ),
+        ],
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Product: Desk lamp",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_save_sends_the_documents_of_the_instance_as_committed(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
