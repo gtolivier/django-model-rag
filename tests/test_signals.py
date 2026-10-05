@@ -320,6 +320,28 @@ def test_saving_a_registered_instance_without_an_output_setting_fails_at_the_sav
         Category.objects.create(name="Lighting")
 
 
+@pytest.mark.django_db
+def test_saving_a_registered_instance_with_a_backend_lacking_replace_fails_at_the_save(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A callable prune, but no replace at all.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.PruneOnlyOutput"}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # The commit callbacks are captured and never run: only an error raised by
+    # the save itself is caught, not one deferred to the commit.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        pytest.raises(ImproperlyConfigured, match="PruneOnlyOutput.*replace"),
+    ):
+        Category.objects.create(name="Lighting")
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
