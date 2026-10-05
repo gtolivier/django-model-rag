@@ -12,7 +12,7 @@ from tests.recording import (
     ReplaceOnlyOutput,
     TrackedRecordingOutput,
 )
-from tests.testapp.models import Category, Product
+from tests.testapp.models import Category, Page, Product
 
 
 @pytest.fixture
@@ -150,6 +150,23 @@ def test_the_command_prunes_every_registered_model_in_registration_order(
     settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
 
     call_command("sync_model_rag")
+
+    [output] = built_outputs
+    assert output.pruned == [("testapp.product", set()), ("testapp.category", set())]
+
+
+@pytest.mark.django_db
+def test_the_command_with_model_labels_prunes_only_those_models_in_the_given_order(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Named in the reverse of registration order, with a third registered
+    # model left out: running every model, or in registration order, fails.
+    rag.register(Category, fields=["name"])
+    rag.register(Product, fields=["name"])
+    rag.register(Page, fields=["title"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    call_command("sync_model_rag", "testapp.product", "testapp.category")
 
     [output] = built_outputs
     assert output.pruned == [("testapp.product", set()), ("testapp.category", set())]
