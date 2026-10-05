@@ -11,6 +11,8 @@ from django_model_rag.output import check_output_configuration, configured_outpu
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
 
+_SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
+
 
 def _committed_instance(model: type[Model], pk: Any) -> Model | None:
     """Return the instance of ``model`` with primary key ``pk`` as committed, if any."""
@@ -27,7 +29,7 @@ def _replace_group(instance: Model) -> None:
 
 def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
-    if not getattr(settings, "MODEL_RAG_SIGNALS", True):
+    if not getattr(settings, _SIGNALS_SETTING, True):
         return
 
     if sender not in rag.registered_models():
