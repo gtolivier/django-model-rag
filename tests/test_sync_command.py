@@ -1,9 +1,43 @@
+from collections.abc import Iterator
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
+from pytest_django import Settings
+
+from django_model_rag import rag
+from tests.recording import TrackedRecordingOutput
+from tests.testapp.models import Category, Product
+
+
+@pytest.fixture
+def built_outputs() -> Iterator[list[TrackedRecordingOutput]]:
+    """The TrackedRecordingOutput instances built during the test, and only those."""
+    TrackedRecordingOutput.built.clear()
+    yield TrackedRecordingOutput.built
+    TrackedRecordingOutput.built.clear()
 
 
 def test_the_command_without_an_output_setting_names_the_missing_setting() -> None:
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
     with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
         call_command("sync_model_rag")
+
+
+@pytest.mark.django_db
+def test_the_command_runs_a_registered_model_into_the_configured_backend(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    category = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    call_command("sync_model_rag")
+
+    [output] = built_outputs
+    assert [document.text for document in output.documents()] == ["Hammer"]
+    assert output.pruned == [("testapp.product", {f"testapp.product:{hammer.pk}"})]
+    assert output.calls == ["replace", "prune"]

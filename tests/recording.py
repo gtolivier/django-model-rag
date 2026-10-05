@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
+from typing import ClassVar
 
 from django.db.models import Model
 
@@ -50,6 +51,20 @@ class RecordingOutput:
             for group in groups.values()
             for document in group
         ]
+
+
+class TrackedRecordingOutput(RecordingOutput):
+    """A recording output that keeps every instance built of it.
+
+    For code that builds its output itself from a dotted path, such as the
+    management command: the test reads back the instance it built.
+    """
+
+    built: ClassVar[list["TrackedRecordingOutput"]] = []
+
+    def __init__(self) -> None:
+        super().__init__()
+        TrackedRecordingOutput.built.append(self)
 
 
 def run_documents(
