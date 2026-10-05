@@ -139,6 +139,35 @@ def test_an_instance_saved_then_deleted_before_the_commit_sends_an_empty_group(
 
 
 @pytest.mark.django_db
+def test_deleting_a_registered_instance_replaces_its_group_with_an_empty_one(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of its own, so that only the delete's commit is
+    # observed below.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    lighting_pk = lighting.pk
+    built_outputs.clear()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # An empty group, so the output drops what it held for the instance.
+    assert _replaced(built_outputs) == [{f"testapp.category:{lighting_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
