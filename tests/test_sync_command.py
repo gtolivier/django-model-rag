@@ -42,6 +42,19 @@ def test_the_command_with_an_output_setting_without_a_backend_names_the_backend_
         call_command("sync_model_rag")
 
 
+def test_the_command_with_a_backend_that_cannot_be_imported_names_the_backend(
+    settings: Settings,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.NoSuchOutput"}
+
+    with pytest.raises(
+        ImproperlyConfigured, match=r"tests\.recording\.NoSuchOutput"
+    ) as excinfo:
+        call_command("sync_model_rag")
+
+    assert isinstance(excinfo.value.__cause__, ImportError)
+
+
 @pytest.mark.django_db
 def test_the_command_runs_a_registered_model_into_the_configured_backend(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
