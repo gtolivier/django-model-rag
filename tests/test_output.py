@@ -1,6 +1,7 @@
 from collections.abc import Mapping, Sequence
 
 import pytest
+from django.db.models import QuerySet
 
 from django_model_rag import (
     BaseExtractor,
@@ -160,6 +161,30 @@ def test_run_instance_hands_an_empty_group_for_an_instance_without_documents() -
     SyncPipeline(output).run_instance(empty)
 
     assert output.replaced == [{f"testapp.category:{empty.pk}": []}]
+
+
+@pytest.mark.django_db
+def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
+    # run() loads instances through get_queryset(): a draft it leaves out must
+    # not get indexed by run_instance() either, and the empty group deletes
+    # whatever the output still holds for it.
+    draft = Category.objects.create(name="Draft")
+    extracted: list[Category] = []
+
+    @rag.register_extractor(Category)
+    class PublishedCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.exclude(name="Draft")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            extracted.append(instance)
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(draft)
+
+    assert output.replaced == [{f"testapp.category:{draft.pk}": []}]
+    assert extracted == []
 
 
 @pytest.mark.django_db
