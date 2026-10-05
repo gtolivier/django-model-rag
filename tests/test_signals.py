@@ -181,6 +181,41 @@ def test_saving_an_instance_of_a_model_since_unregistered_sends_nothing(
     assert built_outputs == []
 
 
+@pytest.mark.django_db
+def test_each_commit_builds_a_new_output_with_the_configured_options(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": TRACKED_BACKEND,
+        "OPTIONS": {"collection": "catalog", "batch_size": 50},
+    }
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Two separate transactions, each with its own commit.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+    with django_capture_on_commit_callbacks(execute=True):
+        tools = Category.objects.create(name="Tools")
+
+    [first_output, second_output] = built_outputs
+    assert first_output is not second_output
+    assert first_output.options == {"collection": "catalog", "batch_size": 50}
+    assert second_output.options == {"collection": "catalog", "batch_size": 50}
+    # Each output receives the group of its own commit's save, and only it.
+    assert [list(groups) for groups in first_output.replaced] == [
+        [f"testapp.category:{lighting.pk}"]
+    ]
+    assert [list(groups) for groups in second_output.replaced] == [
+        [f"testapp.category:{tools.pk}"]
+    ]
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
