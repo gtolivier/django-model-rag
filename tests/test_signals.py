@@ -5,6 +5,7 @@ import pytest
 from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
+from django.db.models import QuerySet
 from django.db.models.signals import post_delete
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
@@ -680,6 +681,37 @@ def test_an_extractor_failing_at_the_commit_of_a_save_is_logged_without_raising(
     assert isinstance(record.exc_info[1], _ExtractionError)
     # Not even an empty group: what the output held for the instance is kept.
     assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_deleting_an_instance_empties_its_group_without_going_through_its_extractor(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Created before Category is registered, so that its save schedules
+    # nothing: only the delete's commit is observed below.
+    lighting = Category.objects.create(name="Lighting")
+    lighting_pk = lighting.pk
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            raise _ExtractionError
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            raise _ExtractionError
+
+    # An error escaping the commit callbacks would fail the test: the commit
+    # itself must not raise.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.delete()
+
+    # The row is gone, so there is nothing for the extractor to filter or
+    # extract: the empty group is sent all the same.
+    assert _replaced(built_outputs) == [{f"testapp.category:{lighting_pk}": []}]
 
 
 @pytest.mark.django_db
