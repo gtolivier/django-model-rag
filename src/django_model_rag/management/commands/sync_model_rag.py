@@ -42,7 +42,10 @@ class Command(BaseCommand):
 
 
 def _models_to_sync(labels: list[str]) -> list[type[Model]]:
-    """Return the models named by `labels`, or every registered model if none."""
+    """Return the models named by `labels`, or every registered model if none.
+
+    A model named more than once is returned once, at its first position.
+    """
     if not labels:
         return rag.registered_models()
     models = [_registered_model_named(label) for label in labels]
