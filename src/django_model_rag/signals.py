@@ -15,8 +15,8 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
     if sender not in rag.registered_models():
         return
 
-    def run() -> None:
-        committed = sender._base_manager.get(pk=instance.pk)
-        SyncPipeline(configured_output()).run_instance(committed)
+    def replace_group_as_committed() -> None:
+        committed_instance = sender._base_manager.get(pk=instance.pk)
+        SyncPipeline(configured_output()).run_instance(committed_instance)
 
-    transaction.on_commit(run)
+    transaction.on_commit(replace_group_as_committed)
