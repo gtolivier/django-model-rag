@@ -55,3 +55,35 @@ def test_console_output_writes_each_group_key_then_its_documents_titles_and_text
         found = written.find(fragment, position)
         assert found != -1, f"{fragment!r} missing after position {position}"
         position = found + len(fragment)
+
+
+def test_console_output_states_the_removal_of_each_empty_group_key(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    history = NormalizedDocument(
+        text="Founded in a garage.",
+        source_app_label="testapp",
+        source_model="page",
+        source_pk=42,
+        title="History",
+    )
+
+    ConsoleOutput().replace(
+        {
+            "testapp.page:7": [],
+            "testapp.page:42": [history],
+            "testapp.product:13": [],
+        }
+    )
+
+    # An empty group is the pipeline's way of saying the key's documents must
+    # be removed: the line naming each such key says so, the line naming a key
+    # with documents does not.
+    lines = capsys.readouterr().out.splitlines()
+    for removed_key in ("testapp.page:7", "testapp.product:13"):
+        assert any(removed_key in line and "removed" in line for line in lines), (
+            f"no line states the removal of {removed_key!r}"
+        )
+    kept_lines = [line for line in lines if "testapp.page:42" in line]
+    assert kept_lines, "the key with documents is not written"
+    assert not any("removed" in line for line in kept_lines)
