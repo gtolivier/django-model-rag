@@ -119,6 +119,13 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     def replace_group_with_an_empty_one() -> None:
         # A bare instance makes run_instance() send an empty group, as the row
         # is gone.
-        _replace_group(registered_model(pk=deleted_pk))
+        try:
+            _replace_group(registered_model(pk=deleted_pk))
+        except Exception:
+            # An error escaping a commit callback would break the commit.
+            logger.exception(
+                "Syncing %s failed",
+                build_source_key(registered_model._meta.label_lower, deleted_pk),
+            )
 
     transaction.on_commit(replace_group_with_an_empty_one)
