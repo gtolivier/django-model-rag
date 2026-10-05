@@ -1,6 +1,7 @@
 from collections.abc import Iterator, Mapping, Sequence
 
 import pytest
+from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.db.models.signals import post_delete
@@ -417,6 +418,32 @@ def test_deleting_a_registered_instance_with_signals_off_sends_nothing(
 
     # Nothing is even deferred to the commit, and no output is built.
     assert callbacks == []
+    assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_a_raw_save_of_a_registered_instance_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the raw save can keep it from being sent to.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Saved as loaddata saves a fixture: a deserialized object's save() is a
+    # raw save, so Django sends post_save with raw=True.
+    fixture = [{"model": "testapp.category", "pk": 1, "fields": {"name": "Lighting"}}]
+    with django_capture_on_commit_callbacks(execute=True):
+        for deserialized in serializers.deserialize("python", fixture):
+            deserialized.save()
+
+    # The row is there, yet not even an output is built, even after the commit.
+    assert Category.objects.filter(name="Lighting").exists()
     assert built_outputs == []
 
 
