@@ -31,8 +31,9 @@ class Command(BaseCommand):
             label = model._meta.label_lower
             try:
                 pipeline.run([model])
-            except Exception:  # one model's failure must not stop the others
+            except Exception as error:  # one model's failure must not stop the others
                 failed_labels.append(label)
+                self.stderr.write(f"{label}: {type(error).__name__}: {error}")
                 continue
             self.stdout.write(f"{label}: synced")
         if failed_labels:
