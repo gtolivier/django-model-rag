@@ -372,7 +372,8 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
 - **A save** replaces the instance's group with its documents, even an empty
   group when the extractor now returns nothing.
 - **A delete** — of an instance or of a queryset — replaces each deleted
-  instance's group with an empty one.
+  instance's group with an empty one, sent straight to the output: the
+  extractor and its `get_queryset` are not called, as the row is gone.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
@@ -383,6 +384,8 @@ rolled-back transaction sends nothing; outside a transaction (autocommit),
 the work runs at once. Each commit builds a new output from
 `MODEL_RAG_OUTPUT`, with its `OPTIONS`, and the work runs in the process
 that commits: a slow output delays the response that saved the instance.
+The signals follow the default database only, for now: saves and deletes on
+another database alias are not supported yet.
 
 **Proxies and multi-table inheritance.** Saving or deleting through a proxy
 of a registered model updates the registered model's group, under its own
@@ -402,17 +405,17 @@ change to a related object whose text a registered model reads — through
 are saved again. For all of these, run `sync_model_rag`, or call
 `SyncPipeline(output).run_instance(instance)` from a receiver of your own.
 
-**Failures.** An extractor or an output that raises at the commit is logged
-with `logger.exception` on the `django_model_rag` logger, naming the
-instance's source key, and the commit goes on: the instance keeps its
-previous documents until its next save or the next `sync_model_rag`, and
-the other instances of the transaction are still sent. A missing or invalid
-`MODEL_RAG_OUTPUT` is not logged: it raises `ImproperlyConfigured` at the
-save or the delete, so that a forgotten setting cannot silently stop the
-indexing. A delete raising this way is rolled back. A save is not, by
-itself: Django sends `post_save` once the row is written, so in autocommit
-the row stays written although `save()` raised; inside a transaction
-(`atomic()`, `ATOMIC_REQUESTS`), the exception rolls it back.
+**Failures.** An extractor, an output or a database error reloading the
+instance that raises at the commit is logged with `logger.exception` on the
+`django_model_rag` logger, naming the instance's source key, and the commit
+goes on: the instance keeps its previous documents until its next save or
+the next `sync_model_rag`, and the other instances of the transaction are
+still sent. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
+its `BACKEND` class does not accept — is not logged: it raises
+`ImproperlyConfigured` at the save or the delete, so that a forgotten
+setting cannot silently stop the indexing. A save checks it in `pre_save`,
+before the row is written, so that it writes nothing even in autocommit; a
+delete raising this way is rolled back.
 
 **Turning them off.** `MODEL_RAG_SIGNALS = False` (default `True`) makes the
 signals send nothing and check nothing. Your test settings need either

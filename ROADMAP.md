@@ -309,13 +309,17 @@ reference.
   - **Synchronously**, in the process that commits: extraction costs a few
     queries, and the slow part (embedding) is the output's, which may queue
     its own work.
-  - **A failure is logged**, not raised: an extractor or an output that
-    raises in a commit callback is logged on the `django_model_rag` logger
-    with the source key, and the other callbacks still run. The instance
-    keeps its previous documents until its next save or the next
-    `sync_model_rag`. A missing or invalid `MODEL_RAG_OUTPUT` is the
-    exception: it raises `ImproperlyConfigured` at the save or the delete,
-    so a forgotten setting never silently stops the indexing.
+  - **A failure is logged**, not raised: an extractor, an output or a
+    database error reloading the instance that raises in a commit callback
+    is logged on the `django_model_rag` logger with the source key, and the
+    other callbacks still run. The instance keeps its previous documents
+    until its next save or the next `sync_model_rag`. A missing or invalid
+    `MODEL_RAG_OUTPUT` — `OPTIONS` its `BACKEND` does not accept included —
+    is the exception: it raises `ImproperlyConfigured` at the save (in
+    `pre_save`, so no row is written, even in autocommit) or the delete
+    (rolled back), so a forgotten setting never silently stops the indexing.
+  - **A delete sends its empty group directly**, without the extractor: the
+    row is gone, so there is nothing for `get_queryset` to filter.
   - **Proxies and multi-table children.** Saving or deleting through a
     proxy of a registered model syncs the registered model's group, under
     its label. Saving a multi-table child syncs each registered model among
@@ -364,6 +368,11 @@ reference.
   the primary keys that exist again, and keep those the run did not see.
   Still open: a chunk read before an update puts the old text back until
   the next save, a short window.
+- [ ] **10c. Signals on several databases.** The signals follow the default
+  database only: `transaction.on_commit` is attached to it, and the commit
+  callback reloads from it. A save or a delete on another alias should
+  attach its callback to the signal's `using` and reload from that
+  database. The test needs a second database in the test settings.
 
 ## Not planned here
 
