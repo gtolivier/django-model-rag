@@ -9,6 +9,7 @@ from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Model
 from django.db.models.constants import LOOKUP_SEP
 
+from django_model_rag.apps import DISCOVERED_MODULE
 from django_model_rag.extractors import (
     BaseExtractor,
     DeclaredFieldsExtractor,
@@ -129,7 +130,8 @@ def _require_models_ready(model: type[Model], action: str) -> None:
     if not apps.models_ready:
         message = (
             f"{model.__name__}: cannot {action} while models are loading; "
-            "register from a rag.py module imported in AppConfig.ready()"
+            f"register from the app's {DISCOVERED_MODULE}.py module, which "
+            "django_model_rag imports in its AppConfig.ready()"
         )
         raise ImproperlyConfigured(message)
 

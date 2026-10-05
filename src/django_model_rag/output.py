@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
-from typing import Protocol
+from typing import Protocol, TextIO
 
 from django_model_rag.documents import NormalizedDocument
 
@@ -15,3 +15,32 @@ class DocumentOutput(Protocol):
 
     def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
         """Delete the documents of ``model_label`` whose source key is not kept."""
+
+
+class ConsoleOutput:
+    """Writes the documents to a stream, standard output by default."""
+
+    def __init__(self, stream: TextIO | None = None) -> None:
+        self._stream = stream
+
+    def _print(self, text: object) -> None:
+        print(text, file=self._stream)
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        """Write each group: its source key, then its documents' titles and texts.
+
+        An empty group means its source key's documents are removed: it is
+        written as that removal.
+        """
+        for key, documents in groups.items():
+            if not documents:
+                self._print(f"{key} removed")
+                continue
+            self._print(key)
+            for document in documents:
+                self._print(document.title)
+                self._print(document.text)
+
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
+        """Write the model label and the number of source keys kept."""
+        self._print(f"{model_label} kept {len(kept_keys)}")

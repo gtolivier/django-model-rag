@@ -100,8 +100,9 @@ features 9 and 10 need.
   build the output from a setting shaped like Django's `STORAGES` — a
   dotted path to a class and its options, for instance
   `{"BACKEND": "…", "OPTIONS": {…}}` — loaded with `import_string`. Without
-  the setting, the command fails with `ImproperlyConfigured`. The setting's
-  name and loading come with feature 9, their first user. Registering the
+  the setting, the command fails with `ImproperlyConfigured`. Feature 9
+  named it `MODEL_RAG_OUTPUT`: a dict with `BACKEND`, and `OPTIONS` passed
+  as keyword arguments to a new instance on each use. Registering the
   output in code (`rag.set_output()` from `AppConfig.ready()`) was rejected:
   global mutable state, dependent on app order, and a per-environment value
   belongs in settings.
@@ -250,22 +251,51 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-- [ ] **9. A management command, `sync_model_rag`**, that runs the pipeline
-  over every registered model, into the output named by a setting (its
-  name and loading come with this feature; see "The output", above). Each
-  model's run ends with a `prune`, which removes what the signals missed: an
-  instance deleted by raw SQL, with the signals off, or before the package
-  was installed. Open: the documents of a model that is no longer
-  registered are pruned by no run. Open: a default manager that returns
-  subclass instances (django-polymorphic, `InheritanceManager`) keys their
-  documents under the subclass's label, while the model is pruned under its
-  own, so they are pruned by no run. Open: when one model's extractor
-  raises, the exception stops the run; should the command go on with the
-  other models and report the failure at the end? Open, to settle by this feature at the
-  latest: does the package become a Django app that autodiscovers each
-  app's `rag.py`, as `django.contrib.admin` does with `admin.py`? The
-  command only sees the models registered by the time it runs; until then,
-  each project imports its `rag.py` from `AppConfig.ready()`.
+- [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
+  over every registered model, in registration order, or over the models it
+  is given as `app_label.model_name`, into the output built from
+  `MODEL_RAG_OUTPUT`. Each model's run ends with a `prune`, which removes what
+  the signals missed: an instance deleted by raw SQL, with the signals off,
+  or before the package was installed. Everything is checked before any
+  model runs: the setting (`ImproperlyConfigured`, including a backend
+  without a callable `replace` or `prune`) and the labels (`CommandError`
+  for a label naming no model, or an unregistered one). When a model fails,
+  the command writes it and its error on stderr, does not prune it, goes on
+  with the others, and ends with a `CommandError` naming every failed model;
+  each model that succeeds writes a `synced` line, unless `--verbosity 0`;
+  `--traceback` adds each failure's traceback. A model named twice runs
+  once; with no model registered, the command warns and ends without
+  error. The package became a
+  Django app that autodiscovers each installed app's `model_rag.py` in its
+  `AppConfig.ready()`, in `INSTALLED_APPS` order, as `django.contrib.admin`
+  does with `admin.py`.
+  Registering by hand stays: a project changes a third-party app's
+  registration with `unregister` and `register` from a later app.
+  `ConsoleOutput` (in `django_model_rag.output`) writes what it receives to
+  a stream, to try the command without a real output. Still open:
+  - the documents of a model that is no longer registered are pruned by no
+    run;
+  - a default manager that returns subclass instances (django-polymorphic,
+    `InheritanceManager`) keys their documents under the subclass's label,
+    while the model is pruned under its own, so they are pruned by no run;
+  - the command checks `replace` and `prune` on the backend class, so a
+    class that only sets them on its instances is refused;
+  - `get_absolute_url()` and `str(instance)` may read related objects that
+    the queryset does not join — one query per instance on a large table.
+    An option could add `select_related` without a custom extractor;
+  - progress: a model's `synced` line comes only at its end, nothing per
+    chunk on a large table;
+  - run inside an outer transaction (`call_command` from code under
+    `atomic()`), a database error in one model aborts that transaction,
+    and every later model fails too, each blamed on itself. A savepoint
+    per model would isolate them, but would keep a transaction open across
+    the output's calls, which may be slow;
+  - `prune()` receives every kept key of a model at once, which a very
+    large table makes a large set;
+  - a first sync of a large site calls the output for every instance: the
+    embedding API's quota and cost are the output's to manage
+    (django-minimal-rag). Reading from a replica is untested: a custom
+    extractor's `get_queryset()` could route it with `using()`.
 - [ ] **10. Signals** — `post_save` re-extracts the saved instance and
   replaces its group, even empty; `post_delete` replaces it with an empty
   group. Both build their output from the same setting as the command.
@@ -281,6 +311,10 @@ reference.
   since the run read the table, and a chunk read before an update puts the
   old text back. Open: a failed signal sends nothing; whether
   to retry it through a queue (Celery…) is probably the project's call.
+  Open: a signal runs in the request that saves the instance, so a slow
+  output (an embedding API call) delays that response; whether to hand the
+  work to a background task — Django's `django.tasks`, or a queue on Redis
+  or RabbitMQ — and what the output must then accept.
 
 ## Not planned here
 
