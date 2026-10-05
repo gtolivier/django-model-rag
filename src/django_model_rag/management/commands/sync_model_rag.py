@@ -83,7 +83,10 @@ def _options(output_setting: dict[str, Any]) -> Any:
 
 
 def _backend_class(backend: str) -> type[DocumentOutput]:
-    """Import the output class at the dotted path `backend`."""
+    """Import the output class at the dotted path `backend`.
+
+    Fail unless that path can be imported and names a class.
+    """
     try:
         output_class: type[DocumentOutput] = import_string(backend)
     except ImportError as error:
