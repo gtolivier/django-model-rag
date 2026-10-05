@@ -29,7 +29,7 @@ rag.register(Review, fields=["title", "product__name", "product__category__name"
 rag.register(Article)  # fields guessed
 rag.register(Note, exclude=["internal_remarks"])
 
-documents = SyncPipeline().run()
+SyncPipeline(output).run()  # output: see "The output", below
 ```
 
 Without `fields`, the text fields are guessed at registration, from their
@@ -220,12 +220,14 @@ want indexed; for the others, pick their fields with lookup paths
 (`fields=["title", "author__first_name", "author__last_name"]`), or write a
 custom extractor.
 
-**Queries.** `SyncPipeline().run()` reads followed foreign keys and
+**Queries.** `run()` reads followed foreign keys and
 one-to-one relations, and every relation along a lookup path, in the same
 query as the instances (`select_related`), and each followed reverse foreign
 key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
-in chunks of 1000. `run_instance` makes at most one query per relation it crosses.
+in chunks of 1000. `run_instance` makes one query to ask the extractor's
+queryset whether it keeps the instance, then at most one query per relation
+it crosses.
 
 Those queries load only the columns the documents read: the declared
 fields, the title, language and URL fields, the related columns a lookup
@@ -240,10 +242,55 @@ instances are loaded from by overriding `get_queryset(queryset)` — to add
 `select_related` or `prefetch_related`, say — and must return a `QuerySet`
 of the model's instances: a `values()` queryset, or another model's, raises
 `TypeError`. The documents stay in primary key order whatever order the hook
-sets. `run_instance` does not go through it, so a hook that filters
-instances out makes `run()` skip documents that `run_instance` still
-produces: leave an instance out by returning `None` from `extract()`
-instead.
+sets, and an instance repeated by a join is extracted once. An instance
+the hook filters out is not extracted: `run()` skips it and prunes its
+documents, and `run_instance`, which already holds the instance, only asks
+the hook's queryset whether it keeps it, and sends an empty group if not.
+
+## The output
+
+`SyncPipeline(output)` hands the documents to an output that your project
+supplies — [django-minimal-rag](https://github.com/gtolivier/django-minimal-rag)
+is one. Any object with these two methods is an output; the
+`DocumentOutput` Protocol, importable from `django_model_rag`, lets a type
+checker verify it:
+
+```python
+from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
+
+from django_model_rag import NormalizedDocument
+
+
+class MyOutput:
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        """Replace the stored documents of each source key with its group."""
+
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
+        """Delete the documents of model_label whose source key is not kept."""
+```
+
+- **By source.** A group is the complete set of documents of one instance,
+  keyed by its `source_key`: it replaces everything the output holds for
+  that instance. An empty group removes it.
+- **`run()`** sends each model's groups in batches, one `replace()` per
+  chunk of 1000 instances, then calls `prune()` with the model's label
+  (`app_label.model_name`) and the keys of the instances that produced
+  documents, so that an instance deleted, filtered out or now producing
+  nothing is removed. If an extractor raises, the exception propagates:
+  the batches already sent stay sent, and that model is not pruned.
+  Running again is the retry.
+- **`run_instance(instance)`** sends that instance's group, even empty, so
+  that an instance whose extractor now returns `None`, or that its
+  extractor's queryset filters out, is removed. It never prunes, and sends
+  nothing if the extractor raises. An unsaved instance (no primary key)
+  raises `ValueError`.
+- **A document's source is the instance it was extracted from.** An
+  extractor returning a document whose source is another instance fails
+  with `TypeError`: it would replace that other instance's documents.
+
+`run()` and `run_instance()` return `None`: the documents go only to the
+output.
 
 ## Requirements
 

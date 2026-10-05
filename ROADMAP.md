@@ -78,6 +78,22 @@ features 9 and 10 need.
   django-minimal-rag's storage. Leaving stale documents to the next full
   sync was rejected too: on an authenticated intranet, an unpublished page
   would stay quotable until then.
+- **The retry is running again.** Every call replaces whole groups, so
+  replaying it gives the same result. A `run()` interrupted in a model
+  leaves the batches it sent up to date, the instances it had not reached
+  with their previous documents — stale, not missing — and that model
+  unpruned, since an incomplete list of kept keys would delete live
+  sources; the models after it are not run. The output never loses a
+  source that still exists, and running `run()` again (or `run([Model])`)
+  repairs the rest. A `run_instance()` that fails sends nothing: the
+  instance keeps its previous documents until its next save or the next
+  full run. What this leaves to the other layers: the atomicity of a batch
+  is the output's (django-minimal-rag applies each `replace()` in a
+  transaction), and so are transient errors such as a rate-limited
+  embedding API, retried with backoff — the pipeline cannot tell which
+  exceptions are transient. There is no checkpoint, so a run again
+  re-extracts everything; django-minimal-rag compares texts and re-embeds
+  only what changed.
 - **The destination is a setting, read by the command and the signals.**
   `SyncPipeline` receives its output explicitly, so tests and scripts pass
   their own. The command and the signals run outside project code: they
@@ -188,15 +204,16 @@ refactoring, not from the prototype.
 - [x] **7b. The shape of the queryset** — `BaseExtractor.get_queryset()`
   shapes the queryset the instances are loaded from (`select_related`,
   `prefetch_related`…); it must return a `QuerySet`, and the pipeline
-  iterates it with `iterator(chunk_size=1000)`. A single-instance run does
-  not go through it. The extractor built by `register()` uses it to load
-  only the columns it reads: its own declared fields and single-field
-  options, the related columns its lookup paths name, and the text columns
-  of followed relations with the fields that link them back. Every own
-  column stays loaded when `get_absolute_url()` or `str(instance)` may read
-  any of them. The pipeline no longer duck-types extractors, and the
-  single-field options (`title_field`, `language_field`, `url_field`) are
-  listed once. Two cases are left open, with no test:
+  iterates it with `iterator(chunk_size=1000)`. A single-instance run only
+  asks it whether it keeps the instance (feature 8). The extractor built
+  by `register()` uses it to load only the columns it reads: its own
+  declared fields and single-field options, the related columns its lookup
+  paths name, and the text columns of followed relations with the fields
+  that link them back. Every own column stays loaded when
+  `get_absolute_url()` or `str(instance)` may read any of them. The
+  pipeline no longer duck-types extractors, and the single-field options
+  (`title_field`, `language_field`, `url_field`) are listed once. Two
+  cases are left open, with no test:
   - `get_queryset()` must return a queryset of the registered model itself,
     so the queryset of one of its proxy models is refused — although it
     holds the same rows, under a class whose methods (`__str__`,
@@ -206,7 +223,7 @@ refactoring, not from the prototype.
     the prefetch that loads only its text columns. A quick check on the test
     bench (`Offer`, followed from `Product`) ran in two queries with the
     right text, but no test pins it down.
-- [ ] **8. The output** — `SyncPipeline(output=...)` hands the documents to
+- [x] **8. The output** — `SyncPipeline(output=...)` hands the documents to
   an output that the project supplies, as decided under "The output", above:
   - the output's Protocol, importable from `django_model_rag`, with
     `replace(groups)` and `prune(model_label, kept_keys)`, typed against
@@ -218,9 +235,10 @@ refactoring, not from the prototype.
   - `run_instance()` sends its instance's group, even empty;
   - a document whose source is not the instance it was extracted from fails
     with a `TypeError` naming the extractor;
-  - to decide when the feature starts: what `run()` and `run_instance()`
-    return when they have an output, and whether they still work without
-    one.
+  - the output is a required argument of `SyncPipeline`, and `run()` and
+    `run_instance()` return `None`: the documents go only to the output, so
+    a large run holds no list of them. Tests read them back through an
+    output that records what it receives.
 
 Then, in django-model-rag-demo, an integration test replays the prototype's
 demo scenario against the installed package: a product with its category, a
@@ -238,7 +256,12 @@ reference.
   model's run ends with a `prune`, which removes what the signals missed: an
   instance deleted by raw SQL, with the signals off, or before the package
   was installed. Open: the documents of a model that is no longer
-  registered are pruned by no run. Open, to settle by this feature at the
+  registered are pruned by no run. Open: a default manager that returns
+  subclass instances (django-polymorphic, `InheritanceManager`) keys their
+  documents under the subclass's label, while the model is pruned under its
+  own, so they are pruned by no run. Open: when one model's extractor
+  raises, the exception stops the run; should the command go on with the
+  other models and report the failure at the end? Open, to settle by this feature at the
   latest: does the package become a Django app that autodiscovers each
   app's `rag.py`, as `django.contrib.admin` does with `admin.py`? The
   command only sees the models registered by the time it runs; until then,
@@ -253,7 +276,11 @@ reference.
   dependent instances are found and re-extracted. Also open: a proxy model
   or a multi-table child of a registered model sends its own class as the
   signal's sender, and `run_instance` looks the exact class up, so such an
-  instance is not registered today.
+  instance is not registered today. Open: a signal that fires while the
+  command runs — the run's final `prune` deletes an instance created
+  since the run read the table, and a chunk read before an update puts the
+  old text back. Open: a failed signal sends nothing; whether
+  to retry it through a queue (Celery…) is probably the project's call.
 
 ## Not planned here
 

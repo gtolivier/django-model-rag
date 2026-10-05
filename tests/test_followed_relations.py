@@ -9,7 +9,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
-from django_model_rag import SyncPipeline, rag
+from django_model_rag import rag
+from tests.recording import run_documents, run_instance_documents
 from tests.testapp.models import (
     AccordionItem,
     Band,
@@ -83,7 +84,7 @@ def test_followed_foreign_key_appends_the_related_text_after_the_own_fields() ->
     _create_chair(category)
     rag.register(Product, follow=["category"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nAdjustable.\n\nNew\n\nFurniture"
@@ -96,7 +97,7 @@ def test_run_instance_appends_the_followed_related_text_after_the_own_fields() -
     product = _create_chair(category)
     rag.register(Product, follow=["category"])
 
-    documents = SyncPipeline().run_instance(product)
+    documents = run_instance_documents(product)
 
     assert [document.text for document in documents] == [
         "Chair\n\nAdjustable.\n\nNew\n\nFurniture"
@@ -113,7 +114,7 @@ def test_followed_foreign_key_appends_the_related_text_after_the_declared_fields
     _create_chair(category)
     rag.register(Product, fields=["description", "name"], follow=["category"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Adjustable.\n\nChair\n\nFurniture"
@@ -128,7 +129,7 @@ def test_exclude_leaves_the_same_named_field_of_the_followed_related_in() -> Non
     _create_chair(category)
     rag.register(Product, exclude=["name"], follow=["category"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Adjustable.\n\nNew\n\nFurniture"
@@ -155,7 +156,7 @@ def test_exclude_of_every_own_text_field_registers_with_a_followed_relation() ->
         follow=["category"],
     )
 
-    [document] = SyncPipeline().run()
+    [document] = run_documents()
 
     assert (document.title, document.text) == (str(product), "Furniture")
 
@@ -174,7 +175,7 @@ def test_followed_foreign_key_appends_each_instance_its_own_related_text() -> No
     )
     rag.register(Product, follow=["category"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nAdjustable.\n\nNew\n\nFurniture",
@@ -208,7 +209,7 @@ def test_followed_foreign_key_is_read_with_its_instances_in_a_single_query(
     rag.register(Product, follow=["category"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nAdjustable.\n\nNew\n\nFurniture",
@@ -225,7 +226,7 @@ def test_followed_foreign_key_brings_the_guessed_text_fields_of_the_related() ->
     Lesson.objects.create(title="Dovetails", topic=topic)
     rag.register(Lesson, follow=["topic"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Dovetails\n\nWoodworking\n\nJoints and finishes."
@@ -250,7 +251,7 @@ def test_followed_foreign_key_loads_only_the_text_columns_of_the_related(
     rag.register(Lesson, follow=["topic"])
 
     with django_assert_num_queries(1) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Dovetails\n\nJoinery\n\nJoints and finishes.",
@@ -274,7 +275,7 @@ def test_followed_foreign_key_brings_the_label_of_a_related_field_with_choices()
     Review.objects.create(title="Still solid", product=product)
     rag.register(Review, follow=["product"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Still solid\n\nHammer\n\nDrives nails.\n\nSecond-hand"
@@ -294,7 +295,7 @@ def test_model_without_text_field_registers_when_a_followed_relation_brings_text
     )
     rag.register(StockLevel, follow=["product"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Chair\n\nAdjustable.\n\nNew"]
 
@@ -310,7 +311,7 @@ def test_model_without_text_field_that_follows_a_relation_takes_str_as_title() -
     )
     rag.register(StockLevel, follow=["product"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.title for document in documents] == [str(stock_level)]
 
@@ -326,7 +327,7 @@ def test_model_without_text_field_that_follows_a_relation_takes_its_str_as_title
     Delivery.objects.create(quantity=12, delivered_on=date(2026, 3, 1), product=product)
     rag.register(Delivery, follow=["product"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.title for document in documents] == ["12 delivered on 2026-03-01"]
 
@@ -345,7 +346,7 @@ def test_title_from_str_loads_the_own_columns_str_reads_with_the_instances(
     rag.register(Delivery, follow=["product"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.title for document in documents] == [
         "12 delivered on 2026-03-01",
@@ -358,7 +359,7 @@ def test_followed_foreign_key_that_is_null_adds_nothing_to_the_own_fields() -> N
     Workshop.objects.create(title="Open bench", topic=None)
     rag.register(Workshop, follow=["topic"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Open bench"]
 
@@ -369,7 +370,7 @@ def test_followed_foreign_key_whose_text_fields_are_blank_adds_nothing() -> None
     Lesson.objects.create(title="Dovetails", topic=topic)
     rag.register(Lesson, follow=["topic"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Dovetails"]
 
@@ -387,7 +388,7 @@ def test_instance_with_blank_own_text_has_a_document_when_a_followed_one_has_tex
     Lesson.objects.create(title="   ", topic=topic)
     rag.register(Lesson, follow=["topic"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.title, document.text) for document in documents] == [
         ("", "Woodworking\n\nJoints and finishes.")
@@ -400,7 +401,7 @@ def test_followed_reverse_foreign_key_appends_the_related_text() -> None:
     TextPlugin.objects.create(page=page, body="We build chairs by hand.")
     rag.register(Page, follow=["text_plugins"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "About us\n\nWe build chairs by hand."
@@ -416,7 +417,7 @@ def test_followed_reverse_foreign_key_appends_the_related_texts_in_pk_order() ->
     TextPlugin.objects.create(page=page, body="Visits on Saturdays.")
     rag.register(Page, follow=["text_plugins"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "About us\n\nWe build chairs by hand.\n\nOur workshop is in Lyon."
@@ -444,7 +445,7 @@ def test_followed_reverse_foreign_key_is_read_in_one_query_for_all_instances(
     rag.register(Page, follow=["text_plugins"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "About us\n\nWe build chairs by hand.\n\nOur workshop is in Lyon.",
@@ -487,7 +488,7 @@ def test_followed_reverse_foreign_key_loads_only_the_text_columns_of_the_related
     rag.register(Category, follow=["products"])
 
     with django_assert_num_queries(2) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Furniture\n\nChair\n\nAdjustable.\n\nNew\n\nTable\n\nExtendable.\n\nNew",
@@ -513,7 +514,7 @@ def test_followed_reverse_foreign_key_to_a_unique_column_keeps_that_column_loade
     rag.register(Warehouse, fields=["name"], follow=["shelves"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "North depot\n\nTimber\n\nScrews",
@@ -539,7 +540,7 @@ def test_followed_reverse_foreign_key_whose_manager_joins_another_foreign_key(
     rag.register(Showroom, follow=["exhibits"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "North hall\n\nHammer\n\nSaw",
@@ -552,7 +553,7 @@ def test_followed_reverse_foreign_key_without_related_objects_adds_nothing() -> 
     Page.objects.create(title="About us", slug="about-us")
     rag.register(Page, follow=["text_plugins"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["About us"]
 
@@ -567,7 +568,7 @@ def test_followed_reverse_foreign_key_without_related_name_uses_its_accessor() -
     Remark.objects.create(note=note, body="Sweep the floor after use.")
     rag.register(Note, follow=["remark_set"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Workshop rules\n\nWear goggles.\n\nGloves too.\n\nSweep the floor after use."
@@ -587,7 +588,7 @@ def test_followed_reverse_foreign_key_to_a_model_whose_manager_is_not_a_manager(
     Step(recipe=recipe, body="Warm the hide glue.").save()
     rag.register(Recipe, follow=["steps"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Wood glue\n\nWarm the hide glue."
@@ -603,7 +604,7 @@ def test_followed_reverse_one_to_one_without_related_object_adds_nothing() -> No
     PageIntro.objects.create(page=contact, body="Write to us.")
     rag.register(Page, follow=["intro"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "About us",
@@ -626,7 +627,7 @@ def test_followed_reverse_one_to_one_is_read_with_its_instances_in_a_single_quer
     rag.register(Page, follow=["intro"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "About us\n\nWe build chairs by hand.",
@@ -649,7 +650,7 @@ def test_followed_reverse_one_to_one_with_its_own_query_name_uses_its_accessor(
     rag.register(Supplier, follow=["profile"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Oak & Co",
@@ -672,7 +673,7 @@ def test_followed_forward_one_to_one_is_read_with_its_instances_in_a_single_quer
     rag.register(PageIntro, follow=["page"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "We build chairs by hand.\n\nAbout us",
@@ -698,7 +699,7 @@ def test_child_model_follows_a_relation_inherited_from_its_parent() -> None:
     )
     rag.register(FeaturedProduct, follow=["category"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nAdjustable.\n\nNew\n\nMade in Lyon.\n\nFurniture"
@@ -715,7 +716,7 @@ def test_followed_many_to_many_appends_the_related_texts_in_pk_order() -> None:
     course.topics.add(turning, carving, joinery)
     rag.register(Course, follow=["topics"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Woodworking basics\n\nJoinery\n\nJoints and finishes."
@@ -742,7 +743,7 @@ def test_followed_many_to_many_is_read_in_one_query_for_all_instances(
     rag.register(Course, follow=["topics"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Woodworking basics\n\nJoinery\n\nJoints and finishes."
@@ -770,7 +771,7 @@ def test_followed_many_to_many_loads_only_the_text_columns_of_the_related(
     rag.register(Course, follow=["topics"])
 
     with django_assert_num_queries(2) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Woodworking basics\n\nJoinery\n\nJoints and finishes."
@@ -799,7 +800,7 @@ def test_followed_many_to_many_through_a_key_to_a_unique_column_keeps_it_loaded(
     rag.register(Guild, fields=["name"], follow=["members"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "North guild\n\nCarpenter\n\nWeaver",
@@ -825,7 +826,7 @@ def test_followed_reverse_many_to_many_through_a_key_to_a_unique_column_keeps_it
     rag.register(Musician, fields=["name"], follow=["bands"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Ada\n\nQuartet\n\nDuo",
@@ -847,7 +848,7 @@ def test_followed_reverse_many_to_many_appends_the_related_texts_in_pk_order() -
     topic.courses.add(furniture, restoration, basics)
     rag.register(Topic, follow=["courses"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Joinery\n\nJoints and finishes.\n\nWoodworking basics"
@@ -874,7 +875,7 @@ def test_followed_reverse_many_to_many_is_read_in_one_query_for_all_instances(
     rag.register(Topic, follow=["courses"])
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Joinery\n\nJoints and finishes.\n\nWoodworking basics\n\nFurniture making",
@@ -909,7 +910,7 @@ def test_followed_generic_relation_is_read_in_one_query_for_all_instances(
     ContentType.objects.get_for_model(Photo)
 
     with django_assert_num_queries(2):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Workbench\n\nOak\n\nJoinery",
@@ -939,7 +940,7 @@ def test_followed_generic_relation_loads_only_the_text_columns_of_the_related(
     ContentType.objects.get_for_model(Photo)
 
     with django_assert_num_queries(2) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Workbench\n\nOak\n\nJoinery",
@@ -959,7 +960,7 @@ def test_followed_relations_append_their_texts_in_the_order_follow_names_them() 
     )
     rag.register(Page, follow=["accordion_items", "text_plugins"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "About us\n\nOpening hours\n\nVisits on Saturdays.\n\nWe build chairs by hand."

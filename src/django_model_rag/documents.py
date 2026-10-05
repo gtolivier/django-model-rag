@@ -28,6 +28,11 @@ def _frozen_permissions(permissions: Iterable[str]) -> frozenset[str]:
     return granted
 
 
+def build_source_key(model_label: str, pk: object) -> str:
+    """Identify a source instance as ``app_label.model:pk``."""
+    return f"{model_label}:{pk}"
+
+
 @dataclass(frozen=True, kw_only=True, repr=False)
 class NormalizedDocument:
     """A piece of text together with the model instance it comes from."""
@@ -59,7 +64,8 @@ class NormalizedDocument:
     @property
     def source_key(self) -> str:
         """Identify the source instance as ``app_label.model:pk``."""
-        return f"{self.source_app_label}.{self.source_model}:{self.source_pk}"
+        model_label = f"{self.source_app_label}.{self.source_model}"
+        return build_source_key(model_label, self.source_pk)
 
     def __repr__(self) -> str:
         """Show the source key, the title and the text, truncated to stay short."""

@@ -9,7 +9,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Model
 from pytest_django import DjangoAssertNumQueries
 
-from django_model_rag import SyncPipeline, rag
+from django_model_rag import rag
+from tests.recording import run_documents, run_instance_documents
 from tests.testapp.models import (
     Category,
     Course,
@@ -62,7 +63,7 @@ def test_foreign_key_lookup_path_adds_each_instance_its_related_field_text() -> 
     _create_product(name="Hammer", category_name="Tools")
     rag.register(Product, fields=["name", "category__name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nFurniture",
@@ -78,7 +79,7 @@ def test_lookup_path_naming_a_foreign_key_by_its_column_name_crosses_it() -> Non
     _create_product(name="Hammer", category_name="Tools")
     rag.register(Product, fields=["name", "category_id__name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nFurniture",
@@ -98,7 +99,7 @@ def test_one_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
     rag.register(Product, fields=["name", "category__name"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Chair\n\nFurniture",
@@ -124,7 +125,7 @@ def test_lookup_path_loads_only_the_related_column_it_reads(
     rag.register(Lesson, fields=["title", "topic__title"])
 
     with django_assert_num_queries(1) as queries:
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Intro\n\nBasics",
@@ -140,7 +141,7 @@ def test_run_instance_adds_the_related_field_text_of_a_lookup_path() -> None:
     product = _create_product(name="Chair", category_name="Furniture")
     rag.register(Product, fields=["name", "category__name"])
 
-    documents = SyncPipeline().run_instance(product)
+    documents = run_instance_documents(product)
 
     assert [document.text for document in documents] == ["Chair\n\nFurniture"]
 
@@ -150,7 +151,7 @@ def test_lookup_path_keeps_its_place_in_the_declared_field_order() -> None:
     _create_product(name="Chair", category_name="Furniture")
     rag.register(Product, fields=["category__name", "name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Furniture\n\nChair"]
 
@@ -160,7 +161,7 @@ def test_lookup_path_declared_first_gives_the_title() -> None:
     _create_product(name="Chair", category_name="Furniture")
     rag.register(Product, fields=["category__name", "name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.title for document in documents] == ["Furniture"]
 
@@ -171,7 +172,7 @@ def test_lookup_path_crossing_several_relations_adds_the_last_field_text() -> No
     Review.objects.create(title="Sturdy", product=product)
     rag.register(Review, fields=["title", "product__category__name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Sturdy\n\nFurniture"]
 
@@ -184,7 +185,7 @@ def test_several_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
     rag.register(Review, fields=["title", "product__category__name"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Sturdy\n\nFurniture",
@@ -201,7 +202,7 @@ def test_lookup_path_ending_on_a_field_with_choices_gives_its_display_label() ->
     Review.objects.create(title="Sturdy", product=product)
     rag.register(Review, fields=["title", "product__condition"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Sturdy\n\nSecond-hand"]
 
@@ -212,7 +213,7 @@ def test_title_field_lookup_path_outside_fields_gives_the_title_not_text() -> No
     Review.objects.create(title="Sturdy", product=product)
     rag.register(Review, fields=["title"], title_field="product__name")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [(document.title, document.text) for document in documents] == [
         ("Chair", "Sturdy")
@@ -227,7 +228,7 @@ def test_title_field_lookup_path_outside_fields_is_read_in_a_single_query(
     rag.register(Review, fields=["title"], title_field="product__category__name")
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [(document.title, document.text) for document in documents] == [
         ("Furniture", "Sturdy"),
@@ -241,7 +242,7 @@ def test_lookup_path_through_a_null_foreign_key_adds_nothing() -> None:
     Workshop.objects.create(title="Pottery", topic=None)
     rag.register(Workshop, fields=["title", "topic__title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Pottery"]
 
@@ -251,7 +252,7 @@ def test_lookup_path_crossing_a_reverse_one_to_one_by_its_query_name() -> None:
     _create_supplier(name="Acme", profile_body="Fine tools since 1920")
     rag.register(Supplier, fields=["name", "supplier_profile__body"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Acme\n\nFine tools since 1920"
@@ -274,7 +275,7 @@ def test_reverse_one_to_one_lookup_path_by_query_name_is_read_in_a_single_query(
     rag.register(Supplier, fields=["name", "supplier_profile__body"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Acme\n\nFine tools since 1920",
@@ -303,7 +304,7 @@ def test_reverse_one_to_one_past_the_first_link_by_query_name_is_read_in_one_que
     )
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "PO-1\n\nFine tools since 1920",
@@ -317,7 +318,7 @@ def test_lookup_path_through_a_missing_reverse_one_to_one_adds_nothing() -> None
     Page.objects.create(title="Home", slug="home")
     rag.register(Page, fields=["title", "intro__body"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == ["Home"]
 
@@ -330,7 +331,7 @@ def test_lookup_path_and_follow_through_the_same_relation_combine() -> None:
     Lesson.objects.create(title="Intro", topic=topic)
     rag.register(Lesson, fields=["title", "topic__slug"], follow=["topic"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Intro\n\nbasics\n\nBasics\n\nThe very start"
@@ -347,7 +348,7 @@ def test_lookup_path_and_follow_on_its_first_relation_are_read_in_a_single_query
     )
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert [document.text for document in documents] == [
         "Sturdy\n\nFurniture\n\nChair\n\nNew",

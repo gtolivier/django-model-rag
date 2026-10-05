@@ -1,16 +1,19 @@
-"""The pipeline that turns registered models into normalized documents."""
+"""The pipeline that turns registered models into normalized documents for an output."""
 
 from collections.abc import Iterable, Iterator, Sequence
+from itertools import islice
 from typing import Any
 
 from django.db.models import Model, QuerySet
 from django.db.models.query import ModelIterable
 
-from django_model_rag.documents import NormalizedDocument
+from django_model_rag.documents import NormalizedDocument, build_source_key
 from django_model_rag.extractors import BaseExtractor
+from django_model_rag.output import DocumentOutput
 from django_model_rag.registry import rag
 
-# iterator() prefetches per chunk: this many instances share one query
+# iterator() prefetches per chunk: this many instances share one query, and
+# their documents one replace() call
 _CHUNK_SIZE = 1000
 # the order of a model's documents, whatever its extractor's get_queryset() asks
 _DOCUMENT_ORDER = "pk"
@@ -19,11 +22,34 @@ _DOCUMENT_ORDER = "pk"
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
 
-    ``extractor``'s get_queryset() shapes how they are loaded.
+    ``extractor``'s get_queryset() decides which are loaded, and how.
     """
-    queryset = model._default_manager.order_by(_DOCUMENT_ORDER)
-    hooked = _checked_queryset(extractor.get_queryset(queryset), extractor, model)
+    hooked = _hooked_queryset(
+        model._default_manager.order_by(_DOCUMENT_ORDER), extractor, model
+    )
     return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+
+
+def _hooked_queryset(
+    queryset: QuerySet[Model], extractor: BaseExtractor[Any], model: type[Model]
+) -> QuerySet[Model]:
+    """Pass ``queryset`` of ``model`` through ``extractor``'s get_queryset().
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
+    """
+    return _checked_queryset(extractor.get_queryset(queryset), extractor, model)
+
+
+def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
+    """Tell whether ``extractor``'s get_queryset() keeps ``instance``.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of the model's instances.
+    """
+    model = type(instance)
+    hooked = _hooked_queryset(model._default_manager.all(), extractor, model)
+    return hooked.filter(pk=instance.pk).exists()
 
 
 def _checked_queryset(
@@ -66,6 +92,19 @@ def _wrong_extraction(extractor: BaseExtractor[Any], returned: str) -> TypeError
     )
 
 
+def _foreign_source(extractor: BaseExtractor[Any], source_key: str) -> TypeError:
+    """Build the error for an ``extractor`` whose document is not of ``source_key``."""
+    return TypeError(
+        f"{type(extractor).__name__}.extract() returned a document "
+        f"whose source is not {source_key}"
+    )
+
+
+def _source_key(instance: Model) -> str:
+    """Return the source key of ``instance``'s documents."""
+    return build_source_key(instance._meta.label_lower, instance.pk)
+
+
 def _instance_documents(
     instance: Model, extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
@@ -93,12 +132,15 @@ def _checked_documents(
         yield item
 
 
-def _model_documents(
-    model: type[Model], extractor: BaseExtractor[Any]
+def _own_documents(
+    instance: Model, extractor: BaseExtractor[Any]
 ) -> Iterator[NormalizedDocument]:
-    """Build the documents of ``model``'s instances, in primary key order."""
-    for instance in _instances(model, extractor):
-        yield from _instance_documents(instance, extractor)
+    """Yield the documents of ``instance``, failing on the first of another source."""
+    source_key = _source_key(instance)
+    for document in _instance_documents(instance, extractor):
+        if document.source_key != source_key:
+            raise _foreign_source(extractor, source_key)
+        yield document
 
 
 def _extractors_to_run(
@@ -116,30 +158,88 @@ def _extractors_to_run(
     return [(model, rag.new_extractor(model)) for model in models]
 
 
-class SyncPipeline:
-    """Turn registered models into normalized documents."""
+def _distinct(instances: Iterable[Model]) -> Iterator[Model]:
+    """Yield ``instances``, skipping the ones whose source key was already yielded."""
+    seen_keys: set[str] = set()
+    for instance in instances:
+        source_key = _source_key(instance)
+        if source_key not in seen_keys:
+            seen_keys.add(source_key)
+            yield instance
 
-    def run(
-        self, models: Sequence[type[Model]] | None = None
-    ) -> list[NormalizedDocument]:
-        """Produce the documents of the registered models.
+
+def _groups(
+    instances: Iterable[Model], extractor: BaseExtractor[Any]
+) -> dict[str, list[NormalizedDocument]]:
+    """Group the documents of ``instances`` by source key, each instance once."""
+    groups: dict[str, list[NormalizedDocument]] = {}
+    for instance in _distinct(instances):
+        for document in _own_documents(instance, extractor):
+            groups.setdefault(document.source_key, []).append(document)
+    return groups
+
+
+def _hand_over(
+    instances: Iterable[Model], extractor: BaseExtractor[Any], output: DocumentOutput
+) -> set[str]:
+    """Hand the documents of ``instances`` to ``output`` at once, grouped by source key.
+
+    Returns the source keys handed over.
+    """
+    groups = _groups(instances, extractor)
+    if groups:
+        output.replace(groups)
+    return set(groups)
+
+
+class SyncPipeline:
+    """Turn registered models into normalized documents, handed to an output."""
+
+    def __init__(self, output: DocumentOutput) -> None:
+        """Hand the documents to ``output``."""
+        self._output = output
+
+    def run(self, models: Sequence[type[Model]] | None = None) -> None:
+        """Hand the documents of the registered models to the output.
 
         Only the given ``models`` are run, in their order, or every registered
-        model by default.
+        model by default. Each model is then pruned down to the source keys
+        that produced documents.
 
         Raises:
             NotRegistered: one of ``models`` is not registered.
         """
-        documents: list[NormalizedDocument] = []
         for model, extractor in _extractors_to_run(models):
-            documents.extend(_model_documents(model, extractor))
-        return documents
+            self._run_model(model, extractor)
 
-    def run_instance(self, instance: Model) -> list[NormalizedDocument]:
-        """Produce the documents of ``instance`` only.
+    def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
+        """Hand ``model``'s documents over chunk by chunk, then prune the model."""
+        kept_keys: set[str] = set()
+        instances = _instances(model, extractor)
+        while chunk := list(islice(instances, _CHUNK_SIZE)):
+            kept_keys |= _hand_over(chunk, extractor, self._output)
+        self._output.prune(model._meta.label_lower, kept_keys)
+
+    def run_instance(self, instance: Model) -> None:
+        """Hand the documents of ``instance`` only to the output, as one group.
+
+        The group is empty when its extractor's get_queryset() filters
+        ``instance`` out: it is then not extracted.
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
+            ValueError: ``instance`` has no primary key yet.
+            TypeError: its extractor's get_queryset() did not return a QuerySet
+                of the model's instances, or its extract() returned a document
+                of another source.
         """
         extractor = rag.new_extractor(type(instance))
-        return list(_instance_documents(instance, extractor))
+        if instance.pk is None:
+            msg = "run_instance() needs a saved instance: its primary key is None"
+            raise ValueError(msg)
+        documents = (
+            list(_own_documents(instance, extractor))
+            if _is_kept_by_hook(instance, extractor)
+            else []
+        )
+        self._output.replace({_source_key(instance): documents})

@@ -5,7 +5,8 @@ from django.core.exceptions import ImproperlyConfigured
 from django.urls import NoReverseMatch
 from pytest_django import DjangoAssertNumQueries
 
-from django_model_rag import SyncPipeline, rag
+from django_model_rag import rag
+from tests.recording import run_documents, run_instance_documents
 from tests.testapp.models import (
     Announcement,
     Bookmark,
@@ -34,7 +35,7 @@ def test_model_without_language_field_produces_documents_without_language() -> N
     Category.objects.create(name="Tools")
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.language for document in documents] == [None]
 
@@ -45,7 +46,7 @@ def test_language_field_gives_each_document_its_instance_language() -> None:
     Bulletin.objects.create(title="Hello", locale="en")
     rag.register(Bulletin, fields=["title"], language_field="locale")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -60,7 +61,7 @@ def test_language_is_the_stored_value_stripped_not_a_choice_label() -> None:
     rag.register(Leaflet, fields=["title"], language_field="locale")
     rag.register(Bulletin, fields=["title"], language_field="locale")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -75,7 +76,7 @@ def test_blank_or_null_language_gives_no_language() -> None:
     rag.register(Bulletin, fields=["title"], language_field="locale")
     rag.register(Memo, fields=["title"], language_field="locale")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Blank": None,
@@ -89,7 +90,7 @@ def test_own_field_named_language_gives_the_language_without_language_field() ->
     Notice.objects.create(title="Hello", language="en")
     rag.register(Notice, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -105,7 +106,7 @@ def test_own_field_named_language_code_gives_the_language_without_language_field
     Circular.objects.create(title="Hello", language_code="en")
     rag.register(Circular, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -119,7 +120,7 @@ def test_own_field_named_lang_gives_the_language_without_language_field() -> Non
     Dispatch.objects.create(title="Hello", lang="en")
     rag.register(Dispatch, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -133,7 +134,7 @@ def test_guessed_language_field_is_chosen_per_model_by_name_not_per_instance() -
     Gazette.objects.create(title="Code only", language="", language_code="en")
     rag.register(Gazette, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Both": "fr",
@@ -147,7 +148,7 @@ def test_relation_named_language_is_not_guessed_as_the_language() -> None:
     Announcement.objects.create(title="Bonjour", language=french)
     rag.register(Announcement, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.language for document in documents] == [None]
 
@@ -161,7 +162,7 @@ def test_language_field_is_left_out_of_guessed_text_fields_not_declared_ones() -
     rag.register(Bulletin, language_field="locale")
     rag.register(Circular, fields=["title", "language_code"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -179,7 +180,7 @@ def test_language_field_lookup_path_reads_the_language_of_the_related_object() -
     Excerpt.objects.create(title="Orphan", notice=None)
     rag.register(Excerpt, fields=["title"], language_field="notice__language")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -200,7 +201,7 @@ def test_language_field_lookup_path_is_read_with_its_instances_in_a_single_query
     rag.register(Excerpt, fields=["title"], language_field="notice__language")
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -217,7 +218,7 @@ def test_language_field_lookup_path_gives_the_stored_code_not_a_choice_label() -
     Clipping.objects.create(title="Hello", leaflet=english)
     rag.register(Clipping, fields=["title"], language_field="leaflet__locale")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour": "fr",
@@ -233,7 +234,7 @@ def test_constant_language_is_every_document_language_and_frees_the_guessed_fiel
     Notice.objects.create(title="Hello", language="en")
     rag.register(Notice, language="de")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Bonjour\n\nfr": "de",
@@ -256,7 +257,7 @@ def test_constant_language_is_stripped_for_every_document(
     Category.objects.create(name="Garden")
     rag.register(Category, fields=["name"], language=language)
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
         "Tools": expected,
@@ -269,7 +270,7 @@ def test_model_without_get_absolute_url_or_url_field_gives_an_empty_url() -> Non
     Category.objects.create(name="Tools")
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.url for document in documents] == [""]
 
@@ -280,7 +281,7 @@ def test_get_absolute_url_gives_each_document_its_instance_url_left_relative() -
     Page.objects.create(title="Contact", slug="contact")
     rag.register(Page, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "About": "/pages/about/",
@@ -300,7 +301,7 @@ def test_get_absolute_url_reads_undeclared_own_columns_loaded_with_the_instances
     rag.register(Page, fields=["title"])
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "About": "/pages/about/",
@@ -313,7 +314,7 @@ def test_run_instance_gives_the_document_the_url_of_its_get_absolute_url() -> No
     page = Page.objects.create(title="About", slug="about")
     rag.register(Page, fields=["title"])
 
-    documents = SyncPipeline().run_instance(page)
+    documents = run_instance_documents(page)
 
     assert [document.url for document in documents] == ["/pages/about/"]
 
@@ -324,7 +325,7 @@ def test_exception_raised_by_get_absolute_url_propagates_unchanged() -> None:
     rag.register(Brochure, fields=["title"])
 
     with pytest.raises(NoReverseMatch, match="brochure-detail"):
-        SyncPipeline().run()
+        run_documents()
 
 
 @pytest.mark.django_db
@@ -332,7 +333,7 @@ def test_get_absolute_url_returning_none_gives_an_empty_url_not_none() -> None:
     Flyer.objects.create(title="Spring sale")
     rag.register(Flyer, fields=["title"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.url for document in documents] == [""]
 
@@ -345,7 +346,7 @@ def test_url_field_gives_each_document_its_stripped_value_relative_or_absolute()
     Bookmark.objects.create(title="Example", link="https://example.com/b")
     rag.register(Bookmark, fields=["title"], url_field="link")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "Docs": "/docs/a/",
@@ -360,7 +361,7 @@ def test_url_field_wins_over_get_absolute_url_even_when_blank_or_null() -> None:
     Pamphlet.objects.create(title="Null", link=None)
     rag.register(Pamphlet, fields=["title"], url_field="link")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "Filled": "https://example.com/p",
@@ -375,7 +376,7 @@ def test_url_field_with_choices_gives_the_stored_value_not_the_label() -> None:
     Shortcut.objects.create(title="Questions", link="/faq/")
     rag.register(Shortcut, fields=["title"], url_field="link")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "Docs": "/docs/",
@@ -388,7 +389,7 @@ def test_url_field_is_left_out_of_guessed_text_fields() -> None:
     Bookmark.objects.create(title="Docs", link="/docs/a/")
     rag.register(Bookmark, url_field="link")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "Docs": "/docs/a/",
@@ -402,7 +403,7 @@ def test_url_field_lookup_path_reads_the_url_of_the_related_object() -> None:
     Citation.objects.create(title="Orphan", bookmark=None)
     rag.register(Citation, fields=["title"], url_field="bookmark__link")
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "Linked": "/docs/a/",
@@ -422,7 +423,7 @@ def test_url_field_lookup_path_is_read_with_its_instances_in_a_single_query(
     rag.register(Citation, fields=["title"], url_field="bookmark__link")
 
     with django_assert_num_queries(1):
-        documents = SyncPipeline().run()
+        documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
         "A": "/docs/a/",
@@ -436,7 +437,7 @@ def test_model_without_permissions_option_gives_empty_frozenset_permissions() ->
     Category.objects.create(name="Tools")
     rag.register(Category, fields=["name"])
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     assert [document.permissions for document in documents] == [frozenset()]
     assert all(isinstance(document.permissions, frozenset) for document in documents)
@@ -452,7 +453,7 @@ def test_permissions_option_gives_every_document_those_permissions() -> None:
         permissions=["testapp.view_category", "testapp.change_category"],
     )
 
-    documents = SyncPipeline().run()
+    documents = run_documents()
 
     expected = frozenset({"testapp.view_category", "testapp.change_category"})
     assert {document.text: document.permissions for document in documents} == {
