@@ -7,7 +7,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand
 from django.utils.module_loading import import_string
 
-from django_model_rag import DocumentOutput, SyncPipeline
+from django_model_rag import DocumentOutput, SyncPipeline, rag
 
 _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 _BACKEND_KEY = "BACKEND"
@@ -19,7 +19,10 @@ class Command(BaseCommand):
     help = "Synchronize the registered models into the configured output."
 
     def handle(self, *args: Any, **options: Any) -> None:
-        SyncPipeline(_configured_output()).run()
+        pipeline = SyncPipeline(_configured_output())
+        for model in rag.registered_models():
+            pipeline.run([model])
+            self.stdout.write(f"{model._meta.label_lower}: synced")
 
 
 def _configured_output() -> DocumentOutput:
