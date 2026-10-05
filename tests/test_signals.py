@@ -342,6 +342,34 @@ def test_saving_a_registered_instance_with_a_backend_lacking_replace_fails_at_th
         Category.objects.create(name="Lighting")
 
 
+@pytest.mark.django_db
+def test_deleting_a_registered_instance_without_an_output_setting_fails_at_the_delete(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # Configured only while the instance is created, so the save succeeds.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with django_capture_on_commit_callbacks(execute=False):
+        lighting = Category.objects.create(name="Lighting")
+
+    # Back to tests/settings.py, which defines no MODEL_RAG_OUTPUT.
+    del settings.MODEL_RAG_OUTPUT
+
+    # The commit callbacks are captured and never run: only an error raised by
+    # the delete itself is caught, not one deferred to the commit.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"),
+    ):
+        lighting.delete()
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
