@@ -425,6 +425,45 @@ def test_the_command_at_verbosity_0_writes_no_synced_line_but_still_a_failed_mod
     ]
 
 
+def _assert_is_the_traceback_of_extract(lines: list[str], error_line: str) -> None:
+    """Assert `lines` are a traceback of `error_line` raised in an extract method."""
+    assert lines[:1] == ["Traceback (most recent call last):"]
+    assert lines[-1:] == [error_line]
+    assert any(line.strip().endswith(", in extract") for line in lines)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("built_outputs")
+def test_the_command_with_traceback_follows_each_failed_model_with_its_traceback(
+    settings: Settings,
+) -> None:
+    # Category and Page fail, around Product, which succeeds: writing the
+    # tracebacks only at the end, or only the first one, cannot pass, and
+    # Product's synced line shows the command still went on.
+    _register_a_failing_category_then_product()
+    page = Page.objects.create(title="Home", slug="home")
+    _register_a_failing_extractor(Page)
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    with pytest.raises(CommandError):
+        call_command("sync_model_rag", traceback=True, stdout=stdout, stderr=stderr)
+
+    lines = stderr.getvalue().splitlines()
+    page_failure = f"testapp.page: RuntimeError: cannot extract {page}"
+    assert lines[0] == "testapp.category: RuntimeError: cannot extract Tools"
+    assert page_failure in lines
+    page_index = lines.index(page_failure)
+    _assert_is_the_traceback_of_extract(
+        lines[1:page_index], "RuntimeError: cannot extract Tools"
+    )
+    _assert_is_the_traceback_of_extract(
+        lines[page_index + 1 :], f"RuntimeError: cannot extract {page}"
+    )
+    assert stdout.getvalue().splitlines() == ["testapp.product: synced"]
+
+
 @pytest.mark.django_db
 def test_the_command_passes_the_output_options_to_the_backend_as_keyword_arguments(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
