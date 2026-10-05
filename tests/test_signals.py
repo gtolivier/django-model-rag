@@ -115,6 +115,29 @@ def test_saving_an_instance_with_no_document_replaces_its_group_with_an_empty_on
     assert _replaced(built_outputs) == [{f"testapp.category:{lighting.pk}": []}]
 
 
+@pytest.mark.django_db
+def test_an_instance_saved_then_deleted_before_the_commit_sends_an_empty_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        lighting_pk = lighting.pk
+        # The row is gone by the commit: the save has nothing left to extract.
+        lighting.delete()
+
+    # An empty group, so the output holds nothing for the deleted instance.
+    assert _replaced(built_outputs) == [{f"testapp.category:{lighting_pk}": []}]
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
