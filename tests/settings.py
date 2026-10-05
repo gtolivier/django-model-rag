@@ -3,7 +3,14 @@
 SECRET_KEY = "tests-only-not-secret"
 # contenttypes: the test bench has a generic relation, which needs it.
 # django_model_rag: installed so that its management command exists.
-INSTALLED_APPS = ["django.contrib.contenttypes", "django_model_rag", "tests.testapp"]
+# contenttypes has no model_rag module, testapp and otherapp have one: the
+# autodiscovery at startup must import both and skip contenttypes.
+INSTALLED_APPS = [
+    "django.contrib.contenttypes",
+    "django_model_rag",
+    "tests.testapp",
+    "tests.otherapp",
+]
 DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
 # Pinned: the default changed to BigAutoField in Django 6.0, so leaving it
 # unset would make the test app's migration drift between supported versions.
