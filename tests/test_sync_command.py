@@ -136,6 +136,25 @@ def test_the_command_with_a_backend_without_prune_names_it_before_running_a_mode
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("bad_options", [None, ["collection", "catalog"]])
+def test_the_command_with_options_that_are_not_a_dict_names_them_before_running_a_model(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    bad_options: object,
+) -> None:
+    # Registered with a row: running it would send the documents to the
+    # output, so only a check made up front keeps them from reaching it.
+    _create_a_hammer()
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND, "OPTIONS": bad_options}
+
+    with pytest.raises(ImproperlyConfigured, match="OPTIONS"):
+        call_command("sync_model_rag")
+
+    assert [output.calls for output in built_outputs] in ([], [[]])
+
+
+@pytest.mark.django_db
 def test_the_command_runs_a_registered_model_into_the_configured_backend(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
