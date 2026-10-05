@@ -15,3 +15,15 @@ class DocumentOutput(Protocol):
 
     def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
         """Delete the documents of ``model_label`` whose source key is not kept."""
+
+
+class ConsoleOutput:
+    """Writes the documents to standard output."""
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        """Write each group: its source key, then its documents' titles and texts."""
+        for key, documents in groups.items():
+            print(key)
+            for document in documents:
+                print(document.title)
+                print(document.text)
