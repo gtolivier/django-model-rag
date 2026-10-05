@@ -92,6 +92,20 @@ def _replace_group(registered_model: type[Model], pk: Any) -> None:
     SyncPipeline(configured_output()).run_instance(committed_instance)
 
 
+def check_output_before_save(
+    sender: type[Model], raw: bool = False, **kwargs: Any
+) -> None:
+    """Fail before the INSERT or UPDATE if the output is misconfigured.
+
+    In autocommit the row is committed as soon as it is written, too late for
+    the check made when the commit callbacks are scheduled.
+    """
+    if raw or not _registered_models(sender) or not _signals_enabled():
+        return
+
+    check_output_configuration()
+
+
 def sync_saved_instance(
     sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
 ) -> None:
