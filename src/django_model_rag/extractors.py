@@ -74,9 +74,10 @@ class BaseExtractor(ABC, Generic[M]):
         """Build the document(s) of ``instance``, or nothing to skip it."""
 
     def get_queryset(self, queryset: QuerySet[M]) -> QuerySet[M]:
-        """Shape how ``queryset`` loads the instances to extract, not which it holds.
+        """Shape how ``queryset`` loads the instances to extract, and which it holds.
 
-        A run of a single instance, already loaded, does not go through it.
+        An instance it filters out is not extracted. A run of a single instance,
+        already loaded, only asks it whether that instance is kept.
         """
         return queryset
 

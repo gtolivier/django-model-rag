@@ -24,9 +24,32 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
 
     ``extractor``'s get_queryset() shapes how they are loaded.
     """
-    queryset = model._default_manager.order_by(_DOCUMENT_ORDER)
-    hooked = _checked_queryset(extractor.get_queryset(queryset), extractor, model)
+    hooked = _hooked_queryset(
+        model._default_manager.order_by(_DOCUMENT_ORDER), extractor, model
+    )
     return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+
+
+def _hooked_queryset(
+    queryset: QuerySet[Model], extractor: BaseExtractor[Any], model: type[Model]
+) -> QuerySet[Model]:
+    """Pass ``queryset`` of ``model`` through ``extractor``'s get_queryset().
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
+    """
+    return _checked_queryset(extractor.get_queryset(queryset), extractor, model)
+
+
+def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
+    """Tell whether ``extractor``'s get_queryset() keeps ``instance``.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of the model's instances.
+    """
+    model = type(instance)
+    hooked = _hooked_queryset(model._default_manager.all(), extractor, model)
+    return hooked.filter(pk=instance.pk).exists()
 
 
 def _checked_queryset(
@@ -190,22 +213,23 @@ class SyncPipeline:
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
 
+        The group is empty when its extractor's get_queryset() filters
+        ``instance`` out: it is then not extracted.
+
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
             ValueError: ``instance`` has no primary key yet.
-            TypeError: its extractor returned a document of another source.
+            TypeError: its extractor's get_queryset() did not return a QuerySet
+                of the model's instances, or its extract() returned a document
+                of another source.
         """
         extractor = rag.new_extractor(type(instance))
         if instance.pk is None:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
-        model = type(instance)
-        hooked = _checked_queryset(
-            extractor.get_queryset(model._default_manager.all()), extractor, model
-        )
         documents = (
             list(_own_documents(instance, extractor))
-            if hooked.filter(pk=instance.pk).exists()
+            if _is_kept_by_hook(instance, extractor)
             else []
         )
         self._output.replace({_source_key(instance): documents})
