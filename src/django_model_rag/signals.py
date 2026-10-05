@@ -31,6 +31,15 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
+def _registered_model(sender: type[Model]) -> type[Model] | None:
+    """Return the registered model whose group ``sender``'s instances feed, if any."""
+    # A proxy sends signals under its own sender: its group is the concrete model's.
+    concrete_model = sender._meta.concrete_model
+    if concrete_model not in rag.registered_models():
+        return None
+    return concrete_model
+
+
 def _replace_group(instance: Model) -> None:
     """Send the group of ``instance`` to a newly built configured output."""
     SyncPipeline(configured_output()).run_instance(instance)
@@ -43,9 +52,8 @@ def sync_saved_instance(
     if raw or not _signals_enabled():
         return
 
-    # A proxy is saved under its own sender: its group is the concrete model's.
-    registered_model = sender._meta.concrete_model
-    if registered_model not in rag.registered_models():
+    registered_model = _registered_model(sender)
+    if registered_model is None:
         return
 
     # Fail at the save, not at the commit, if the output is misconfigured.
@@ -77,9 +85,8 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     if not _signals_enabled():
         return
 
-    # A proxy is deleted under its own sender: its group is the concrete model's.
-    registered_model = sender._meta.concrete_model
-    if registered_model not in rag.registered_models():
+    registered_model = _registered_model(sender)
+    if registered_model is None:
         return
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
