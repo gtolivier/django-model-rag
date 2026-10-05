@@ -86,6 +86,23 @@ class PruneOnlyOutput:
         self.pruned.append((model_label, set(kept_keys)))
 
 
+class ReplaceOnlyOutput:
+    """A broken output backend: a callable replace, but no prune at all.
+
+    Keeps every instance built of it and every replace call it receives, so a
+    test can tell that nothing was sent to it.
+    """
+
+    built: ClassVar[list["ReplaceOnlyOutput"]] = []
+
+    def __init__(self) -> None:
+        self.replaced: list[Mapping[str, Sequence[NormalizedDocument]]] = []
+        ReplaceOnlyOutput.built.append(self)
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        self.replaced.append({key: list(group) for key, group in groups.items()})
+
+
 def run_documents(
     models: Sequence[type[Model]] | None = None,
 ) -> list[NormalizedDocument]:

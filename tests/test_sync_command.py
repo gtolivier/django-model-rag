@@ -6,7 +6,11 @@ from django.core.management import call_command
 from pytest_django import Settings
 
 from django_model_rag import rag
-from tests.recording import PruneOnlyOutput, TrackedRecordingOutput
+from tests.recording import (
+    PruneOnlyOutput,
+    ReplaceOnlyOutput,
+    TrackedRecordingOutput,
+)
 from tests.testapp.models import Category, Product
 
 
@@ -24,6 +28,14 @@ def built_prune_only_outputs() -> Iterator[list[PruneOnlyOutput]]:
     PruneOnlyOutput.built.clear()
     yield PruneOnlyOutput.built
     PruneOnlyOutput.built.clear()
+
+
+@pytest.fixture
+def built_replace_only_outputs() -> Iterator[list[ReplaceOnlyOutput]]:
+    """The ReplaceOnlyOutput instances built during the test, and only those."""
+    ReplaceOnlyOutput.built.clear()
+    yield ReplaceOnlyOutput.built
+    ReplaceOnlyOutput.built.clear()
 
 
 def test_the_command_without_an_output_setting_names_the_missing_setting() -> None:
@@ -81,6 +93,30 @@ def test_the_command_with_a_backend_without_replace_names_it_before_running_a_mo
     # The check may come before or after the backend is built: either way,
     # nothing reaches it.
     assert [output.pruned for output in built_prune_only_outputs] in ([], [[]])
+
+
+@pytest.mark.django_db
+def test_the_command_with_a_backend_without_prune_names_it_before_running_a_model(
+    settings: Settings, built_replace_only_outputs: list[ReplaceOnlyOutput]
+) -> None:
+    # Registered with a row: running it would call replace before prune, so
+    # only a check made up front keeps the documents from reaching the output.
+    category = Category.objects.create(name="Tools")
+    Product.objects.create(
+        name="Hammer", description="Drives nails.", price="9.90", category=category
+    )
+    rag.register(Product, fields=["name"])
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.ReplaceOnlyOutput"}
+
+    with pytest.raises(ImproperlyConfigured) as excinfo:
+        call_command("sync_model_rag")
+
+    message = str(excinfo.value)
+    assert "ReplaceOnlyOutput" in message
+    assert "prune" in message
+    # The check may come before or after the backend is built: either way,
+    # nothing reaches it.
+    assert [output.replaced for output in built_replace_only_outputs] in ([], [[]])
 
 
 @pytest.mark.django_db
