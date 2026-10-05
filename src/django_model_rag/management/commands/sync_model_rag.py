@@ -105,7 +105,7 @@ def _require_callable_methods(output_class: type[DocumentOutput]) -> None:
 def _output_setting() -> dict[str, Any]:
     """Return the output setting, failing unless it is a dict with a BACKEND.
 
-    Its OPTIONS, if any, must be a dict too.
+    Its BACKEND must be a string; its OPTIONS, if any, must be a dict too.
     """
     if not hasattr(settings, _OUTPUT_SETTING):
         message = f"The {_OUTPUT_SETTING} setting is required."
@@ -118,7 +118,9 @@ def _output_setting() -> dict[str, Any]:
         message = f"The {_OUTPUT_SETTING} setting requires a {_BACKEND_KEY} key."
         raise ImproperlyConfigured(message)
     if not isinstance(output_setting[_BACKEND_KEY], str):
-        message = f"The {_BACKEND_KEY} of {_OUTPUT_SETTING} must be a string."
+        message = (
+            f"The {_BACKEND_KEY} of the {_OUTPUT_SETTING} setting must be a string."
+        )
         raise ImproperlyConfigured(message)
     if not isinstance(_options(output_setting), dict):
         message = f"The {_OPTIONS_KEY} of the {_OUTPUT_SETTING} setting must be a dict."
