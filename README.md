@@ -327,7 +327,7 @@ The setting has the shape of Django's `STORAGES`:
 ```python
 MODEL_RAG_OUTPUT = {
     "BACKEND": "myproject.rag.MyOutput",  # a dotted path to the output class
-    "OPTIONS": {"collection": "site"},    # optional: keyword arguments
+    "OPTIONS": {"collection": "site"},  # optional: keyword arguments
 }
 ```
 
