@@ -1,9 +1,38 @@
 from collections.abc import Iterator
+from typing import TypeVar
 
 import pytest
 from django.db import connection
 
 from django_model_rag import rag
+from tests.recording import PruneOnlyOutput, ReplaceOnlyOutput, TrackedRecordingOutput
+
+T = TypeVar("T")
+
+
+def _only_built_during_the_test(built: list[T]) -> Iterator[list[T]]:
+    """Yield a class's `built` list emptied, and empty it again after the test."""
+    built.clear()
+    yield built
+    built.clear()
+
+
+@pytest.fixture
+def built_outputs() -> Iterator[list[TrackedRecordingOutput]]:
+    """The TrackedRecordingOutput instances built during the test, and only those."""
+    yield from _only_built_during_the_test(TrackedRecordingOutput.built)
+
+
+@pytest.fixture
+def built_prune_only_outputs() -> Iterator[list[PruneOnlyOutput]]:
+    """The PruneOnlyOutput instances built during the test, and only those."""
+    yield from _only_built_during_the_test(PruneOnlyOutput.built)
+
+
+@pytest.fixture
+def built_replace_only_outputs() -> Iterator[list[ReplaceOnlyOutput]]:
+    """The ReplaceOnlyOutput instances built during the test, and only those."""
+    yield from _only_built_during_the_test(ReplaceOnlyOutput.built)
 
 
 @pytest.fixture

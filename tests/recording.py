@@ -69,6 +69,10 @@ class TrackedRecordingOutput(RecordingOutput):
         TrackedRecordingOutput.built.append(self)
 
 
+# The dotted path of the backend whose built instances the tests read back.
+TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
+
+
 class FailingReplaceError(Exception):
     """Raised by FailingOnKeyOutput on the group of its failing source key."""
 

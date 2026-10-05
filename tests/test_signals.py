@@ -1,5 +1,5 @@
 import logging
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 import pytest
 from django.core import serializers
@@ -9,19 +9,15 @@ from django.db.models.signals import post_delete
 from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
-from tests.recording import FailingReplaceError, TrackedRecordingOutput
+from tests.recording import (
+    TRACKED_BACKEND,
+    FailingReplaceError,
+    TrackedRecordingOutput,
+)
 from tests.testapp.models import Category, CategoryProxy, FeaturedProduct, Product
 
-# The dotted path of the backend whose built instances the tests read back.
-TRACKED_BACKEND = "tests.recording.TrackedRecordingOutput"
-
-
-@pytest.fixture
-def built_outputs() -> Iterator[list[TrackedRecordingOutput]]:
-    """The TrackedRecordingOutput instances built during the test, and only those."""
-    TrackedRecordingOutput.built.clear()
-    yield TrackedRecordingOutput.built
-    TrackedRecordingOutput.built.clear()
+# The logger the package reports a failed commit callback on.
+PACKAGE_LOGGER = "django_model_rag"
 
 
 def _replaced(
@@ -29,6 +25,51 @@ def _replaced(
 ) -> list[Mapping[str, Sequence[NormalizedDocument]]]:
     """Every replace call received, across every output built, in call order."""
     return [groups for output in built_outputs for groups in output.replaced]
+
+
+def _received_groups(
+    built_outputs: list[TrackedRecordingOutput],
+) -> dict[str, list[NormalizedDocument]]:
+    """Every group received, across every output built, merged into one mapping."""
+    return {
+        source_key: list(group)
+        for groups in _replaced(built_outputs)
+        for source_key, group in groups.items()
+    }
+
+
+def _package_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """The records captured from the package's logger, and only those."""
+    return [record for record in caplog.records if record.name == PACKAGE_LOGGER]
+
+
+def _register_categories_by_name() -> None:
+    """Register Category, each instance extracted to one document: its name."""
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+
+def _register_products_by_name() -> None:
+    """Register Product, each instance extracted to one document: its name."""
+
+    @rag.register_extractor(Product)
+    class ProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+
+def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
+    """Create a Desk lamp, a FeaturedProduct: a Product row and its child row."""
+    return FeaturedProduct.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=category,
+        tagline="Light up your work",
+    )
 
 
 @pytest.mark.django_db
@@ -39,10 +80,7 @@ def test_saving_a_registered_instance_replaces_its_group_once_its_transaction_co
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting = Category.objects.create(name="Lighting")
@@ -73,10 +111,7 @@ def test_saving_through_a_proxy_replaces_the_group_of_the_registered_model(
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Only the concrete model is registered, not its proxy.
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Django sends post_save with the proxy as its sender, not Category.
     with django_capture_on_commit_callbacks(execute=True):
@@ -107,10 +142,7 @@ def test_saving_a_multi_table_child_replaces_the_group_of_its_registered_parent(
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Only the parent is registered, not its multi-table child.
-    @rag.register_extractor(Product)
-    class ProductExtractor(BaseExtractor[Product]):
-        def extract(self, instance: Product) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_products_by_name()
 
     # Created in a commit of its own, unregistered: only the child's save
     # below is observed.
@@ -120,13 +152,7 @@ def test_saving_a_multi_table_child_replaces_the_group_of_its_registered_parent(
 
     # Django sends post_save once, with the child as its sender, not Product.
     with django_capture_on_commit_callbacks(execute=True):
-        lamp = FeaturedProduct.objects.create(
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-            tagline="Light up your work",
-        )
+        lamp = _create_a_desk_lamp(lighting)
         assert _replaced(built_outputs) == []
 
     # The group is the parent row's, under the parent's label, and its
@@ -173,23 +199,13 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
 
     # Django sends post_save once, with the child as its sender, not Product.
     with django_capture_on_commit_callbacks(execute=True):
-        lamp = FeaturedProduct.objects.create(
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-            tagline="Light up your work",
-        )
+        lamp = _create_a_desk_lamp(lighting)
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
     # Merged across replace calls: whether the groups come in one call or one
     # per label is not what this test is about.
-    received = {
-        source_key: list(group)
-        for groups in _replaced(built_outputs)
-        for source_key, group in groups.items()
-    }
+    received = _received_groups(built_outputs)
     # Each group under its own label, from its own extractor: the child's
     # document for the child, the parent's document for the parent row.
     assert received == {
@@ -220,10 +236,7 @@ def test_a_save_sends_the_documents_of_the_instance_as_committed(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting = Category.objects.create(name="Lighting")
@@ -275,10 +288,7 @@ def test_an_instance_saved_then_deleted_before_the_commit_sends_an_empty_group(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting = Category.objects.create(name="Lighting")
@@ -298,10 +308,7 @@ def test_deleting_a_registered_instance_replaces_its_group_with_an_empty_one(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Created in a commit of its own, so that only the delete's commit is
     # observed below.
@@ -327,10 +334,7 @@ def test_deleting_a_queryset_empties_the_group_of_each_deleted_instance(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Created in a commit of their own, so that only the delete's commit is
     # observed below.
@@ -348,11 +352,7 @@ def test_deleting_a_queryset_empties_the_group_of_each_deleted_instance(
 
     # Merged across replace calls: whether the groups come in one call or one
     # per instance is not what this test is about.
-    received = {
-        source_key: list(group)
-        for groups in _replaced(built_outputs)
-        for source_key, group in groups.items()
-    }
+    received = _received_groups(built_outputs)
     # An empty group per deleted instance, and nothing for the kept one.
     assert received == {
         f"testapp.category:{lighting.pk}": [],
@@ -369,10 +369,7 @@ def test_deleting_through_a_proxy_empties_the_group_of_the_registered_model(
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Only the concrete model is registered, not its proxy.
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Created in a commit of its own, so that only the delete's commit is
     # observed below.
@@ -401,22 +398,13 @@ def test_deleting_a_multi_table_child_empties_the_group_of_its_registered_parent
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Only the parent is registered, not its multi-table child.
-    @rag.register_extractor(Product)
-    class ProductExtractor(BaseExtractor[Product]):
-        def extract(self, instance: Product) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_products_by_name()
 
     # Created in a commit of their own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
         lighting = Category.objects.create(name="Lighting")
-        lamp = FeaturedProduct.objects.create(
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-            tagline="Light up your work",
-        )
+        lamp = _create_a_desk_lamp(lighting)
     lamp_pk = lamp.pk
     built_outputs.clear()
 
@@ -439,10 +427,7 @@ def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Another model is registered, so the registry is not simply empty.
-    @rag.register_extractor(Product)
-    class ProductExtractor(BaseExtractor[Product]):
-        def extract(self, instance: Product) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_products_by_name()
 
     with django_capture_on_commit_callbacks(execute=True):
         Category.objects.create(name="Lighting")
@@ -453,10 +438,7 @@ def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
 
 def test_an_unregistered_model_keeps_the_fast_delete_of_django() -> None:
     # Another model is registered, so the registry is not simply empty.
-    @rag.register_extractor(Product)
-    class ProductExtractor(BaseExtractor[Product]):
-        def extract(self, instance: Product) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_products_by_name()
 
     # Django's deletion Collector fast-deletes (one DELETE query, no instance
     # loaded) only a model with no post_delete listener; a receiver connected
@@ -472,10 +454,7 @@ def test_saving_an_instance_of_a_model_since_unregistered_sends_nothing(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     rag.unregister(Category)
 
@@ -497,10 +476,7 @@ def test_each_commit_builds_a_new_output_with_the_configured_options(
         "OPTIONS": {"collection": "catalog", "batch_size": 50},
     }
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Two separate transactions, each with its own commit.
     with django_capture_on_commit_callbacks(execute=True):
@@ -526,10 +502,7 @@ def test_saving_a_registered_instance_without_an_output_setting_fails_at_the_sav
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # The commit callbacks are captured and never run: only an error raised by
     # the save itself is caught, not one deferred to the commit.
@@ -548,10 +521,7 @@ def test_saving_a_registered_instance_with_a_backend_lacking_replace_fails_at_th
     # A callable prune, but no replace at all.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.PruneOnlyOutput"}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # The commit callbacks are captured and never run: only an error raised by
     # the save itself is caught, not one deferred to the commit.
@@ -570,10 +540,7 @@ def test_deleting_a_registered_instance_without_an_output_setting_fails_at_the_d
     # Configured only while the instance is created, so the save succeeds.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     with django_capture_on_commit_callbacks(execute=False):
         lighting = Category.objects.create(name="Lighting")
@@ -599,10 +566,7 @@ def test_saving_a_registered_instance_with_signals_off_sends_nothing_and_raises_
     # tests/settings.py defines no MODEL_RAG_OUTPUT: with signals on, the save
     # itself would raise ImproperlyConfigured.
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # The commit callbacks run: one sending anything would need an output and
     # raise for lack of one.
@@ -624,10 +588,7 @@ def test_deleting_a_registered_instance_with_signals_off_sends_nothing(
     # sending to it.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     lighting = Category.objects.create(name="Lighting")
 
@@ -649,10 +610,7 @@ def test_a_raw_save_of_a_registered_instance_sends_nothing(
     # A working output, so that only the raw save can keep it from being sent to.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Saved as loaddata saves a fixture: a deserialized object's save() is a
     # raw save, so Django sends post_save with raw=True.
@@ -677,10 +635,7 @@ def test_saving_a_registered_instance_in_a_rolled_back_transaction_sends_nothing
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # A real transaction (transaction=True), so that leaving the atomic block
     # on an exception rolls it back rather than a savepoint of the test's own.
@@ -712,14 +667,12 @@ def test_an_extractor_failing_at_the_commit_of_a_save_is_logged_without_raising(
     # The commit callbacks run, and an error escaping them would fail the test:
     # the commit itself must not raise.
     with (
-        caplog.at_level(logging.ERROR, logger="django_model_rag"),
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
         django_capture_on_commit_callbacks(execute=True),
     ):
         lighting = Category.objects.create(name="Lighting")
 
-    [record] = [
-        record for record in caplog.records if record.name == "django_model_rag"
-    ]
+    [record] = _package_log_records(caplog)
     assert record.levelno == logging.ERROR
     # The record says which instance failed, and carries the error itself.
     assert f"testapp.category:{lighting.pk}" in record.getMessage()
@@ -738,10 +691,7 @@ def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_g
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Created in a commit of their own, so that their source keys are known
     # before the output is configured to fail on one of them.
@@ -759,7 +709,7 @@ def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_g
     # other instance's group is sent. An error escaping the commit callbacks
     # would fail the test: the commit itself must not raise.
     with (
-        caplog.at_level(logging.ERROR, logger="django_model_rag"),
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
         django_capture_on_commit_callbacks(execute=True),
     ):
         lighting.name = "Lamps"
@@ -767,9 +717,7 @@ def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_g
         tools.name = "Hardware"
         tools.save()
 
-    [record] = [
-        record for record in caplog.records if record.name == "django_model_rag"
-    ]
+    [record] = _package_log_records(caplog)
     assert record.levelno == logging.ERROR
     # The record says which instance failed, and carries the error itself.
     assert f"testapp.category:{lighting.pk}" in record.getMessage()
@@ -799,10 +747,7 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    @rag.register_extractor(Category)
-    class CategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_categories_by_name()
 
     # Created in a commit of their own, so that their source keys are known
     # before the output is configured to fail on one of them.
@@ -823,15 +768,13 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     # instance's empty group is sent. An error escaping the commit callbacks
     # would fail the test: the commit itself must not raise.
     with (
-        caplog.at_level(logging.ERROR, logger="django_model_rag"),
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
         django_capture_on_commit_callbacks(execute=True),
     ):
         lighting.delete()
         tools.delete()
 
-    [record] = [
-        record for record in caplog.records if record.name == "django_model_rag"
-    ]
+    [record] = _package_log_records(caplog)
     assert record.levelno == logging.ERROR
     # The record says which instance failed, and carries the error itself.
     assert f"testapp.category:{lighting_pk}" in record.getMessage()
