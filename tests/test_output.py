@@ -285,6 +285,27 @@ def test_run_instance_hands_nothing_to_its_output_when_the_extractor_raises() ->
     assert output.calls == []
 
 
+def test_run_instance_rejects_an_unsaved_instance_before_extracting_it() -> None:
+    # Without a primary key the source key would be "testapp.category:None":
+    # a group under it would store documents no saved instance owns, and no
+    # later run could replace or prune them under the instance's real key.
+    unsaved = Category(name="Lamps")
+    extracted: list[Category] = []
+
+    @rag.register_extractor(Category)
+    class RecordingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            extracted.append(instance)
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    with pytest.raises(ValueError, match="primary key"):
+        SyncPipeline(output).run_instance(unsaved)
+
+    assert extracted == []
+    assert output.calls == []
+
+
 @pytest.mark.django_db
 def test_run_instance_rejects_a_document_whose_source_is_another_instance() -> None:
     # A document attributed to lamps would make the output replace lamps'
