@@ -1,5 +1,6 @@
 """The `sync_model_rag` management command."""
 
+import traceback
 from typing import Any
 
 from django.apps import apps
@@ -16,6 +17,7 @@ _OUTPUT_SETTING = "MODEL_RAG_OUTPUT"
 _BACKEND_KEY = "BACKEND"
 _OPTIONS_KEY = "OPTIONS"
 _VERBOSITY_OPTION = "verbosity"
+_TRACEBACK_OPTION = "traceback"
 _SILENT = 0
 _REQUIRED_METHODS = ("replace", "prune")
 
@@ -36,6 +38,8 @@ class Command(BaseCommand):
             except Exception as error:  # one model's failure must not stop the others
                 failed_labels.append(label)
                 self.stderr.write(f"{label}: {type(error).__name__}: {error}")
+                if options[_TRACEBACK_OPTION]:
+                    self.stderr.write(traceback.format_exc().rstrip())
                 continue
             if options[_VERBOSITY_OPTION] > _SILENT:
                 self.stdout.write(f"{label}: synced")
