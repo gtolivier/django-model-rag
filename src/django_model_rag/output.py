@@ -23,6 +23,9 @@ class ConsoleOutput:
     def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
         """Write each group: its source key, then its documents' titles and texts."""
         for key, documents in groups.items():
+            if not documents:
+                print(f"{key} removed")
+                continue
             print(key)
             for document in documents:
                 print(document.title)
