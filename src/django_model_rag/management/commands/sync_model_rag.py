@@ -27,6 +27,9 @@ def _configured_output() -> DocumentOutput:
     Its OPTIONS, if any, are passed to that class as keyword arguments.
     """
     output_setting = _output_setting()
+    if _BACKEND_KEY not in output_setting:
+        message = f"The {_OUTPUT_SETTING} setting requires a {_BACKEND_KEY} key."
+        raise ImproperlyConfigured(message)
     output_class: type[DocumentOutput] = import_string(output_setting[_BACKEND_KEY])
     return output_class(**output_setting.get(_OPTIONS_KEY, {}))
 
