@@ -159,6 +159,28 @@ def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     assert built_outputs == []
 
 
+@pytest.mark.django_db
+def test_saving_an_instance_of_a_model_since_unregistered_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    rag.unregister(Category)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Category.objects.create(name="Lighting")
+
+    # Not even an output built: the registration it once had is forgotten.
+    assert built_outputs == []
+
+
 class _RolledBackError(Exception):
     """Raised inside an atomic block to roll its transaction back."""
 
