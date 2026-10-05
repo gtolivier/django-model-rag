@@ -788,3 +788,54 @@ def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_g
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    @rag.register_extractor(Category)
+    class CategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    # Created in a commit of their own, so that their source keys are known
+    # before the output is configured to fail on one of them.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+        tools = Category.objects.create(name="Tools")
+    lighting_pk = lighting.pk
+    tools_pk = tools.pk
+    built_outputs.clear()
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": "tests.recording.FailingOnKeyOutput",
+        "OPTIONS": {"failing_source_key": f"testapp.category:{lighting_pk}"},
+    }
+
+    # Deleted one by one, so that each sends its own signal. The failing
+    # instance is deleted first, so that its failure comes before the other
+    # instance's empty group is sent. An error escaping the commit callbacks
+    # would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger="django_model_rag"),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting.delete()
+        tools.delete()
+
+    [record] = [
+        record for record in caplog.records if record.name == "django_model_rag"
+    ]
+    assert record.levelno == logging.ERROR
+    # The record says which instance failed, and carries the error itself.
+    assert f"testapp.category:{lighting_pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+    # The other instance's empty group still reaches an output.
+    assert _replaced(built_outputs) == [{f"testapp.category:{tools_pk}": []}]
