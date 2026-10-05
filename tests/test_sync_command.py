@@ -1,10 +1,12 @@
 import io
 import re
 from collections.abc import Iterator
+from typing import TypeVar
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import CommandError, call_command
+from django.db.models import Model
 from pytest_django import Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
@@ -14,6 +16,8 @@ from tests.recording import (
     TrackedRecordingOutput,
 )
 from tests.testapp.models import Category, Page, Product
+
+M = TypeVar("M", bound=Model)
 
 
 @pytest.fixture
@@ -237,6 +241,20 @@ def test_the_command_writes_one_synced_line_per_model_in_run_order(
     ]
 
 
+def _register_a_failing_extractor(model: type[M]) -> None:
+    """Register for `model` an extractor whose extraction always raises.
+
+    It raises ``RuntimeError("cannot extract <instance>")``: the run of
+    `model` fails only if it has a row to extract.
+    """
+
+    @rag.register_extractor(model)
+    class FailingExtractor(BaseExtractor[M]):
+        def extract(self, instance: M) -> NormalizedDocument:
+            message = f"cannot extract {instance}"
+            raise RuntimeError(message)
+
+
 def _register_a_failing_category_then_product() -> None:
     """Register Category, whose run raises, then Product, whose run succeeds.
 
@@ -244,13 +262,7 @@ def _register_a_failing_category_then_product() -> None:
     Category row named Tools makes that extraction actually run.
     """
     Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class FailingCategoryExtractor(BaseExtractor[Category]):
-        def extract(self, instance: Category) -> NormalizedDocument:
-            message = f"cannot extract {instance.name}"
-            raise RuntimeError(message)
-
+    _register_a_failing_extractor(Category)
     rag.register(Product, fields=["name"])
 
 
@@ -268,6 +280,28 @@ def test_the_command_goes_on_after_a_failed_model_then_fails_naming_it(
 
     [output] = built_outputs
     assert output.pruned == [("testapp.product", set())]
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("built_outputs")
+def test_the_command_fails_naming_every_failed_model_in_run_order(
+    settings: Settings,
+) -> None:
+    # Category and Page fail, around Product, which succeeds: naming only the
+    # first or the last failure, or every model run, cannot pass.
+    _register_a_failing_category_then_product()
+    Page.objects.create(title="Home", slug="home")
+    _register_a_failing_extractor(Page)
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.TrackedRecordingOutput"}
+
+    with pytest.raises(CommandError) as excinfo:
+        call_command("sync_model_rag", stdout=io.StringIO(), stderr=io.StringIO())
+
+    message = str(excinfo.value)
+    assert "testapp.category" in message
+    assert "testapp.page" in message
+    assert message.index("testapp.category") < message.index("testapp.page")
+    assert "testapp.product" not in message
 
 
 @pytest.mark.django_db
