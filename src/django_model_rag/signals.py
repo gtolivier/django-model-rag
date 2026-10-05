@@ -32,9 +32,11 @@ def _replace_group(instance: Model) -> None:
     SyncPipeline(configured_output()).run_instance(instance)
 
 
-def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
+def sync_saved_instance(
+    sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
+) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
-    if not _signals_enabled():
+    if raw or not _signals_enabled():
         return
 
     if sender not in rag.registered_models():
