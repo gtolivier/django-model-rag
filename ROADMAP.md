@@ -262,7 +262,10 @@ reference.
   for a label naming no model, or an unregistered one). When a model fails,
   the command writes it and its error on stderr, does not prune it, goes on
   with the others, and ends with a `CommandError` naming every failed model;
-  each model that succeeds writes a `synced` line. The package became a
+  each model that succeeds writes a `synced` line, unless `--verbosity 0`;
+  `--traceback` adds each failure's traceback. A model named twice runs
+  once; with no model registered, the command warns and ends without
+  error. The package became a
   Django app that autodiscovers each installed app's `model_rag.py` in its
   `AppConfig.ready()`, in `INSTALLED_APPS` order, as `django.contrib.admin`
   does with `admin.py`.
@@ -282,6 +285,11 @@ reference.
     An option could add `select_related` without a custom extractor;
   - progress: a model's `synced` line comes only at its end, nothing per
     chunk on a large table;
+  - run inside an outer transaction (`call_command` from code under
+    `atomic()`), a database error in one model aborts that transaction,
+    and every later model fails too, each blamed on itself. A savepoint
+    per model would isolate them, but would keep a transaction open across
+    the output's calls, which may be slow;
   - `prune()` receives every kept key of a model at once, which a very
     large table makes a large set;
   - a first sync of a large site calls the output for every instance: the

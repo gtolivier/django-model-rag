@@ -317,7 +317,9 @@ python manage.py sync_model_rag shop.product blog.article
 The command runs the pipeline (`run()`, with its final `prune()`) into the
 output named by the `MODEL_RAG_OUTPUT` setting. It runs every registered
 model, in registration order, or only the models it is given, as
-`app_label.model_name` and in the given order. Run it once after installing
+`app_label.model_name` and in the given order; a model named twice runs once,
+at its first position. With no model registered, it writes a warning on
+stderr and ends without error. Run it once after installing
 the package or registering a new model: until then, the output holds none
 of that model's documents. Run it again whenever you want to repair what
 saving instances did not keep up to date.
@@ -334,8 +336,9 @@ MODEL_RAG_OUTPUT = {
 The command imports `BACKEND`, builds a new instance with `OPTIONS` as its
 keyword arguments, and checks the class has a callable `replace` and
 `prune`. It does all this before running any model. A missing setting,
-a setting that is not a dict or has no `BACKEND`, a `BACKEND` that cannot be
-imported, and a class without one of the two methods fail with
+a setting that is not a dict or has no `BACKEND`, a `BACKEND` that is not a
+string, cannot be imported or names something other than a class, `OPTIONS`
+that are not a dict, and a class without one of the two methods fail with
 `ImproperlyConfigured`. So does a label naming no model of an installed app,
 or a model that is not registered, but with `CommandError`. Both are raised
 before anything is sent.
@@ -354,7 +357,9 @@ MODEL_RAG_OUTPUT = {"BACKEND": "django_model_rag.output.ConsoleOutput"}
 `<app_label.model_name>: <ExceptionType>: <message>` on stderr and goes on
 with the next model. That model is not pruned, and the batches it already
 sent stay sent (see "The output", above). Each model that succeeds writes
-`<app_label.model_name>: synced` on stdout. If any model failed, the command
+`<app_label.model_name>: synced` on stdout, except with `--verbosity 0`,
+which still writes failures. With `--traceback`, each failure line is
+followed by its traceback. If any model failed, the command
 ends with a `CommandError` naming every failed model, in run order, so it
 exits with a non-zero status. Running it again, or with only the failed
 models, is the retry.
