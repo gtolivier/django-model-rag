@@ -1,3 +1,4 @@
+import inspect
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
@@ -689,6 +690,51 @@ def test_saving_a_registered_instance_with_options_the_backend_rejects_fails_at_
         pytest.raises(ImproperlyConfigured, match="RecordingOutput.*collection"),
     ):
         Category.objects.create(name="Lighting")
+
+
+@pytest.mark.django_db
+def test_saving_with_a_backend_whose_signature_is_unreadable_replaces_its_group(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": TRACKED_BACKEND,
+        "OPTIONS": {"collection": "catalog"},
+    }
+    real_signature = inspect.signature
+
+    # Some classes, such as those implemented in C, have no signature Python
+    # can read: inspect.signature raises ValueError for them. Simulated here
+    # for the tracked backend only, which can still be built with its options.
+    def signature_unreadable_for_the_backend(
+        obj: Any, *args: Any, **kwargs: Any
+    ) -> inspect.Signature:
+        if obj is TrackedRecordingOutput:
+            message = f"no signature found for {obj!r}"
+            raise ValueError(message)
+        return real_signature(obj, *args, **kwargs)
+
+    monkeypatch.setattr(inspect, "signature", signature_unreadable_for_the_backend)
+
+    _register_categories_by_name()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = Category.objects.create(name="Lighting")
+
+    [output] = built_outputs
+    assert output.options == {"collection": "catalog"}
+    assert _received_groups(built_outputs) == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
