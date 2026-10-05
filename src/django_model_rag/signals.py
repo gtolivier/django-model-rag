@@ -11,6 +11,16 @@ from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
 
 
+def _committed_instance(model: type[Model], pk: Any) -> Model:
+    """Return the instance of ``model`` with primary key ``pk`` as committed."""
+    try:
+        return model._base_manager.get(pk=pk)
+    except ObjectDoesNotExist:
+        # Deleted since the save: a bare instance makes run_instance() send
+        # an empty group, as the row is gone.
+        return model(pk=pk)
+
+
 def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Replace the group of a saved registered instance once its transaction commits."""
     if sender not in rag.registered_models():
@@ -20,12 +30,7 @@ def sync_saved_instance(sender: type[Model], instance: Model, **kwargs: Any) -> 
     saved_pk = instance.pk
 
     def replace_group_as_committed() -> None:
-        try:
-            committed_instance = sender._base_manager.get(pk=saved_pk)
-        except ObjectDoesNotExist:
-            # Deleted since the save: a bare instance makes run_instance() send
-            # an empty group, as the row is gone.
-            committed_instance = sender(pk=saved_pk)
+        committed_instance = _committed_instance(sender, saved_pk)
         SyncPipeline(configured_output()).run_instance(committed_instance)
 
     transaction.on_commit(replace_group_as_committed)
