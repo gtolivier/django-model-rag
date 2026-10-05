@@ -192,8 +192,12 @@ class SyncPipeline:
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
+            ValueError: ``instance`` has no primary key yet.
             TypeError: its extractor returned a document of another source.
         """
         extractor = rag.new_extractor(type(instance))
+        if instance.pk is None:
+            msg = "run_instance() needs a saved instance: its primary key is None"
+            raise ValueError(msg)
         documents = list(_own_documents(instance, extractor))
         self._output.replace({_source_key(instance): documents})
