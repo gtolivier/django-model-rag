@@ -41,3 +41,18 @@ def test_the_command_runs_a_registered_model_into_the_configured_backend(
     assert [document.text for document in output.documents()] == ["Hammer"]
     assert output.pruned == [("testapp.product", {f"testapp.product:{hammer.pk}"})]
     assert output.calls == ["replace", "prune"]
+
+
+@pytest.mark.django_db
+def test_the_command_passes_the_output_options_to_the_backend_as_keyword_arguments(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": "tests.recording.TrackedRecordingOutput",
+        "OPTIONS": {"collection": "catalog", "batch_size": 50},
+    }
+
+    call_command("sync_model_rag")
+
+    [output] = built_outputs
+    assert output.options == {"collection": "catalog", "batch_size": 50}
