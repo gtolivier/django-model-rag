@@ -43,9 +43,8 @@ def _registered_models(sender: type[Model]) -> list[type[Model]]:
         concrete_model,
         *concrete_model._meta.get_parent_list(),
     )
-    return [
-        candidate for candidate in candidates if candidate in rag.registered_models()
-    ]
+    registered = set(rag.registered_models())
+    return [candidate for candidate in candidates if candidate in registered]
 
 
 def _schedule_commit_callbacks(
