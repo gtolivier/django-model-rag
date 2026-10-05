@@ -365,7 +365,7 @@ class Registry:
         """List the registered models, in registration order."""
         return list(self._registrations)
 
-    def _is_registered(self, model: type[Model]) -> bool:
+    def is_registered(self, model: type[Model]) -> bool:
         """Tell whether ``model`` is registered with fields or an extractor."""
         return model in self._registrations
 
@@ -375,7 +375,7 @@ class Registry:
         Raises:
             AlreadyRegistered: ``model`` is already registered.
         """
-        if self._is_registered(model):
+        if self.is_registered(model):
             message = f"{model.__name__} is already registered"
             raise AlreadyRegistered(message)
 
@@ -385,7 +385,7 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if not self._is_registered(model):
+        if not self.is_registered(model):
             message = f"{model.__name__} is not registered"
             raise NotRegistered(message)
 

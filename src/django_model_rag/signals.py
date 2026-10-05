@@ -9,7 +9,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
 from django.db.models import Model
 
-from django_model_rag.documents import build_source_key
+from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
@@ -43,8 +43,7 @@ def _registered_models(sender: type[Model]) -> list[type[Model]]:
         concrete_model,
         *concrete_model._meta.get_parent_list(),
     )
-    registered = set(rag.registered_models())
-    return [candidate for candidate in candidates if candidate in registered]
+    return [candidate for candidate in candidates if rag.is_registered(candidate)]
 
 
 def _is_synced(registered_models: list[type[Model]]) -> bool:
@@ -60,22 +59,10 @@ def _schedule_commit_callbacks(
     """Run, at the commit, the callback ``build_callback`` returns per registered model.
 
     Each callback gets ``pk`` as it is now: delete() clears the primary key of
-    the instance before the commit. Nothing runs while the signals are off.
+    the instance before the commit.
     """
-    if not _is_synced(registered_models):
-        return
-
-    # Fail at the save or the delete, not at the commit, if the output is
-    # misconfigured.
-    check_output_configuration()
-
     for registered_model in registered_models:
         transaction.on_commit(build_callback(registered_model, pk))
-
-
-def _source_key(registered_model: type[Model], pk: Any) -> str:
-    """Return the source key of the group of ``registered_model`` for ``pk``."""
-    return build_source_key(registered_model._meta.label_lower, pk)
 
 
 def _send_group(send: Callable[[], None], source_key: str) -> None:
@@ -102,8 +89,8 @@ def check_output_before_save(
 ) -> None:
     """Fail before the INSERT or UPDATE if the output is misconfigured.
 
-    In autocommit the row is committed as soon as it is written, too late for
-    the check made when the commit callbacks are scheduled.
+    In autocommit the row is committed as soon as it is written: after the
+    save, a failing check would come too late to keep the row out.
     """
     if raw or not _is_synced(_registered_models(sender)):
         return
@@ -114,11 +101,16 @@ def check_output_before_save(
 def sync_saved_instance(
     sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
 ) -> None:
-    """Replace the group of a saved registered instance once its transaction commits."""
-    if raw:
+    """Replace the group of a saved registered instance once its transaction commits.
+
+    The output configuration was checked before the save, by
+    check_output_before_save.
+    """
+    registered_models = _registered_models(sender)
+    if raw or not _is_synced(registered_models):
         return
 
-    _schedule_commit_callbacks(_registered_models(sender), instance.pk, _group_replacer)
+    _schedule_commit_callbacks(registered_models, instance.pk, _group_replacer)
 
 
 def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
@@ -127,7 +119,7 @@ def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[]
     def replace_group_as_committed() -> None:
         _send_group(
             lambda: _replace_group(registered_model, saved_pk),
-            _source_key(registered_model, saved_pk),
+            model_source_key(registered_model, saved_pk),
         )
 
     return replace_group_as_committed
@@ -138,6 +130,11 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
+    if not _is_synced(nearest_registered_model_only):
+        return
+
+    # Fail at the delete, not at the commit, if the output is misconfigured.
+    check_output_configuration()
     _schedule_commit_callbacks(
         nearest_registered_model_only, instance.pk, _group_emptier
     )
@@ -151,7 +148,7 @@ def _group_emptier(
     def replace_group_with_an_empty_one() -> None:
         # The row is gone: the empty group goes straight to the output, with no
         # extractor involved.
-        source_key = _source_key(registered_model, deleted_pk)
+        source_key = model_source_key(registered_model, deleted_pk)
         _send_group(lambda: configured_output().replace({source_key: []}), source_key)
 
     return replace_group_with_an_empty_one
