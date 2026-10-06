@@ -196,12 +196,18 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
-    if not _is_synced(nearest_registered_model_only):
+    followers = _followers(sender, instance) if _signals_enabled() else []
+    if not (_is_synced(nearest_registered_model_only) or followers):
         return
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
-    _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
+    if _is_synced(nearest_registered_model_only):
+        _schedule_commit_callbacks(
+            nearest_registered_model_only, instance, _group_emptier
+        )
+    for followed_by, followed_pk in followers:
+        transaction.on_commit(_group_replacer(followed_by, followed_pk))
 
 
 def _group_emptier(
