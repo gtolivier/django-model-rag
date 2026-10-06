@@ -205,9 +205,7 @@ def _hand_over(
 
     Instances without documents are handed over as empty groups.
     """
-    groups = _groups(instances, extractor)
-    if groups:
-        output.replace(groups)
+    output.replace(_groups(instances, extractor))
 
 
 class SyncPipeline:
