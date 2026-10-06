@@ -37,6 +37,12 @@ def _in_document_order(queryset: QuerySet[Model]) -> Iterator[Model]:
     return queryset.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
 
 
+def _pks_in_document_order(queryset: QuerySet[Model]) -> Iterator[Any]:
+    """Iterate over the primary keys of ``queryset``'s instances, in their order."""
+    pks = queryset.order_by(_DOCUMENT_ORDER).values_list("pk", flat=True)
+    return pks.iterator(chunk_size=_CHUNK_SIZE)
+
+
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
     """Return the source keys of ``model``'s instances ``extractor`` keeps now."""
     kept_pks = _kept_queryset(model, extractor).values_list("pk", flat=True)
@@ -67,18 +73,6 @@ def _hooked_queryset(
     return _checked_queryset(extractor.get_queryset(queryset), extractor, model)
 
 
-def _check_queryset_hook(model: type[Model], extractor: BaseExtractor[Any]) -> None:
-    """Fail now if ``extractor``'s get_queryset() is broken for ``model``.
-
-    Checked up front, a broken hook is reported even when there is nothing to
-    run, rather than once there is.
-
-    Raises:
-        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
-    """
-    _kept_queryset(model, extractor)
-
-
 def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     """Tell whether ``extractor``'s get_queryset() keeps ``instance``.
 
@@ -88,20 +82,15 @@ def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
 
 
-def _reloaded_by_hook(
-    instances: Iterable[Model], extractor: BaseExtractor[Any], model: type[Model]
-) -> dict[Any, Model]:
-    """Reload ``instances`` of ``model`` as ``extractor``'s get_queryset() loads them.
+def _reloaded_by_hook(pks: Iterable[Any], kept: QuerySet[Model]) -> dict[Any, Model]:
+    """Reload the instances of ``pks`` from ``kept``, as get_queryset() hooked it.
 
     What get_queryset() adds to them (an annotation...) then reaches extract().
     The result maps the primary key of each instance it keeps to its reload.
-
-    Raises:
-        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
     """
-    pks = [instance.pk for instance in instances]
-    kept = _kept_queryset(model, extractor).filter(pk__in=pks)
-    return {instance.pk: instance for instance in kept}
+    # streamed: a join in get_queryset() can multiply the rows to cache
+    reloads = kept.filter(pk__in=pks).iterator(chunk_size=_CHUNK_SIZE)
+    return {instance.pk: instance for instance in reloads}
 
 
 def _checked_queryset(
@@ -280,21 +269,22 @@ def _groups(
 
 
 def _reloaded_groups(
-    instances: Sequence[Model], extractor: BaseExtractor[Any], model: type[Model]
+    pks: Sequence[Any], kept: QuerySet[Model], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
-    """Group by source key the documents of ``instances`` of ``model``, reloaded.
+    """Group by source key the documents of the instances of ``pks``, reloaded.
 
-    They are reloaded as ``extractor``'s get_queryset() loads them; an instance
-    it filters out, or without documents, gets an empty group.
+    They are reloaded from ``kept``, the queryset ``extractor``'s get_queryset()
+    hooked; an instance it filters out, or without documents, gets an empty group.
 
     Raises:
-        TypeError: get_queryset() did not return a QuerySet of ``model``'s
-            instances, or extract() returned a document of another source.
+        TypeError: extract() returned a document of another source.
     """
-    reloaded = _reloaded_by_hook(instances, extractor, model)
+    reloaded = _reloaded_by_hook(pks, kept)
     return {
-        _source_key(instance): _reloaded_documents(reloaded.get(instance.pk), extractor)
-        for instance in instances
+        model_source_key(kept.model, pk): _reloaded_documents(
+            reloaded.get(pk), extractor
+        )
+        for pk in pks
     }
 
 
@@ -341,9 +331,11 @@ class SyncPipeline:
                 of the model's instances, even when ``queryset`` is empty.
         """
         extractor = rag.new_extractor(queryset.model)
-        _check_queryset_hook(queryset.model, extractor)
-        for chunk in _chunks(_in_document_order(queryset)):
-            self._output.replace(_reloaded_groups(chunk, extractor, queryset.model))
+        # hooked before the first chunk, a broken get_queryset() fails even
+        # when there is nothing to run
+        kept = _kept_queryset(queryset.model, extractor)
+        for pks in _chunks(_pks_in_document_order(queryset)):
+            self._output.replace(_reloaded_groups(pks, kept, extractor))
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
