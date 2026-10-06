@@ -370,8 +370,10 @@ or a model that is not registered, but with `CommandError`. Both are raised
 before anything is sent.
 
 Your own code builds the same output with `configured_output()`, importable
-from `django_model_rag`: it reads the setting, makes the same checks, and
-returns a new instance of `BACKEND` built with `OPTIONS`:
+from `django_model_rag`: it reads the setting, makes the same checks as the
+command, and returns a new instance of `BACKEND` built with `OPTIONS`.
+`OPTIONS` that the class rejects are not checked beforehand: building it
+raises the class's own `TypeError`.
 
 ```python
 from django_model_rag import SyncPipeline, configured_output
@@ -450,9 +452,16 @@ their proxies. Raw saves, such as `loaddata` loading a fixture. Changes the
 ORM signals do not see: `QuerySet.update()`, `bulk_create()`, raw SQL. A
 change to a related object whose text a registered model reads — through
 `follow` or a lookup path — leaves that model's documents stale until they
-are saved again. For all of these, run `sync_model_rag`, or call
-`SyncPipeline(configured_output()).run_instance(instance)` from a receiver
-of your own, once its transaction commits (`transaction.on_commit`).
+are saved again. For all of these, run `sync_model_rag`, or sync the
+instances concerned from a receiver of your own: in a
+`transaction.on_commit` callback, reload them and call
+`SyncPipeline(configured_output()).run_instance(instance)` for each.
+`run_instance` extracts the instance it is given as it stands in memory:
+reload it at the commit, as the signals do, rather than keep one loaded
+earlier in the transaction. Catch and log what the callback raises, as the
+signals do, or pass `robust=True` to `on_commit`: otherwise an error reaches
+the code that committed, after the commit, and the callbacks queued after
+it do not run.
 
 **Failures.** An extractor, an output or a database error reloading the
 instance that raises at the commit is logged with `logger.exception` on the
