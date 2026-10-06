@@ -1,7 +1,7 @@
 """The pipeline that turns registered models into normalized documents for an output."""
 
 from collections.abc import Iterable, Iterator, Sequence
-from itertools import islice
+from itertools import groupby, islice
 from typing import Any
 
 from django.db.models import Model, QuerySet
@@ -175,14 +175,17 @@ def _extractors_to_run(
     return [(model, rag.new_extractor(model)) for model in models]
 
 
-def _keyed_distinct(instances: Iterable[Model]) -> Iterator[tuple[str, Model]]:
-    """Pair ``instances`` with their source key, skipping already yielded keys."""
-    seen_keys: set[str] = set()
-    for instance in instances:
-        source_key = _source_key(instance)
-        if source_key not in seen_keys:
-            seen_keys.add(source_key)
-            yield source_key, instance
+def _keyed_skipping_adjacent_repeats(
+    instances: Iterable[Model],
+) -> Iterator[tuple[str, Model]]:
+    """Pair ``instances`` with their source key, skipping a repeat of the previous key.
+
+    A join in get_queryset() can repeat an instance's row. Only adjacent repeats
+    are skipped: ``instances`` must come in primary key order, which puts all
+    the rows of an instance next to each other, so each is yielded once.
+    """
+    for source_key, rows in groupby(instances, key=_source_key):
+        yield source_key, next(rows)
 
 
 def _groups(
@@ -226,7 +229,7 @@ class SyncPipeline:
         Each chunk is handed over at once, grouped by source key; its instances
         without documents are handed over as empty groups.
         """
-        keyed = _keyed_distinct(_instances(model, extractor))
+        keyed = _keyed_skipping_adjacent_repeats(_instances(model, extractor))
         while chunk := list(islice(keyed, _CHUNK_SIZE)):
             self._output.replace(_groups(chunk, extractor))
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
