@@ -200,32 +200,14 @@ def _groups(
 
 def _hand_over(
     instances: Iterable[Model], extractor: BaseExtractor[Any], output: DocumentOutput
-) -> set[str]:
+) -> None:
     """Hand the documents of ``instances`` to ``output`` at once, grouped by source key.
 
-    Instances without documents are handed over as empty groups. Returns the
-    source keys handed over with documents.
+    Instances without documents are handed over as empty groups.
     """
     groups = _groups(instances, extractor)
     if groups:
         output.replace(groups)
-    return {source_key for source_key, documents in groups.items() if documents}
-
-
-def _keys_to_keep(
-    handed_keys: set[str], read_keys: set[str], current_keys: set[str]
-) -> set[str]:
-    """Return the source keys a model's prune keeps, once its run is over.
-
-    The prune keeps the ``current_keys`` but those read without documents. An
-    instance deleted during the run was handed over, but is gone. An
-    instance created during the run was not read: its own signal handed its
-    documents over, which the prune must not delete.
-
-    Every handed key was read, so only the keys read without documents need a
-    set of their own, not two the size of the table.
-    """
-    return current_keys - (read_keys - handed_keys)
 
 
 class SyncPipeline:
@@ -240,8 +222,9 @@ class SyncPipeline:
 
         Only the given ``models`` are run, in their order, or every registered
         model by default. Each model is then pruned down to the source keys of
-        the instances its extractor keeps once the model is run, less those
-        read without producing documents.
+        the instances its extractor keeps once the model is run, those read
+        without producing documents included: their empty group already
+        removed their documents.
 
         Raises:
             NotRegistered: one of ``models`` is not registered.
@@ -251,16 +234,10 @@ class SyncPipeline:
 
     def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
         """Hand ``model``'s documents over chunk by chunk, then prune the model."""
-        handed_keys: set[str] = set()
-        read_keys: set[str] = set()
         instances = _instances(model, extractor)
         while chunk := list(islice(instances, _CHUNK_SIZE)):
-            read_keys.update(_source_key(instance) for instance in chunk)
-            handed_keys |= _hand_over(chunk, extractor, self._output)
-        kept_keys = _keys_to_keep(
-            handed_keys, read_keys, _current_keys(model, extractor)
-        )
-        self._output.prune(model._meta.label_lower, kept_keys)
+            _hand_over(chunk, extractor, self._output)
+        self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
