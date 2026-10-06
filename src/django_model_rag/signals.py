@@ -258,6 +258,7 @@ def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
     return any(
         _followed_reverse_relations(registered_model, sender)
+        or _followed_foreign_keys(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
