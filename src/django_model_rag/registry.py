@@ -523,7 +523,7 @@ class Registry:
         """List the senders whose deletions change the group of ``model``.
 
         They are ``model`` and its proxies, and the models of the reverse
-        foreign keys ``model`` follows.
+        foreign keys ``model`` follows and their proxies.
         """
         return _model_and_proxies(model) + [
             sender
