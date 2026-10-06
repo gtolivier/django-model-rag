@@ -1165,6 +1165,28 @@ def test_deleting_a_registered_instance_without_an_output_setting_fails_at_the_d
 
 
 @pytest.mark.django_db
+def test_deleting_a_followed_instance_without_an_output_setting_fails_at_the_delete(
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # Created before Page is registered: with no MODEL_RAG_OUTPUT, their own
+    # saves would fail otherwise.
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT. Only the Page is
+    # registered, following its text plugins: TextPlugin itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # The commit callbacks are captured and never run: only an error raised by
+    # the delete itself is caught, not one deferred to the commit.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"),
+    ):
+        plugin.delete()
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_with_signals_off_sends_nothing_and_raises_nothing(
     settings: Settings,
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
