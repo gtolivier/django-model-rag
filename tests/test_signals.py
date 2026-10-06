@@ -354,6 +354,52 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
 
 
 @pytest.mark.django_db
+def test_saving_a_category_followed_by_foreign_key_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Product's group, with the category's new name after the Product's
+    # own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
