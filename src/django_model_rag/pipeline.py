@@ -29,7 +29,7 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     hooked = _hooked_queryset(
         model._default_manager.order_by(_DOCUMENT_ORDER), extractor, model
     )
-    return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+    return _in_document_order(hooked)
 
 
 def _in_document_order(queryset: QuerySet[Model]) -> Iterator[Model]:
@@ -88,7 +88,7 @@ def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
 
 
-def _loaded_by_hook(
+def _reloaded_by_hook(
     instances: Iterable[Model], extractor: BaseExtractor[Any], model: type[Model]
 ) -> dict[Any, Model]:
     """Reload ``instances`` of ``model`` as ``extractor``'s get_queryset() loads them.
@@ -291,9 +291,9 @@ def _reloaded_groups(
         TypeError: get_queryset() did not return a QuerySet of ``model``'s
             instances, or extract() returned a document of another source.
     """
-    loaded = _loaded_by_hook(instances, extractor, model)
+    reloaded = _reloaded_by_hook(instances, extractor, model)
     return {
-        _source_key(instance): _reloaded_documents(loaded.get(instance.pk), extractor)
+        _source_key(instance): _reloaded_documents(reloaded.get(instance.pk), extractor)
         for instance in instances
     }
 
