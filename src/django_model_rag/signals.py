@@ -165,10 +165,29 @@ def sync_saved_instance(
 
 
 def _schedule_follower_replacements(followers: list[_Follower]) -> None:
-    """Replace, at the commit, the group of each of ``followers``, once each."""
+    """Replace, at the commit, the groups of ``followers``, one batch per model."""
+    pks_by_model: dict[type[Model], list[Any]] = {}
     # dict.fromkeys drops the duplicates and keeps the order.
     for follower_model, follower_pk in dict.fromkeys(followers):
-        transaction.on_commit(_group_replacer(follower_model, follower_pk))
+        pks_by_model.setdefault(follower_model, []).append(follower_pk)
+    for follower_model, follower_pks in pks_by_model.items():
+        transaction.on_commit(_batch_replacer(follower_model, follower_pks))
+
+
+def _batch_replacer(
+    registered_model: type[Model], pks: list[Any]
+) -> Callable[[], None]:
+    """Return a commit callback replacing the groups of ``registered_model``'s rows."""
+
+    def replace_groups_as_committed() -> None:
+        _send_group(
+            lambda: SyncPipeline(configured_output()).run_queryset(
+                registered_model._base_manager.filter(pk__in=pks)
+            ),
+            ", ".join(model_source_key(registered_model, pk) for pk in pks),
+        )
+
+    return replace_groups_as_committed
 
 
 def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
