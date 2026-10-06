@@ -48,11 +48,6 @@ def _registered_models(sender: type[Model]) -> list[type[Model]]:
     return [candidate for candidate in candidates if rag.is_registered(candidate)]
 
 
-def _is_synced(registered_models: list[type[Model]]) -> bool:
-    """Return whether a change feeding the groups of ``registered_models`` is synced."""
-    return bool(registered_models) and _signals_enabled()
-
-
 def _schedule_commit_callbacks(
     registered_models: list[type[Model]],
     instance: Model,
@@ -105,10 +100,11 @@ def check_output_before_save(
     In autocommit the row is committed as soon as it is written: after the
     save, a failing check would come too late to keep the row out.
     """
-    if raw or not _is_synced(_registered_models(sender)):
+    if raw or not _signals_enabled():
         return
 
-    check_output_configuration()
+    if _registered_models(sender) or _is_followed(sender):
+        check_output_configuration()
 
 
 def remember_followers_before_save(
