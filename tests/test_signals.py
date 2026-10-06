@@ -595,6 +595,52 @@ def test_saving_a_multi_table_child_of_a_product_followed_by_foreign_key_replace
 
 
 @pytest.mark.django_db
+def test_saving_a_warehouse_followed_by_a_foreign_key_to_its_code_replaces_its_shelves(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Shelf is registered, following its warehouse through its own
+    # foreign key, which holds the Warehouse's code, not its primary key:
+    # Warehouse itself is not.
+    rag.register(Shelf, follow=["warehouse"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the warehouse's save below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(warehouse=north, label="Timber")
+    # Another warehouse whose code is the North depot's primary key as text: a
+    # shelf matched by comparing that primary key with the stored code would
+    # be this one's, not the North depot's.
+    south = Warehouse.objects.create(name="South depot", code=str(north.pk))
+    Shelf.objects.create(warehouse=south, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        north.name = "North hall"
+        north.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Only the North depot's shelf's group, with the warehouse's new name after
+    # the shelf's own label, and no group of the other warehouse's shelf.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.shelf:{timber.pk}": [
+                NormalizedDocument(
+                    text="Timber\n\nNorth hall",
+                    source_app_label="testapp",
+                    source_model="shelf",
+                    source_pk=timber.pk,
+                    title="Timber",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
