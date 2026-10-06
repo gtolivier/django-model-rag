@@ -444,6 +444,17 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
 - **A delete** — of an instance or of a queryset — replaces each deleted
   instance's group with an empty one, sent straight to the output: the
   extractor and its `get_queryset` are not called, as the row is gone.
+- **A followed child.** Saving or deleting an instance that a registered
+  model reaches through a reverse foreign key or reverse one-to-one it
+  follows — a text plugin of a page registered with
+  `follow=["text_plugins"]` — replaces that parent's group, as a save of
+  the parent would. A child moved to another parent replaces the groups of
+  both; a parent deleted with its children (cascade) gets only its empty
+  group. Saving or deleting through a proxy of the child counts too.
+  Finding the parent costs no query when the foreign key targets its
+  primary key, one query for a `to_field`; a save that may move a child
+  reads its row as committed first, in `pre_save`. A model nothing follows
+  costs its saves nothing.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
@@ -478,13 +489,19 @@ model is registered gets no delete listener, so deleting through it empties
 nothing: register from `model_rag.py`, once every model is loaded. A proxy
 registered instead of its concrete model is not updated by the signals.
 
-**What is not sent.** Unregistered models: they keep Django's fast delete,
-since the package listens to `post_delete` only for registered models and
-their proxies. Raw saves, such as `loaddata` loading a fixture. Changes the
-ORM signals do not see: `QuerySet.update()`, `bulk_create()`, raw SQL. A
-change to a related object whose text a registered model reads — through
-`follow` or a lookup path — leaves that model's documents stale until they
-are saved again. For all of these, run `sync_model_rag`, or sync the
+**What is not sent.** Unregistered models that no registered model follows
+through a reverse relation: they keep Django's fast delete, since the
+package listens to `post_delete` only for registered models, the models
+they follow that way, and their proxies. Raw saves, such as `loaddata`
+loading a fixture. Changes the ORM signals do not see:
+`QuerySet.update()`, `bulk_create()`, `bulk_update()`, raw SQL. A change to
+a related object whose text a registered model reads by any other way than
+a followed reverse foreign key or one-to-one leaves that model's documents
+stale until they are saved again: a forward foreign key or a many-to-many
+in `follow` (including a reverse one), a lookup path in `fields`, a
+`GenericRelation` (a photo's tags, say), or whatever a custom extractor
+reads — it has no `follow` to declare it. These are listed in the
+[roadmap](ROADMAP.md) as feature 11b. For all of these, run `sync_model_rag`, or sync the
 instances concerned from a receiver of your own: in a
 `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
@@ -509,8 +526,23 @@ setting cannot silently stop the indexing. A save checks it in `pre_save`,
 before the row is written, so that it writes nothing even in autocommit; a
 delete raising this way is rolled back.
 
+**Several changes, one transaction.** Each saved or deleted instance gets a
+commit callback of its own: saving ten plugins of one page in a transaction
+replaces the page's group ten times, and deleting a queryset of 10,000 rows
+makes 10,000 `replace()` calls. Batching them per transaction is planned
+(feature 12b in the [roadmap](ROADMAP.md)).
+
+**Real time, plus a nightly sync.** The signals keep the output current
+for what they see; what they cannot see (above) needs a sync. Running
+`sync_model_rag` once a night, say, repairs it, and `prune` removes what a
+missed delete left behind. An output that skips a document whose hash has
+not changed keeps such a run cheap.
+
 **Turning them off.** `MODEL_RAG_SIGNALS = False` (default `True`) makes the
-signals send nothing and check nothing. Your test settings need either
+signals send nothing and check nothing; the `post_delete` listeners stay
+connected, though, so the models they listen to do not get Django's fast
+delete back (a manual mode that connects nothing is planned: feature 12a).
+Your test settings need either
 that, or a `MODEL_RAG_OUTPUT` pointing to a test output — as with
 `EMAIL_BACKEND` — or every save of a registered model in your tests raises
 `ImproperlyConfigured`.
