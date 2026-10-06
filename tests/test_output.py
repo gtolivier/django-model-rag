@@ -489,6 +489,56 @@ def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read(
     assert lamps_key not in output.pruned[0][1]
 
 
+class CategoryRenamingOutput(RecordingOutput):
+    """A recording output whose first replace renames a category.
+
+    The category is saved after the run read the table and after its groups
+    were recorded, as a save in another process would while sync_model_rag
+    runs.
+    """
+
+    def __init__(self, renamed: Category, name: str) -> None:
+        super().__init__()
+        self.renamed = renamed
+        self.name = name
+        self.saved_keys: list[str] = []
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        super().replace(groups)
+        if not self.saved_keys:
+            self.renamed.name = self.name
+            self.renamed.save()
+            self.saved_keys.append(f"testapp.category:{self.renamed.pk}")
+
+
+@pytest.mark.django_db
+def test_pipeline_prune_keeps_an_instance_saved_with_documents_after_it_was_read(
+    settings: Settings,
+) -> None:
+    # The output plays the part of the post_save signal: with the package's
+    # own signals on, the save would also need an output of its own.
+    settings.MODEL_RAG_SIGNALS = False
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so desks is read with an empty name, then
+    # renamed. Its signal hands its documents over: a prune keeping only the
+    # keys whose instances produced documents when read would delete them.
+    desks = Category.objects.create(name="")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryRenamingOutput(desks, "Desks")
+    SyncPipeline(output).run()
+
+    [desks_key] = output.saved_keys
+    assert output.received_groups()[desks_key] == []
+    assert output.pruned == [
+        (
+            "testapp.category",
+            {desks_key, f"testapp.category:{lighting.pk}"},
+        )
+    ]
+
+
 @pytest.mark.django_db
 def test_pipeline_prune_drops_an_instance_its_queryset_omits() -> None:
     # The draft exists all along, but get_queryset() filters it out: the run
