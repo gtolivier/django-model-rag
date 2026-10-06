@@ -90,22 +90,18 @@ def test_a_class_whose_prune_takes_a_mutable_set_is_not_a_document_output() -> N
     assert hasattr(output, "prune")
 
 
-def test_configured_output_is_public_and_builds_the_backend_with_its_options(
+def test_configured_output_is_public_and_builds_the_configured_backend(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
     # A project wiring its own pipeline, outside the command and the signals,
-    # builds the configured output from the package root, as it does
-    # SyncPipeline: django_model_rag.output is not part of the public API.
-    settings.MODEL_RAG_OUTPUT = {
-        "BACKEND": TRACKED_BACKEND,
-        "OPTIONS": {"collection": "catalog", "batch_size": 50},
-    }
+    # builds the configured output from the package root, as it imports
+    # SyncPipeline. The command's tests cover how OPTIONS are passed.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     output = configured_output()
 
     [built] = built_outputs
     assert output is built
-    assert built.options == {"collection": "catalog", "batch_size": 50}
     assert "configured_output" in django_model_rag.__all__
 
 
