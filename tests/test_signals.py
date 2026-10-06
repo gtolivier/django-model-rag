@@ -978,6 +978,51 @@ def test_saving_an_instance_of_a_model_since_unregistered_sends_nothing(
 
 
 @pytest.mark.django_db
+def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the unregistration can keep the save and
+    # the delete from deferring anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # The same instance is updated once while the Page is still registered:
+    # its save sends the Page's group.
+    with django_capture_on_commit_callbacks(execute=True):
+        plugin.body = "We ship worldwide."
+        plugin.save()
+    replaced_while_registered = _replaced(built_outputs)
+    # Merged across replace calls: how many calls the update makes is not what
+    # this test is about.
+    assert list(_received_groups(built_outputs)) == [f"testapp.page:{page.pk}"]
+
+    rag.unregister(Page)
+
+    # Django's deletion Collector fast-deletes a model with no post_delete
+    # listener: nothing is left listening to TextPlugin's deletes.
+    assert not post_delete.has_listeners(TextPlugin)
+
+    # The commit callbacks run: one sending anything would reach the output.
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        plugin.body = "We build tables by hand."
+        plugin.save()
+        plugin.delete()
+
+    # The registration the Page once had is forgotten: nothing is deferred to
+    # the commit, and nothing more reaches the output.
+    assert callbacks == []
+    assert _replaced(built_outputs) == replaced_while_registered
+
+
+@pytest.mark.django_db
 def test_each_commit_builds_a_new_output_with_the_configured_options(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
