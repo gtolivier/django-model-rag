@@ -25,6 +25,8 @@ from tests.testapp.models import (
     FeaturedProduct,
     Page,
     Product,
+    Supplier,
+    SupplierProfile,
     TextPlugin,
 )
 
@@ -318,6 +320,44 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
                     source_pk=page.pk,
                     title="About us",
                     url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Supplier is registered, following its profile by the reverse
+    # one-to-one accessor ``profile``: SupplierProfile itself is not.
+    rag.register(Supplier, follow=["profile"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Supplier's own save never runs, so only the profile's save below is
+    # observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Supplier's group, with the profile's text after the Supplier's name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill\n\nKiln-dried boards.",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                    title="Birch Mill",
                 ),
             ],
         }
