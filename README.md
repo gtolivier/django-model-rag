@@ -365,11 +365,11 @@ and `prune` and accepts `OPTIONS`, then builds a new instance with
 model. A missing setting, a setting that is not a dict or has no
 `BACKEND`, a `BACKEND` that is not a string, cannot be imported or names
 something other than a class, `OPTIONS` that are not a dict, a class
-without one of the two methods, and `OPTIONS` the class does not accept —
-when Python can read its signature — fail with `ImproperlyConfigured`,
-naming the class for the last two. So does a label naming no model of an installed app,
-or a model that is not registered, but with `CommandError`. Both are raised
-before anything is sent.
+without one of the two methods, and `OPTIONS` the class does not accept
+(when Python can read its signature) fail with `ImproperlyConfigured`. A
+label naming no model of an installed app, or a model that is not
+registered, fails too, but with `CommandError`. Both are raised before
+anything is sent.
 
 Your own code builds the same output with `configured_output()`, importable
 from `django_model_rag`: it reads the setting, makes the same checks as the
