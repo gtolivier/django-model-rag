@@ -240,7 +240,8 @@ one-to-one relations, and every relation along a lookup path, in the same
 query as the instances (`select_related`), and each followed reverse foreign
 key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
-in chunks of 1000. `run_instance` makes one query to ask the extractor's
+in chunks of 1000. Before each model's prune, one more query reads the
+primary keys its extractor's queryset keeps. `run_instance` makes one query to ask the extractor's
 queryset whether it keeps the instance, then at most one query per relation
 it crosses.
 
@@ -295,6 +296,15 @@ class MyOutput:
   nothing is removed. If an extractor raises, the exception propagates:
   the batches already sent stay sent, and that model is not pruned.
   Running again is the retry.
+- **Saves and deletes during `run()`.** Just before a model's prune,
+  `run()` reads again the primary keys its extractor's queryset keeps. An
+  instance created since its table was read is kept, since its own signal
+  sent its documents. An instance deleted since its chunk was read is
+  pruned, even though that chunk sent its documents back after the delete's
+  empty group. Inside a transaction that does not see rows committed since
+  it began (an outer `atomic()` under REPEATABLE READ, MySQL's default), the
+  second read misses the new instance, and the prune deletes it: run the
+  sync outside such a transaction.
 - **`run_instance(instance)`** sends that instance's group, even empty, so
   that an instance whose extractor now returns `None`, or that its
   extractor's queryset filters out, is removed. It never prunes, and sends
