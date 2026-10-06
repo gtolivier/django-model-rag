@@ -36,6 +36,7 @@ from tests.testapp.models import (
     FeaturedProduct,
     Page,
     Product,
+    Review,
     Seminar,
     Shelf,
     Showroom,
@@ -544,6 +545,49 @@ def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_i
                     source_pk=lamp.pk,
                     title="Desk lamp",
                     url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_multi_table_child_of_a_product_followed_by_foreign_key_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Review is registered, following its product through its own
+    # foreign key: neither Product nor FeaturedProduct is.
+    rag.register(Review, follow=["product"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the featured product's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_desk_lamp(lighting)
+    review = Review.objects.create(title="Sturdy", product=lamp)
+
+    # Django sends post_save with FeaturedProduct as its sender, not Product,
+    # though the save writes the Product row the Review follows.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.name = "Floor lamp"
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Review's group, with the product's new text after the Review's own
+    # title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.review:{review.pk}": [
+                NormalizedDocument(
+                    text="Sturdy\n\nFloor lamp\n\nA lamp for the desk.\n\nNew",
+                    source_app_label="testapp",
+                    source_model="review",
+                    source_pk=review.pk,
+                    title="Sturdy",
                 ),
             ],
         }
