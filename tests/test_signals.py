@@ -9,6 +9,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
 from django.db.models.signals import post_delete
+from django.test.utils import CaptureQueriesContext
 from pytest_django import (
     DjangoAssertNumQueries,
     DjangoCaptureOnCommitCallbacks,
@@ -1291,6 +1292,53 @@ def test_a_raw_save_of_a_registered_instance_sends_nothing(
     # The row is there, yet not even an output is built, even after the commit.
     assert Category.objects.filter(name="Lighting").exists()
     assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_a_raw_save_of_a_followed_instance_defers_nothing_and_reads_nothing_first(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the raw saves can keep them from deferring
+    # anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    plugin = TextPlugin.objects.get(pk=plugin.pk)
+
+    # A new row saved as loaddata saves a fixture, then an existing row saved
+    # the way loaddata saves each deserialized object: save_base(raw=True).
+    # With a regular save, the existing row would read its committed followers
+    # first.
+    fixture = [
+        {
+            "model": "testapp.textplugin",
+            "pk": plugin.pk + 1,
+            "fields": {"page": page.pk, "body": "We ship worldwide."},
+        }
+    ]
+    with (
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+        CaptureQueriesContext(connection) as queries,
+    ):
+        for deserialized in serializers.deserialize("python", fixture):
+            deserialized.save()
+        plugin.body = "We build tables by hand."
+        plugin.save_base(raw=True)
+
+    # Both rows are written, yet nothing is deferred to the commit, no output
+    # is built, and the only queries are the saves' writes: none reads anything.
+    assert TextPlugin.objects.filter(page=page).count() == len(fixture) + 1
+    assert callbacks == []
+    assert built_outputs == []
+    statements = {query["sql"].split()[0] for query in queries.captured_queries}
+    assert statements <= {"UPDATE", "INSERT"}
 
 
 class _RolledBackError(Exception):
