@@ -35,6 +35,7 @@ from tests.testapp.models import (
     Exhibit,
     FeaturedProduct,
     Page,
+    PageIntro,
     Product,
     Review,
     Seminar,
@@ -634,6 +635,45 @@ def test_saving_a_warehouse_followed_by_a_foreign_key_to_its_code_replaces_its_s
                     source_model="shelf",
                     source_pk=timber.pk,
                     title="Timber",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_its_intro(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the PageIntro is registered, following its page through its own
+    # one-to-one field: Page itself is not.
+    rag.register(PageIntro, follow=["page"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the page's save below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    intro = PageIntro.objects.create(page=about, body="We build chairs by hand.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The intro's group, with the page's new title after the intro's own body.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.pageintro:{intro.pk}": [
+                NormalizedDocument(
+                    text="We build chairs by hand.\n\nOur workshop",
+                    source_app_label="testapp",
+                    source_model="pageintro",
+                    source_pk=intro.pk,
+                    title="We build chairs by hand.",
                 ),
             ],
         }
