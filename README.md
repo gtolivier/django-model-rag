@@ -258,7 +258,8 @@ instances are loaded from by overriding `get_queryset(queryset)` — to add
 `select_related` or `prefetch_related`, say — and must return a `QuerySet`
 of the model's instances: a `values()` queryset, or another model's, raises
 `TypeError`. The documents stay in primary key order whatever order the hook
-sets, and an instance repeated by a join is extracted once. An instance
+sets, and an instance repeated by a join is extracted once, from its
+first row, even when its rows straddle two of `run()`'s chunks. An instance
 the hook filters out is not extracted: `run()` skips it and prunes its
 documents, and `run_instance`, which already holds the instance, only asks
 the hook's queryset whether it keeps it, and sends an empty group if not.
@@ -290,13 +291,18 @@ class MyOutput:
   keyed by its `source_key`: it replaces everything the output holds for
   that instance. An empty group removes it.
 - **`run()`** sends each model's groups in batches, one `replace()` per
-  chunk of 1000 instances, then calls `prune()` with the model's label
+  chunk of 1000 instances. Every instance read gets a group: an empty one
+  when it produces no documents, so that whatever the output still holds
+  for it is removed. It then calls `prune()` with the model's label
   (`app_label.model_name`) and the keys to keep: those of the instances
-  that produced documents, plus those of the instances created since the
-  run read the model (below), so that an instance deleted, filtered out or
-  now producing nothing is removed. If an extractor raises, the exception
-  propagates: the batches already sent stay sent, and that model is not
-  pruned. Running again is the retry.
+  its extractor's queryset keeps once the model is run (below), so that an
+  instance deleted or filtered out is removed. If an extractor raises, the
+  exception propagates: the batches already sent stay sent, and that model
+  is not pruned. Running again is the retry. Every run thus sends an empty
+  group for each instance without documents: removing a source the output
+  does not hold must do nothing. On a large table where most instances
+  produce nothing, filter them out in the extractor's `get_queryset()`: an
+  instance it filters out costs no group, and the prune removes it.
 - **Saves and deletes during `run()`.** Just before a model's prune,
   `run()` reads again the primary keys its extractor's queryset keeps. An
   instance created since its table was read is not pruned: its own signal
@@ -306,9 +312,8 @@ class MyOutput:
   that chunk sent its documents back after the delete's empty group.
   Windows remain, each closed by the next save or sync:
   - an instance saved between its chunk's read and that chunk's
-    `replace()` gets its old documents back;
-  - an instance read without documents, then saved so that it has some,
-    has them pruned;
+    `replace()` gets its old documents back, or none when it was read
+    without documents;
   - an instance created between the second read and the `prune()` call has
     its documents pruned;
   - a second read that does not see rows committed since the run began

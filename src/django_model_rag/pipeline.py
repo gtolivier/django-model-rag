@@ -1,7 +1,7 @@
 """The pipeline that turns registered models into normalized documents for an output."""
 
 from collections.abc import Iterable, Iterator, Sequence
-from itertools import islice
+from itertools import groupby, islice
 from typing import Any
 
 from django.db.models import Model, QuerySet
@@ -175,54 +175,30 @@ def _extractors_to_run(
     return [(model, rag.new_extractor(model)) for model in models]
 
 
-def _distinct(instances: Iterable[Model]) -> Iterator[Model]:
-    """Yield ``instances``, skipping the ones whose source key was already yielded."""
-    seen_keys: set[str] = set()
-    for instance in instances:
-        source_key = _source_key(instance)
-        if source_key not in seen_keys:
-            seen_keys.add(source_key)
-            yield instance
+def _keyed_skipping_adjacent_repeats(
+    instances: Iterable[Model],
+) -> Iterator[tuple[str, Model]]:
+    """Pair ``instances`` with their source key, skipping a repeat of the previous key.
+
+    A join in get_queryset() can repeat an instance's row. Only adjacent repeats
+    are skipped: ``instances`` must come in primary key order, which puts all
+    the rows of an instance next to each other, so each is yielded once.
+    """
+    for source_key, rows in groupby(instances, key=_source_key):
+        yield source_key, next(rows)
 
 
 def _groups(
-    instances: Iterable[Model], extractor: BaseExtractor[Any]
+    keyed: Iterable[tuple[str, Model]], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
-    """Group the documents of ``instances`` by source key, each instance once."""
-    groups: dict[str, list[NormalizedDocument]] = {}
-    for instance in _distinct(instances):
-        for document in _own_documents(instance, extractor):
-            groups.setdefault(document.source_key, []).append(document)
-    return groups
+    """Group the documents of the keyed instances by source key.
 
-
-def _hand_over(
-    instances: Iterable[Model], extractor: BaseExtractor[Any], output: DocumentOutput
-) -> set[str]:
-    """Hand the documents of ``instances`` to ``output`` at once, grouped by source key.
-
-    Returns the source keys handed over.
+    An instance without documents gets an empty group.
     """
-    groups = _groups(instances, extractor)
-    if groups:
-        output.replace(groups)
-    return set(groups)
-
-
-def _keys_to_keep(
-    handed_keys: set[str], read_keys: set[str], current_keys: set[str]
-) -> set[str]:
-    """Return the source keys a model's prune keeps, once its run is over.
-
-    The prune keeps the ``current_keys`` but those read without documents. An
-    instance deleted during the run was handed over, but is gone. An
-    instance created during the run was not read: its own signal handed its
-    documents over, which the prune must not delete.
-
-    Every handed key was read, so only the keys read without documents need a
-    set of their own, not two the size of the table.
-    """
-    return current_keys - (read_keys - handed_keys)
+    return {
+        source_key: list(_own_documents(instance, extractor))
+        for source_key, instance in keyed
+    }
 
 
 class SyncPipeline:
@@ -237,8 +213,9 @@ class SyncPipeline:
 
         Only the given ``models`` are run, in their order, or every registered
         model by default. Each model is then pruned down to the source keys of
-        the instances its extractor keeps once the model is run, less those
-        read without producing documents.
+        the instances its extractor keeps once the model is run, those read
+        without producing documents included: their empty group already
+        removed their documents.
 
         Raises:
             NotRegistered: one of ``models`` is not registered.
@@ -247,17 +224,15 @@ class SyncPipeline:
             self._run_model(model, extractor)
 
     def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
-        """Hand ``model``'s documents over chunk by chunk, then prune the model."""
-        handed_keys: set[str] = set()
-        read_keys: set[str] = set()
-        instances = _instances(model, extractor)
-        while chunk := list(islice(instances, _CHUNK_SIZE)):
-            read_keys.update(_source_key(instance) for instance in chunk)
-            handed_keys |= _hand_over(chunk, extractor, self._output)
-        kept_keys = _keys_to_keep(
-            handed_keys, read_keys, _current_keys(model, extractor)
-        )
-        self._output.prune(model._meta.label_lower, kept_keys)
+        """Hand ``model``'s documents over chunk by chunk, then prune the model.
+
+        Each chunk is handed over at once, grouped by source key; its instances
+        without documents are handed over as empty groups.
+        """
+        keyed = _keyed_skipping_adjacent_repeats(_instances(model, extractor))
+        while chunk := list(islice(keyed, _CHUNK_SIZE)):
+            self._output.replace(_groups(chunk, extractor))
+        self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.

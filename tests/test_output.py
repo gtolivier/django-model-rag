@@ -2,7 +2,7 @@ from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 
 import pytest
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from pytest_django import Settings
 
 from django_model_rag import (
@@ -157,9 +157,11 @@ def test_pipeline_hands_each_instance_documents_to_its_output_by_source_key() ->
 
 
 @pytest.mark.django_db
-def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
-    # An empty group would tell the output to replace that instance's
-    # documents with nothing: deleting them is prune's job, not replace's.
+def test_pipeline_hands_an_empty_group_for_an_instance_without_documents() -> None:
+    # The empty group tells the output to remove whatever it still holds for
+    # that instance, in the same replace() call that reads it, rather than
+    # leaving its stale documents until the prune. Lighting shares the chunk:
+    # its group must come in that same call, next to the empty one.
     empty = Category.objects.create(name="")
     lighting = Category.objects.create(name="Lighting")
     rag.register(Category, fields=["name"])
@@ -167,9 +169,20 @@ def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
     output = RecordingOutput()
     SyncPipeline(output).run()
 
-    received_keys = set(output.received_groups())
-    assert f"testapp.category:{lighting.pk}" in received_keys
-    assert f"testapp.category:{empty.pk}" not in received_keys
+    assert output.replaced == [
+        {
+            f"testapp.category:{empty.pk}": [],
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
@@ -320,8 +333,10 @@ def test_pipeline_prunes_a_model_without_instances_keeping_no_key() -> None:
 
 @pytest.mark.django_db
 def test_pipeline_prunes_a_model_after_its_documents_keeping_their_keys() -> None:
-    # The instance without a document is not kept: whatever the output still
-    # holds for it is stale, and the prune deletes it.
+    # The instance without a document is kept too: its empty group, handed in
+    # its chunk's replace(), already removed whatever the output held for it.
+    # Keeping its key is what lets a later save of that instance keep the
+    # documents its signal hands over before the prune.
     lamps = Category.objects.create(name="Lamps")
     empty = Category.objects.create(name="")
     lighting = Category.objects.create(name="Lighting")
@@ -333,10 +348,13 @@ def test_pipeline_prunes_a_model_after_its_documents_keeping_their_keys() -> Non
     assert output.pruned == [
         (
             "testapp.category",
-            {f"testapp.category:{lamps.pk}", f"testapp.category:{lighting.pk}"},
+            {
+                f"testapp.category:{lamps.pk}",
+                f"testapp.category:{empty.pk}",
+                f"testapp.category:{lighting.pk}",
+            },
         )
     ]
-    assert f"testapp.category:{empty.pk}" not in output.pruned[0][1]
     # A prune before a replace would delete documents the replace then
     # brings back, or keep a key the replace has not stored yet.
     assert "replace" in output.calls
@@ -383,6 +401,77 @@ def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> 
     assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
 
 
+@pytest.mark.django_db
+def test_pipeline_hands_once_an_instance_a_join_repeats_across_a_chunk_boundary() -> (
+    None
+):
+    # Annotating across the reverse foreign key yields a category once per
+    # product. 999 categories of one product each, then desks with two: desks'
+    # rows are the 1000th and 1001st, one at the end of the first chunk, the
+    # other alone in the second. Its rows come in its products' order, desk
+    # lamp first; the nameless one produces no document. A second, empty group
+    # in the later chunk would delete the desk lamp document of the earlier one.
+    categories = Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(1000)
+    )
+    *others, desks = sorted(categories, key=lambda category: category.pk)
+    Product.objects.bulk_create(
+        Product(
+            name=f"Lamp {category.pk}",
+            description="A lamp.",
+            price="20.00",
+            category=category,
+        )
+        for category in others
+    )
+    Product.objects.create(
+        name="Desk lamp", description="A lamp.", price="20.00", category=desks
+    )
+    Product.objects.create(name="", description="", price="0.00", category=desks)
+
+    @rag.register_extractor(Category)
+    class LampNameCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.annotate(lamp=F("products__name"))
+
+        def extract(self, instance: Category) -> NormalizedDocument | None:
+            # B009: the annotation is unknown to the type checker, which
+            # rejects reading it as an attribute.
+            lamp: str = getattr(instance, "lamp")  # noqa: B009
+            if not lamp:
+                return None
+            return self.build_document(instance, text=lamp)
+
+    desks_key = f"testapp.category:{desks.pk}"
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert [groups[desks_key] for groups in output.replaced if desks_key in groups] == [
+        [
+            NormalizedDocument(
+                text="Desk lamp",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=desks.pk,
+            ),
+        ],
+    ]
+
+
+@pytest.fixture
+def package_signals_off(settings: Settings) -> None:
+    """Turn the package's signals off for a test whose output changes the table.
+
+    The output only creates, deletes or saves a category during the run, as
+    another process would; it hands nothing over for it. The test checks what
+    the run itself sends and prunes: with the package's signals on, the save
+    or delete would also hand documents over, through the output configured
+    by MODEL_RAG_OUTPUT.
+    """
+    settings.MODEL_RAG_SIGNALS = False
+
+
 class CategoryCreatingOutput(RecordingOutput):
     """A recording output whose first replace creates a category.
 
@@ -401,16 +490,12 @@ class CategoryCreatingOutput(RecordingOutput):
 
 
 @pytest.mark.django_db
-def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read(
-    settings: Settings,
-) -> None:
-    # The output plays the part of the post_save signal: with the package's
-    # own signals on, the save would also need an output of its own.
-    settings.MODEL_RAG_SIGNALS = False
+@pytest.mark.usefixtures("package_signals_off")
+def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read() -> None:
     # Fewer instances than a chunk holds: the run reads the whole table
     # before its first replace, so desks is saved after the read. A prune
-    # keeping only the extracted keys would delete the documents its own
-    # signal handed over.
+    # keeping only the extracted keys would delete the documents that save
+    # hands over in the process making it.
     lighting = Category.objects.create(name="Lighting")
     rag.register(Category, fields=["name"])
 
@@ -448,12 +533,8 @@ class CategoryDeletingOutput(RecordingOutput):
 
 
 @pytest.mark.django_db
-def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read(
-    settings: Settings,
-) -> None:
-    # The output plays the part of the post_delete signal: with the package's
-    # own signals on, the delete would also need an output of its own.
-    settings.MODEL_RAG_SIGNALS = False
+@pytest.mark.usefixtures("package_signals_off")
+def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read() -> None:
     # Fewer instances than a chunk holds: the run reads the whole table
     # before its first replace, so lamps is deleted after the read, and that
     # replace hands its documents over. The prune is the only thing left to
@@ -469,6 +550,144 @@ def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read(
     assert lamps_key in output.received_groups()
     assert output.pruned == [("testapp.category", {f"testapp.category:{lighting.pk}"})]
     assert lamps_key not in output.pruned[0][1]
+
+
+class CategoryRenamingOutput(RecordingOutput):
+    """A recording output whose first replace renames a category.
+
+    The category is saved after the run read the table and after its groups
+    were recorded, as a save in another process would while sync_model_rag
+    runs.
+    """
+
+    def __init__(self, renamed: Category, name: str) -> None:
+        super().__init__()
+        self.renamed = renamed
+        self.name = name
+        self.saved_keys: list[str] = []
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        super().replace(groups)
+        if not self.saved_keys:
+            self.renamed.name = self.name
+            self.renamed.save()
+            self.saved_keys.append(f"testapp.category:{self.renamed.pk}")
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("package_signals_off")
+def test_pipeline_prune_keeps_an_instance_saved_with_documents_after_it_was_read() -> (
+    None
+):
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so desks is read with an empty name, then
+    # renamed. That save hands its documents over in the process making it:
+    # a prune keeping only the keys whose instances produced documents when
+    # read would delete them.
+    desks = Category.objects.create(name="")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryRenamingOutput(desks, "Desks")
+    SyncPipeline(output).run()
+
+    [desks_key] = output.saved_keys
+    assert output.received_groups()[desks_key] == []
+    assert output.pruned == [
+        (
+            "testapp.category",
+            {desks_key, f"testapp.category:{lighting.pk}"},
+        )
+    ]
+
+
+class HoldingOutput:
+    """An output that holds what it receives, as a store would.
+
+    replace() sets each source key's documents to its group, an empty group
+    removing the key; prune() removes the model's keys it does not keep.
+    """
+
+    def __init__(self) -> None:
+        self.held: dict[str, list[NormalizedDocument]] = {}
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        for source_key, group in groups.items():
+            if group:
+                self.held[source_key] = list(group)
+            else:
+                self.held.pop(source_key, None)
+
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
+        stale = [
+            source_key
+            for source_key in self.held
+            if source_key.startswith(f"{model_label}:") and source_key not in kept_keys
+        ]
+        for source_key in stale:
+            del self.held[source_key]
+
+
+class CategoryRenamingHoldingOutput(HoldingOutput):
+    """A holding output whose first replace renames a category, then syncs it.
+
+    The category is saved after the run read the table and after its groups
+    were held, as a save in another process would while sync_model_rag runs;
+    its documents are then handed over the way its post_save signal would.
+    """
+
+    def __init__(self, renamed: Category, name: str) -> None:
+        super().__init__()
+        self.renamed = renamed
+        self.name = name
+        self.saved = False
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        super().replace(groups)
+        if not self.saved:
+            # Set first: the sync below calls replace() again.
+            self.saved = True
+            self.renamed.name = self.name
+            self.renamed.save()
+            SyncPipeline(self).run_instance(self.renamed)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("package_signals_off")
+def test_pipeline_run_leaves_the_documents_of_an_instance_saved_after_it_was_read() -> (
+    None
+):
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so desks is read with an empty name, its
+    # empty group removed from the output, then renamed and synced. The
+    # run's prune must leave the documents that sync handed over.
+    desks = Category.objects.create(name="")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryRenamingHoldingOutput(desks, "Desks")
+    SyncPipeline(output).run()
+
+    assert output.held == {
+        f"testapp.category:{desks.pk}": [
+            NormalizedDocument(
+                text="Desks",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=desks.pk,
+                title="Desks",
+            ),
+        ],
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db

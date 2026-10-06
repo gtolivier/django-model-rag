@@ -232,7 +232,9 @@ refactoring, not from the prototype.
   - `run()` sends the documents of each model in batches of groups, one
     batch per chunk of the iterator, then prunes the model with the keys of
     the sources that produced documents — so an instance that now produces
-    none is removed. A model whose run fails is not pruned;
+    none is removed. A model whose run fails is not pruned. (Revised by
+    10d: `run()` sends an empty group for an instance without documents,
+    and the prune keeps its key.);
   - `run_instance()` sends its instance's group, even empty;
   - a document whose source is not the instance it was extracted from fails
     with a `TypeError` naming the extractor;
@@ -379,17 +381,18 @@ reference.
     the default manager: an existing instance that `get_queryset()` filters
     out was never read, and must not escape the prune.
   - **Kept keys:** those still there that produced documents, plus those
-    still there that the run did not read. An instance created during the
-    run is kept (its own signal sent its documents); an instance deleted
-    after its chunk was read is pruned, though the chunk's `replace()` may
-    have sent its documents back after the delete's empty group.
+    still there that the run did not read (revised by 10d: every key still
+    there). An instance created during the run is kept (its own signal sent
+    its documents); an instance deleted after its chunk was read is pruned,
+    though the chunk's `replace()` may have sent its documents back after
+    the delete's empty group.
   - **Memory:** the run holds the keys it read and the keys that produced
     documents, and keeps the current keys less those read without
     documents. Tracking only the keys read without documents, chunk by
     chunk, would be cheaper, but it is not the same set when a join in
     `get_queryset()` repeats an instance across two chunks, the first
     producing documents and the second none: it would prune documents the
-    output holds.
+    output holds. (Gone with 10d: the run holds no keys while it reads.)
   - **One more query** per model run, after every other, streamed with
     `iterator()`.
   - **Transaction isolation** is accepted and documented: under an outer
@@ -401,11 +404,10 @@ reference.
   Still open:
   - a chunk read before an update puts the old text back until the next
     save, a short window;
-  - an instance read without documents, then saved during the run so that
-    it has some: its signal sends them, and the prune deletes them. Keeping
-    every key read without documents would undo the prune of an instance
-    that now produces none; telling them apart needs to know which signals
-    fired during the run;
+  - ~~an instance read without documents, then saved during the run so
+    that it has some: its signal sends them, and the prune deletes them~~ —
+    closed by 10d for a save after its chunk's `replace()`; saved before
+    it, the chunk's empty group removes them, the window above;
   - an instance created and committed between the second read and the
     `prune()` call is still deleted, a window of one call;
   - `get_queryset()` runs twice per model run: a filter that depends on
@@ -470,6 +472,40 @@ reference.
   Still open after it: the related objects that `extract()` reads (inlines,
   `follow`, lookup paths on an instance already loaded) go where the router
   sends reads, so a lagging replica can still give them stale text.
+- [x] **10d. Instances without documents during a sync.** An instance that
+  `run()` read without documents, then saved during the run so that it has
+  some: its signal sent them, and the prune deleted them (an open point of
+  10b). Keeping every key read without documents would have undone the
+  prune of an instance that now produces none. Fixed by moving that
+  removal from the prune to `replace()`. Decided in this feature:
+  - **`run()` sends an empty group** for every instance it reads that
+    produces no documents, in its chunk's `replace()`, as `run_instance()`
+    already did: "Removal is replacement", above. This revises feature 8,
+    where `run()` sent no group for such an instance and left its removal
+    to the prune.
+  - **The prune keeps every key** that the extractor's `get_queryset()`
+    keeps once the model is run, those read without documents included:
+    their empty group already removed what the output held for them. An
+    instance saved with documents during the run, once its chunk was
+    handed over, keeps what its signal sent. The run no longer holds any
+    set of keys while it reads, so 10b's memory trade-off is gone.
+  - **Nothing new is asked of an output**: the empty group is the existing
+    contract, and django-minimal-rag keeps working without this package.
+    The cost is one more group per instance without documents on every
+    run, and removing a source the output does not hold must do nothing.
+    `ConsoleOutput` writes a `<key> removed` line for each. The README
+    suggests filtering such instances out in `get_queryset()` on a large
+    table.
+  - **An instance a join repeats is handed over once, from its first row**,
+    even when its rows straddle two chunks: without it, an empty group in
+    the later chunk would delete what the earlier one sent. Rows come in
+    primary key order, so an instance's rows are adjacent, and the run only
+    remembers the previous key, not a set of every key read.
+  - **Tests**: an output whose `replace()` renames, during the run, an
+    instance read with an empty name, with the signals off; an output that
+    holds what it receives shows the documents of that save survive the
+    prune. A join annotating each category with its products' names puts
+    one category's rows on both sides of a chunk boundary.
 
 ## Not planned here
 
