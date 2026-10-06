@@ -2,7 +2,7 @@ from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 
 import pytest
-from django.db.models import QuerySet
+from django.db.models import F, QuerySet
 from pytest_django import Settings
 
 from django_model_rag import (
@@ -399,6 +399,64 @@ def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> 
     SyncPipeline(output).run()
 
     assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
+
+
+@pytest.mark.django_db
+def test_pipeline_hands_once_an_instance_a_join_repeats_across_a_chunk_boundary() -> (
+    None
+):
+    # Annotating across the reverse foreign key yields a category once per
+    # product. 999 categories of one product each, then desks with two: desks'
+    # rows are the 1000th and 1001st, one at the end of the first chunk, the
+    # other alone in the second. Its rows come in its products' order, desk
+    # lamp first; the nameless one produces no document. A second, empty group
+    # in the later chunk would delete the desk lamp document of the earlier one.
+    categories = Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(1000)
+    )
+    *others, desks = sorted(categories, key=lambda category: category.pk)
+    Product.objects.bulk_create(
+        Product(
+            name=f"Lamp {category.pk}",
+            description="A lamp.",
+            price="20.00",
+            category=category,
+        )
+        for category in others
+    )
+    Product.objects.create(
+        name="Desk lamp", description="A lamp.", price="20.00", category=desks
+    )
+    Product.objects.create(name="", description="", price="0.00", category=desks)
+
+    @rag.register_extractor(Category)
+    class LampNameCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.annotate(lamp=F("products__name"))
+
+        def extract(self, instance: Category) -> NormalizedDocument | None:
+            # B009: the annotation is unknown to the type checker, which
+            # rejects reading it as an attribute.
+            lamp: str = getattr(instance, "lamp")  # noqa: B009
+            if not lamp:
+                return None
+            return self.build_document(instance, text=lamp)
+
+    desks_key = f"testapp.category:{desks.pk}"
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert [groups[desks_key] for groups in output.replaced if desks_key in groups] == [
+        [
+            NormalizedDocument(
+                text="Desk lamp",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=desks.pk,
+            ),
+        ],
+    ]
 
 
 @pytest.fixture
