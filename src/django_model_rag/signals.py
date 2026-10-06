@@ -211,11 +211,16 @@ def _followed_reverse_relations(
     registered_model: type[Model], sender: type[Model]
 ) -> list[ForeignObjectRel]:
     """Return the reverse relations to ``sender`` that ``registered_model`` follows."""
+    concrete_model = sender._meta.concrete_model
+    if concrete_model is None:
+        return []
+    # A proxy sends signals under its own sender: it is its concrete model. A
+    # multi-table child is a row of each of its parents too.
+    followed_models = (concrete_model, *concrete_model._meta.get_parent_list())
     return [
         relation
         for relation in rag.followed_reverse_relations(registered_model)
-        # A proxy sends signals under its own sender: it is its concrete model.
-        if relation.related_model is sender._meta.concrete_model
+        if relation.related_model in followed_models
     ]
 
 
