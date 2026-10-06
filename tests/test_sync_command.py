@@ -10,6 +10,7 @@ from pytest_django import Settings
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
+    FAILING_ON_KEY_BACKEND,
     RECORDING_OUTPUT_INSTANCE,
     TRACKED_BACKEND,
     PruneOnlyOutput,
@@ -124,6 +125,26 @@ def test_the_command_with_options_that_are_not_a_dict_names_them_before_running_
         call_command("sync_model_rag")
 
     assert [output.calls for output in built_outputs] in ([], [[]])
+
+
+@pytest.mark.django_db
+def test_the_command_with_options_the_backend_rejects_names_it_before_building_it(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # Registered with a row: running it would send the documents to the
+    # output, so only a check made up front keeps them from reaching it.
+    _create_a_hammer()
+    rag.register(Product, fields=["name"])
+    # FailingOnKeyOutput requires a failing_source_key the OPTIONS lack.
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"collection": "catalog"},
+    }
+
+    with pytest.raises(ImproperlyConfigured, match="FailingOnKeyOutput"):
+        call_command("sync_model_rag")
+
+    assert built_outputs == []
 
 
 @pytest.mark.django_db
