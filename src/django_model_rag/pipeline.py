@@ -325,8 +325,11 @@ class SyncPipeline:
         Raises:
             NotRegistered: the model of ``queryset`` is not registered, even
                 when ``queryset`` is empty.
+            TypeError: its extractor's get_queryset() did not return a QuerySet
+                of the model's instances, even when ``queryset`` is empty.
         """
         extractor = rag.new_extractor(queryset.model)
+        _kept_queryset(queryset.model, extractor)
         for chunk in _chunks(_in_document_order(queryset)):
             self._output.replace(_reloaded_groups(chunk, extractor, queryset.model))
 
