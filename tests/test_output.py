@@ -426,6 +426,51 @@ def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read(
     ]
 
 
+class CategoryDeletingOutput(RecordingOutput):
+    """A recording output whose first replace deletes a category.
+
+    The category is deleted after the run read the table and after its
+    groups were recorded, as a delete in another process would while
+    sync_model_rag runs.
+    """
+
+    def __init__(self, doomed: Category) -> None:
+        super().__init__()
+        self.doomed = doomed
+        self.deleted_keys: list[str] = []
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        super().replace(groups)
+        if not self.deleted_keys:
+            # delete() clears the instance's primary key: read it before.
+            self.deleted_keys.append(f"testapp.category:{self.doomed.pk}")
+            self.doomed.delete()
+
+
+@pytest.mark.django_db
+def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read(
+    settings: Settings,
+) -> None:
+    # The output plays the part of the post_delete signal: with the package's
+    # own signals on, the delete would also need an output of its own.
+    settings.MODEL_RAG_SIGNALS = False
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so lamps is deleted after the read, and that
+    # replace hands its documents over. The prune is the only thing left to
+    # delete them: keeping every extracted key would keep them.
+    lamps = Category.objects.create(name="Lamps")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryDeletingOutput(lamps)
+    SyncPipeline(output).run()
+
+    [lamps_key] = output.deleted_keys
+    assert lamps_key in output.received_groups()
+    assert output.pruned == [("testapp.category", {f"testapp.category:{lighting.pk}"})]
+    assert lamps_key not in output.pruned[0][1]
+
+
 @pytest.mark.django_db
 def test_pipeline_prune_drops_an_instance_its_queryset_omits() -> None:
     # The draft exists all along, but get_queryset() filters it out: the run
