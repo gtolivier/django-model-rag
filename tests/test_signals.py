@@ -331,6 +331,62 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
 
 
 @pytest.mark.django_db
+def test_moving_a_followed_instance_to_another_row_replaces_the_groups_of_both(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's move below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    moved_plugin = TextPlugin.objects.create(
+        page=about, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_plugin.page = workshop
+        moved_plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Page is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Pages' groups as committed: the old Page keeps only its remaining
+    # plugin's text, the new Page gains the moved plugin's text.
+    assert received == {
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
