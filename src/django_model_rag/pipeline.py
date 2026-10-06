@@ -230,8 +230,9 @@ class SyncPipeline:
         """Hand the documents of the registered models to the output.
 
         Only the given ``models`` are run, in their order, or every registered
-        model by default. Each model is then pruned down to the source keys
-        that produced documents.
+        model by default. Each model is then pruned down to the source keys of
+        the instances its extractor keeps once the model is run, less those
+        read without producing documents.
 
         Raises:
             NotRegistered: one of ``models`` is not registered.
