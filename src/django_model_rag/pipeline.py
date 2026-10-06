@@ -1,9 +1,8 @@
 """The pipeline that turns registered models into normalized documents for an output."""
 
 from collections.abc import Iterable, Iterator, Sequence
-from itertools import groupby, islice
-from operator import attrgetter
-from typing import Any
+from itertools import chain, groupby, islice
+from typing import Any, TypeVar
 
 from django.db.models import Model, QuerySet
 from django.db.models.query import ModelIterable
@@ -19,6 +18,8 @@ _CHUNK_SIZE = 1000
 # the order of a model's documents, whatever its extractor's get_queryset() asks
 _DOCUMENT_ORDER = "pk"
 
+_Item = TypeVar("_Item")
+
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
@@ -29,6 +30,11 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
         model._default_manager.order_by(_DOCUMENT_ORDER), extractor, model
     )
     return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+
+
+def _in_document_order(queryset: QuerySet[Model]) -> Iterator[Model]:
+    """Iterate over the instances of ``queryset``, in primary key order."""
+    return queryset.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
 
 
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
@@ -238,6 +244,16 @@ def _keyed_skipping_adjacent_repeats(
         yield source_key, next(rows)
 
 
+def _chunks(items: Iterable[_Item]) -> Iterator[list[_Item]]:
+    """Cut ``items`` into lists of ``_CHUNK_SIZE``, the last one possibly shorter.
+
+    Only one chunk is held at a time.
+    """
+    remaining = iter(items)
+    while chunk := list(islice(remaining, _CHUNK_SIZE)):
+        yield chunk
+
+
 def _groups(
     keyed: Iterable[tuple[str, Model]], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
@@ -248,6 +264,25 @@ def _groups(
     return {
         source_key: list(_own_documents(instance, extractor))
         for source_key, instance in keyed
+    }
+
+
+def _reloaded_groups(
+    instances: Sequence[Model], extractor: BaseExtractor[Any], model: type[Model]
+) -> dict[str, list[NormalizedDocument]]:
+    """Group by source key the documents of ``instances`` of ``model``, reloaded.
+
+    They are reloaded as ``extractor``'s get_queryset() loads them; an instance
+    it filters out, or without documents, gets an empty group.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s
+            instances, or extract() returned a document of another source.
+    """
+    loaded = _loaded_by_hook(instances, extractor, model)
+    return {
+        _source_key(instance): _reloaded_documents(loaded.get(instance.pk), extractor)
+        for instance in instances
     }
 
 
@@ -280,27 +315,19 @@ class SyncPipeline:
         without documents are handed over as empty groups.
         """
         keyed = _keyed_skipping_adjacent_repeats(_instances(model, extractor))
-        while chunk := list(islice(keyed, _CHUNK_SIZE)):
+        for chunk in _chunks(keyed):
             self._output.replace(_groups(chunk, extractor))
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
     def run_queryset(self, queryset: QuerySet[Any]) -> None:
         """Hand the documents of the instances of ``queryset`` only to the output."""
-        instances = sorted(queryset, key=attrgetter("pk"))
-        if not instances:
+        chunks = _chunks(_in_document_order(queryset))
+        first_chunk = next(chunks, None)
+        if first_chunk is None:
             return
         extractor = rag.new_extractor(queryset.model)
-        for start in range(0, len(instances), _CHUNK_SIZE):
-            chunk = instances[start : start + _CHUNK_SIZE]
-            loaded = _loaded_by_hook(chunk, extractor, queryset.model)
-            self._output.replace(
-                {
-                    _source_key(instance): _reloaded_documents(
-                        loaded.get(instance.pk), extractor
-                    )
-                    for instance in chunk
-                }
-            )
+        for chunk in chain([first_chunk], chunks):
+            self._output.replace(_reloaded_groups(chunk, extractor, queryset.model))
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
