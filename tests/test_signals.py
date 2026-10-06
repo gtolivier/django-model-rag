@@ -738,6 +738,36 @@ def test_deleting_a_followed_related_instance_replaces_the_group_that_follows_it
 
 
 @pytest.mark.django_db
+def test_deleting_a_page_whose_followed_plugins_cascade_sends_only_its_empty_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the Page's delete below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    page_pk = page.pk
+    TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+
+    # The plugins are deleted with the Page by cascade: Django sends
+    # post_delete for each of them as well as for the Page.
+    with django_capture_on_commit_callbacks(execute=True):
+        page.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's empty group, once, and no replacement of it with documents.
+    assert _replaced(built_outputs) == [{f"testapp.page:{page_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
