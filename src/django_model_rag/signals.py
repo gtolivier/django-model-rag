@@ -143,7 +143,11 @@ def remember_followers_before_save(
 
 
 def sync_saved_instance(
-    sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
+    sender: type[Model],
+    instance: Model,
+    raw: bool = False,
+    created: bool = False,
+    **kwargs: Any,
 ) -> None:
     """Replace, once the transaction commits, the groups a saved instance changes.
 
@@ -159,7 +163,8 @@ def sync_saved_instance(
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
     _schedule_follower_replacements(
-        _followers(sender, instance)
+        # A row just created has no follower pointing to it yet.
+        _followers(sender, instance, forward=not created)
         + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
     )
 
@@ -190,7 +195,9 @@ def _batch_replacer(
     return replace_groups_as_committed
 
 
-def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
+def _followers(
+    sender: type[Model], instance: Model, forward: bool = True
+) -> list[_Follower]:
     """Return the registered models following ``instance``, with their primary keys.
 
     Those following through a reverse foreign key, and those following through
@@ -205,6 +212,7 @@ def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
     forward_followers = [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
+        if forward
         for foreign_key in _followed_foreign_keys(registered_model, sender)
         for follower_pk in _pks_pointing_to(registered_model, foreign_key, instance)
     ]
