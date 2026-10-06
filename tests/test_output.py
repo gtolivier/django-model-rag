@@ -333,8 +333,10 @@ def test_pipeline_prunes_a_model_without_instances_keeping_no_key() -> None:
 
 @pytest.mark.django_db
 def test_pipeline_prunes_a_model_after_its_documents_keeping_their_keys() -> None:
-    # The instance without a document is not kept: whatever the output still
-    # holds for it is stale, and the prune deletes it.
+    # The instance without a document is kept too: its empty group, handed in
+    # its chunk's replace(), already removed whatever the output held for it.
+    # Keeping its key is what lets a later save of that instance keep the
+    # documents its signal hands over before the prune.
     lamps = Category.objects.create(name="Lamps")
     empty = Category.objects.create(name="")
     lighting = Category.objects.create(name="Lighting")
@@ -346,10 +348,13 @@ def test_pipeline_prunes_a_model_after_its_documents_keeping_their_keys() -> Non
     assert output.pruned == [
         (
             "testapp.category",
-            {f"testapp.category:{lamps.pk}", f"testapp.category:{lighting.pk}"},
+            {
+                f"testapp.category:{lamps.pk}",
+                f"testapp.category:{empty.pk}",
+                f"testapp.category:{lighting.pk}",
+            },
         )
     ]
-    assert f"testapp.category:{empty.pk}" not in output.pruned[0][1]
     # A prune before a replace would delete documents the replace then
     # brings back, or keep a key the replace has not stored yet.
     assert "replace" in output.calls
