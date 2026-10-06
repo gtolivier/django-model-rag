@@ -229,18 +229,18 @@ class SyncPipeline:
 
     def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
         """Hand ``model``'s documents over chunk by chunk, then prune the model."""
-        kept_keys: set[str] = set()
+        handed_keys: set[str] = set()
         read_keys: set[str] = set()
         instances = _instances(model, extractor)
         while chunk := list(islice(instances, _CHUNK_SIZE)):
             read_keys.update(_source_key(instance) for instance in chunk)
-            kept_keys |= _hand_over(chunk, extractor, self._output)
+            handed_keys |= _hand_over(chunk, extractor, self._output)
+        current_keys = _current_keys(model, extractor)
+        # An instance deleted during the run was handed over, but is gone.
         # An instance created during the run was not read: its own signal
         # handed its documents over, which the prune must not delete.
-        # An instance deleted during the run was handed over, but is gone.
-        current_keys = _current_keys(model, extractor)
-        kept_keys |= current_keys - read_keys
-        self._output.prune(model._meta.label_lower, kept_keys & current_keys)
+        kept_keys = (handed_keys & current_keys) | (current_keys - read_keys)
+        self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
