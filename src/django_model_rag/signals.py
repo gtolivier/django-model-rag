@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, TypeAlias
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
@@ -17,6 +17,9 @@ from django_model_rag.registry import rag
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
+
+# a registered model following an instance, and the primary key of its row
+_Follower: TypeAlias = tuple[type[Model], Any]
 
 logger = logging.getLogger("django_model_rag")
 
@@ -112,7 +115,7 @@ def remember_followers_before_save(
 ) -> None:
     """Keep the followers the row had before the save, for the commit to replace.
 
-    A save may move the row to other followed rows: the old ones change too.
+    A save may move the row to other followers: the old ones change too.
     """
     if raw or instance._state.adding or not _signals_enabled():
         return
@@ -149,23 +152,23 @@ def sync_saved_instance(
     )
 
 
-def _schedule_follower_replacements(followers: list[tuple[type[Model], Any]]) -> None:
+def _schedule_follower_replacements(followers: list[_Follower]) -> None:
     """Replace, at the commit, the group of each of ``followers``, once each."""
     # dict.fromkeys drops the duplicates and keeps the order.
-    for followed_by, followed_pk in dict.fromkeys(followers):
-        transaction.on_commit(_group_replacer(followed_by, followed_pk))
+    for follower_model, follower_pk in dict.fromkeys(followers):
+        transaction.on_commit(_group_replacer(follower_model, follower_pk))
 
 
-def _followers(sender: type[Model], instance: Model) -> list[tuple[type[Model], Any]]:
+def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered models following ``instance``, with their primary keys.
 
     Only the reverse foreign keys are looked at.
     """
     return [
-        (registered_model, followed_pk)
+        (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         for relation in _followed_reverse_relations(registered_model, sender)
-        for followed_pk in _followed_pks(registered_model, relation, instance)
+        for follower_pk in _follower_pks(registered_model, relation, instance)
     ]
 
 
@@ -177,7 +180,7 @@ def _is_followed(sender: type[Model]) -> bool:
     )
 
 
-def _followed_pks(
+def _follower_pks(
     registered_model: type[Model], relation: ForeignObjectRel, instance: Model
 ) -> list[Any]:
     """Return the primary keys of the ``registered_model`` rows ``instance`` points to.
@@ -192,11 +195,11 @@ def _followed_pks(
         return [target_value]
 
     # A foreign key with a to_field holds another unique column: the group is
-    # named after the primary key, which only the followed row knows.
-    followed_rows = registered_model._base_manager.filter(
+    # named after the primary key, which only the follower row knows.
+    follower_rows = registered_model._base_manager.filter(
         **{target_field.attname: target_value}
     )
-    return list(followed_rows.values_list("pk", flat=True))
+    return list(follower_rows.values_list("pk", flat=True))
 
 
 def _followed_reverse_relations(
