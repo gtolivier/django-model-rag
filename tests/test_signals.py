@@ -23,7 +23,9 @@ from tests.testapp.models import (
     CategoryProxy,
     ClearanceProduct,
     FeaturedProduct,
+    Page,
     Product,
+    TextPlugin,
 )
 
 # The logger the package reports a failed commit callback on.
@@ -282,6 +284,44 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group, with the plugin's text after the Page's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe build chairs by hand.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
