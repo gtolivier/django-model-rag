@@ -32,8 +32,10 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
 
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
     """Return the source keys of ``model``'s instances ``extractor`` keeps now."""
-    kept = _kept_queryset(model, extractor)
-    return {model_source_key(model, pk) for pk in kept.values_list("pk", flat=True)}
+    kept_pks = _kept_queryset(model, extractor).values_list("pk", flat=True)
+    return {
+        model_source_key(model, pk) for pk in kept_pks.iterator(chunk_size=_CHUNK_SIZE)
+    }
 
 
 def _kept_queryset(
@@ -212,11 +214,15 @@ def _keys_to_keep(
 ) -> set[str]:
     """Return the source keys a model's prune keeps, once its run is over.
 
-    An instance deleted during the run was handed over, but is gone. An
+    The prune keeps the ``current_keys`` but those read without documents. An
+    instance deleted during the run was handed over, but is gone. An
     instance created during the run was not read: its own signal handed its
     documents over, which the prune must not delete.
+
+    Every handed key was read, so only the keys read without documents need a
+    set of their own, not two the size of the table.
     """
-    return (handed_keys & current_keys) | (current_keys - read_keys)
+    return current_keys - (read_keys - handed_keys)
 
 
 class SyncPipeline:
