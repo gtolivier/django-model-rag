@@ -157,9 +157,11 @@ def test_pipeline_hands_each_instance_documents_to_its_output_by_source_key() ->
 
 
 @pytest.mark.django_db
-def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
-    # An empty group would tell the output to replace that instance's
-    # documents with nothing: deleting them is prune's job, not replace's.
+def test_pipeline_hands_an_empty_group_for_an_instance_without_documents() -> None:
+    # The empty group tells the output to remove whatever it still holds for
+    # that instance, in the same replace() call that reads it, rather than
+    # leaving its stale documents until the prune. Lighting shares the chunk:
+    # its group must come in that same call, next to the empty one.
     empty = Category.objects.create(name="")
     lighting = Category.objects.create(name="Lighting")
     rag.register(Category, fields=["name"])
@@ -167,9 +169,20 @@ def test_pipeline_hands_no_group_for_an_instance_without_documents() -> None:
     output = RecordingOutput()
     SyncPipeline(output).run()
 
-    received_keys = set(output.received_groups())
-    assert f"testapp.category:{lighting.pk}" in received_keys
-    assert f"testapp.category:{empty.pk}" not in received_keys
+    assert output.replaced == [
+        {
+            f"testapp.category:{empty.pk}": [],
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
