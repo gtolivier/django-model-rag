@@ -537,6 +537,48 @@ def test_pipeline_hands_once_the_documents_of_an_instance_a_join_repeats() -> No
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_and_extracts_once_an_instance_a_join_repeats() -> None:
+    # Filtering across the reverse foreign key without distinct() yields
+    # lighting once per matching product: run_queryset() reloading the
+    # instances through get_queryset() and extracting every row would extract
+    # lighting twice, and hand its document twice in its group.
+    lighting = Category.objects.create(name="Lighting")
+    Product.objects.create(
+        name="Desk lamp", description="A lamp.", price="20.00", category=lighting
+    )
+    Product.objects.create(
+        name="Floor lamp", description="A tall lamp.", price="50.00", category=lighting
+    )
+    extracted: list[Category] = []
+
+    @rag.register_extractor(Category)
+    class LampCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.filter(products__name__in=["Desk lamp", "Floor lamp"])
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            extracted.append(instance)
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.filter(name="Lighting"))
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+    assert extracted == [lighting]
+
+
+@pytest.mark.django_db
 def test_run_instance_rejects_a_get_queryset_that_returns_no_queryset() -> None:
     # Telling whether the hook keeps the instance must not swallow a broken
     # hook: an empty group would delete the documents the output still holds
