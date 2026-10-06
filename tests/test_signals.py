@@ -680,6 +680,25 @@ def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_it
     ]
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row() -> (
+    None
+):
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # No transaction around the save (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the save must fail before its
+    # INSERT does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        Category.objects.create(name="Lighting")
+
+    assert not Category.objects.exists()
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
