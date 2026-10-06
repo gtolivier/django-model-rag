@@ -402,12 +402,14 @@ def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> 
 
 
 @pytest.fixture
-def signals_played_by_the_output(settings: Settings) -> None:
-    """Turn the package's signals off: the test's output plays their part.
+def package_signals_off(settings: Settings) -> None:
+    """Turn the package's signals off for a test whose output changes the table.
 
-    The output saves or deletes a category during the run, and hands over
-    what its post_save or post_delete signal would: with the package's own
-    signals on, the save or delete would also need an output of its own.
+    The output only creates, deletes or saves a category during the run, as
+    another process would; it hands nothing over for it. The test checks what
+    the run itself sends and prunes: with the package's signals on, the save
+    or delete would also hand documents over, through the output configured
+    by MODEL_RAG_OUTPUT.
     """
     settings.MODEL_RAG_SIGNALS = False
 
@@ -430,12 +432,12 @@ class CategoryCreatingOutput(RecordingOutput):
 
 
 @pytest.mark.django_db
-@pytest.mark.usefixtures("signals_played_by_the_output")
+@pytest.mark.usefixtures("package_signals_off")
 def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read() -> None:
     # Fewer instances than a chunk holds: the run reads the whole table
     # before its first replace, so desks is saved after the read. A prune
-    # keeping only the extracted keys would delete the documents its own
-    # signal handed over.
+    # keeping only the extracted keys would delete the documents that save
+    # hands over in the process making it.
     lighting = Category.objects.create(name="Lighting")
     rag.register(Category, fields=["name"])
 
@@ -473,7 +475,7 @@ class CategoryDeletingOutput(RecordingOutput):
 
 
 @pytest.mark.django_db
-@pytest.mark.usefixtures("signals_played_by_the_output")
+@pytest.mark.usefixtures("package_signals_off")
 def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read() -> None:
     # Fewer instances than a chunk holds: the run reads the whole table
     # before its first replace, so lamps is deleted after the read, and that
@@ -515,14 +517,15 @@ class CategoryRenamingOutput(RecordingOutput):
 
 
 @pytest.mark.django_db
-@pytest.mark.usefixtures("signals_played_by_the_output")
+@pytest.mark.usefixtures("package_signals_off")
 def test_pipeline_prune_keeps_an_instance_saved_with_documents_after_it_was_read() -> (
     None
 ):
     # Fewer instances than a chunk holds: the run reads the whole table
     # before its first replace, so desks is read with an empty name, then
-    # renamed. Its signal hands its documents over: a prune keeping only the
-    # keys whose instances produced documents when read would delete them.
+    # renamed. That save hands its documents over in the process making it:
+    # a prune keeping only the keys whose instances produced documents when
+    # read would delete them.
     desks = Category.objects.create(name="")
     lighting = Category.objects.create(name="Lighting")
     rag.register(Category, fields=["name"])
