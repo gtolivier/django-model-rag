@@ -387,6 +387,45 @@ def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() 
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
+    # run() loads instances through get_queryset(): a draft it leaves out must
+    # not get indexed by run_queryset() either, even when the queryset handed
+    # over includes it, and the empty group deletes whatever the output still
+    # holds for it. Lighting shares the queryset: a filter that let the hook's
+    # exclusion reach every instance would empty its group too.
+    draft = Category.objects.create(name="Draft")
+    lighting = Category.objects.create(name="Lighting")
+    extracted: list[Category] = []
+
+    @rag.register_extractor(Category)
+    class PublishedCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.exclude(name="Draft")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            extracted.append(instance)
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.order_by("pk"))
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{draft.pk}": [],
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+    assert extracted == [lighting]
+
+
+@pytest.mark.django_db
 def test_run_instance_hands_the_documents_of_an_instance_its_queryset_keeps() -> None:
     # The draft is saved too: a filter that let the hook's exclusion reach
     # every instance, or tested the wrong one, would empty lighting's group.
