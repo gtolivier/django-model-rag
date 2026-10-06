@@ -124,7 +124,9 @@ def remember_followers_before_save(
 
     A save may move the row to other followers: the old ones change too.
     """
-    if raw or instance._state.adding or not _signals_enabled():
+    # An instance built with an existing primary key is "adding" yet saved as an
+    # UPDATE: only a missing primary key means there is no row before the save.
+    if raw or instance.pk is None or not _signals_enabled():
         return
 
     # A model nothing follows costs the save no query.
