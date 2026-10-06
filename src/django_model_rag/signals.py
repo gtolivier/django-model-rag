@@ -10,7 +10,6 @@ from django.db import transaction
 from django.db.models import ForeignObjectRel, Model
 
 from django_model_rag.documents import model_source_key
-from django_model_rag.extractors import DeclaredFieldsExtractor, relations_by_accessor
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
@@ -123,7 +122,12 @@ def sync_saved_instance(
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
-    for followed_by, followed_pk in _followers(sender, instance):
+    _schedule_follower_replacements(_followers(sender, instance))
+
+
+def _schedule_follower_replacements(followers: list[tuple[type[Model], Any]]) -> None:
+    """Replace, at the commit, the group of each of ``followers``."""
+    for followed_by, followed_pk in followers:
         transaction.on_commit(_group_replacer(followed_by, followed_pk))
 
 
@@ -166,16 +170,10 @@ def _followed_reverse_relations(
     registered_model: type[Model], sender: type[Model]
 ) -> list[ForeignObjectRel]:
     """Return the reverse relations to ``sender`` that ``registered_model`` follows."""
-    extractor = rag.new_extractor(registered_model)
-    if not isinstance(extractor, DeclaredFieldsExtractor):
-        return []
-
-    relations = relations_by_accessor(registered_model)
-    followed = [relations[accessor] for accessor in extractor.follow]
     return [
         relation
-        for relation in followed
-        if isinstance(relation, ForeignObjectRel) and relation.related_model is sender
+        for relation in rag.followed_reverse_relations(registered_model)
+        if relation.related_model is sender
     ]
 
 
@@ -192,22 +190,24 @@ def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[]
 
 
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
-    """Replace the group of a deleted registered instance with an empty one."""
+    """Empty the group of a deleted instance, and replace those following it.
+
+    Both happen once the transaction commits.
+    """
+    if not _signals_enabled():
+        return
+
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
-    followers = _followers(sender, instance) if _signals_enabled() else []
-    if not (_is_synced(nearest_registered_model_only) or followers):
+    followers = _followers(sender, instance)
+    if not (nearest_registered_model_only or followers):
         return
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
-    if _is_synced(nearest_registered_model_only):
-        _schedule_commit_callbacks(
-            nearest_registered_model_only, instance, _group_emptier
-        )
-    for followed_by, followed_pk in followers:
-        transaction.on_commit(_group_replacer(followed_by, followed_pk))
+    _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
+    _schedule_follower_replacements(followers)
 
 
 def _group_emptier(

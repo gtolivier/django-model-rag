@@ -525,17 +525,28 @@ class Registry:
         They are ``model`` and its proxies, and the models of the reverse
         foreign keys ``model`` follows.
         """
-        senders = _model_and_proxies(model)
-        extractor = self._registrations[model]()
+        return _model_and_proxies(model) + [
+            relation.related_model
+            for relation in self.followed_reverse_relations(model)
+        ]
+
+    def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
+        """List the reverse foreign keys ``model`` follows.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
         # Relations are only read when something is followed: models may still
         # be loading otherwise.
-        if isinstance(extractor, DeclaredFieldsExtractor) and extractor.follow:
-            relations = relations_by_accessor(model)
-            for accessor in extractor.follow:
-                relation = relations[accessor]
-                if isinstance(relation, ForeignObjectRel):
-                    senders.append(relation.related_model)
-        return senders
+        if not isinstance(extractor, DeclaredFieldsExtractor) or not extractor.follow:
+            return []
+
+        relations = relations_by_accessor(model)
+        followed = [relations[accessor] for accessor in extractor.follow]
+        return [
+            relation for relation in followed if isinstance(relation, ForeignObjectRel)
+        ]
 
     def _add(
         self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
