@@ -15,6 +15,8 @@ from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
+# The instance carries its followers from before the save to after it.
+_PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 
 logger = logging.getLogger("django_model_rag")
 
@@ -120,16 +122,15 @@ def remember_followers_before_save(
         return
 
     # A model nothing follows costs the save no query.
-    if not any(
-        _followed_reverse_relations(registered_model, sender)
-        for registered_model in rag.registered_models()
-    ):
+    if not _is_followed(sender):
         return
 
     committed_instance = _committed_instance(sender, instance.pk)
     if committed_instance is not None:
-        instance._model_rag_previous_followers = _followers(  # type: ignore[attr-defined]  # ad hoc attribute read back by sync_saved_instance
-            sender, committed_instance
+        setattr(
+            instance,
+            _PREVIOUS_FOLLOWERS_ATTRIBUTE,
+            _followers(sender, committed_instance),
         )
 
 
@@ -148,7 +149,7 @@ def sync_saved_instance(
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
     _schedule_follower_replacements(_followers(sender, instance))
     _schedule_follower_replacements(
-        getattr(instance, "_model_rag_previous_followers", [])
+        getattr(instance, _PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
     )
 
 
@@ -169,6 +170,14 @@ def _followers(sender: type[Model], instance: Model) -> list[tuple[type[Model], 
         for relation in _followed_reverse_relations(registered_model, sender)
         for followed_pk in _followed_pks(registered_model, relation, instance)
     ]
+
+
+def _is_followed(sender: type[Model]) -> bool:
+    """Return whether a registered model follows ``sender``'s instances."""
+    return any(
+        _followed_reverse_relations(registered_model, sender)
+        for registered_model in rag.registered_models()
+    )
 
 
 def _followed_pks(
