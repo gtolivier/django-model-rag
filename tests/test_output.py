@@ -601,6 +601,95 @@ def test_pipeline_prune_keeps_an_instance_saved_with_documents_after_it_was_read
     ]
 
 
+class HoldingOutput:
+    """An output that holds what it receives, as a store would.
+
+    replace() sets each source key's documents to its group, an empty group
+    removing the key; prune() removes the model's keys it does not keep.
+    """
+
+    def __init__(self) -> None:
+        self.held: dict[str, list[NormalizedDocument]] = {}
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        for source_key, group in groups.items():
+            if group:
+                self.held[source_key] = list(group)
+            else:
+                self.held.pop(source_key, None)
+
+    def prune(self, model_label: str, kept_keys: AbstractSet[str]) -> None:
+        stale = [
+            source_key
+            for source_key in self.held
+            if source_key.startswith(f"{model_label}:") and source_key not in kept_keys
+        ]
+        for source_key in stale:
+            del self.held[source_key]
+
+
+class CategoryRenamingHoldingOutput(HoldingOutput):
+    """A holding output whose first replace renames a category, then syncs it.
+
+    The category is saved after the run read the table and after its groups
+    were held, as a save in another process would while sync_model_rag runs;
+    its documents are then handed over the way its post_save signal would.
+    """
+
+    def __init__(self, renamed: Category, name: str) -> None:
+        super().__init__()
+        self.renamed = renamed
+        self.name = name
+        self.saved = False
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        super().replace(groups)
+        if not self.saved:
+            # Set first: the sync below calls replace() again.
+            self.saved = True
+            self.renamed.name = self.name
+            self.renamed.save()
+            SyncPipeline(self).run_instance(self.renamed)
+
+
+@pytest.mark.django_db
+@pytest.mark.usefixtures("package_signals_off")
+def test_pipeline_run_leaves_the_documents_of_an_instance_saved_after_it_was_read() -> (
+    None
+):
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so desks is read with an empty name, its
+    # empty group removed from the output, then renamed and synced. The
+    # run's prune must leave the documents that sync handed over.
+    desks = Category.objects.create(name="")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryRenamingHoldingOutput(desks, "Desks")
+    SyncPipeline(output).run()
+
+    assert output.held == {
+        f"testapp.category:{desks.pk}": [
+            NormalizedDocument(
+                text="Desks",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=desks.pk,
+                title="Desks",
+            ),
+        ],
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+    }
+
+
 @pytest.mark.django_db
 def test_pipeline_prune_drops_an_instance_its_queryset_omits() -> None:
     # The draft exists all along, but get_queryset() filters it out: the run
