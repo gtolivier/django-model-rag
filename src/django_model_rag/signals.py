@@ -7,7 +7,7 @@ from typing import Any, TypeAlias
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import ForeignKey, ForeignObjectRel, Model
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
@@ -186,13 +186,35 @@ def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
     forward_followers = [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for foreign_key in rag.followed_forward_foreign_keys(registered_model)
-        if foreign_key.related_model in _models_of_the_row(sender)
-        for follower_pk in registered_model._base_manager.filter(
-            **{foreign_key.name: instance.pk}
-        ).values_list("pk", flat=True)
+        for foreign_key in _followed_foreign_keys(registered_model, sender)
+        for follower_pk in _pks_pointing_to(registered_model, foreign_key, instance)
     ]
     return reverse_followers + forward_followers
+
+
+def _followed_foreign_keys(
+    registered_model: type[Model], sender: type[Model]
+) -> "list[ForeignKey[Any, Any]]":
+    """Return the foreign keys to ``sender`` that ``registered_model`` follows."""
+    followed_models = _models_of_the_row(sender)
+    return [
+        foreign_key
+        for foreign_key in rag.followed_forward_foreign_keys(registered_model)
+        if foreign_key.related_model in followed_models
+    ]
+
+
+def _pks_pointing_to(
+    registered_model: type[Model], foreign_key: "ForeignKey[Any, Any]", instance: Model
+) -> list[Any]:
+    """Return the primary keys of the ``registered_model`` rows ``instance`` has.
+
+    Those rows point to ``instance`` through ``foreign_key``.
+    """
+    pointing_rows = registered_model._base_manager.filter(
+        **{foreign_key.name: instance.pk}
+    )
+    return list(pointing_rows.values_list("pk", flat=True))
 
 
 def _is_followed(sender: type[Model]) -> bool:

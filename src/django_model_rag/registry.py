@@ -6,7 +6,7 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import ForeignKey, ForeignObjectRel, Model
+from django.db.models import Field, ForeignKey, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete
 
@@ -537,17 +537,9 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        extractor = self.new_extractor(model)
-        # Relations are only read when something is followed: models may still
-        # be loading otherwise.
-        if not isinstance(extractor, DeclaredFieldsExtractor) or not extractor.follow:
-            return []
-
-        relations = relations_by_accessor(model)
-        followed = [relations[accessor] for accessor in extractor.follow]
         return [
             relation
-            for relation in followed
+            for relation in self._followed_relations(model)
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
@@ -559,16 +551,28 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
+        return [
+            relation
+            for relation in self._followed_relations(model)
+            if isinstance(relation, ForeignKey)
+        ]
+
+    def _followed_relations(
+        self, model: type[Model]
+    ) -> "list[Field[Any, Any] | ForeignObjectRel]":
+        """List the relations, forward or reverse, ``model`` follows.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
         extractor = self.new_extractor(model)
+        # Relations are only read when something is followed: models may still
+        # be loading otherwise.
         if not isinstance(extractor, DeclaredFieldsExtractor) or not extractor.follow:
             return []
 
         relations = relations_by_accessor(model)
-        return [
-            relation
-            for accessor in extractor.follow
-            if isinstance(relation := relations[accessor], ForeignKey)
-        ]
+        return [relations[accessor] for accessor in extractor.follow]
 
     def _add(
         self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
