@@ -1,7 +1,7 @@
 """The pipeline that turns registered models into normalized documents for an output."""
 
 from collections.abc import Iterable, Iterator, Sequence
-from itertools import chain, groupby, islice
+from itertools import groupby, islice
 from typing import Any, TypeVar
 
 from django.db.models import Model, QuerySet
@@ -320,13 +320,14 @@ class SyncPipeline:
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
     def run_queryset(self, queryset: QuerySet[Any]) -> None:
-        """Hand the documents of the instances of ``queryset`` only to the output."""
+        """Hand the documents of the instances of ``queryset`` only to the output.
+
+        Raises:
+            NotRegistered: the model of ``queryset`` is not registered, even
+                when ``queryset`` is empty.
+        """
         extractor = rag.new_extractor(queryset.model)
-        chunks = _chunks(_in_document_order(queryset))
-        first_chunk = next(chunks, None)
-        if first_chunk is None:
-            return
-        for chunk in chain([first_chunk], chunks):
+        for chunk in _chunks(_in_document_order(queryset)):
             self._output.replace(_reloaded_groups(chunk, extractor, queryset.model))
 
     def run_instance(self, instance: Model) -> None:
