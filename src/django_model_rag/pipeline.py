@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Iterator, Sequence
 from itertools import groupby, islice
+from operator import attrgetter
 from typing import Any
 
 from django.db.models import Model, QuerySet
@@ -285,19 +286,21 @@ class SyncPipeline:
 
     def run_queryset(self, queryset: QuerySet[Any]) -> None:
         """Hand the documents of the instances of ``queryset`` only to the output."""
-        instances = list(queryset)
+        instances = sorted(queryset, key=attrgetter("pk"))
         if not instances:
             return
         extractor = rag.new_extractor(queryset.model)
-        loaded = _loaded_by_hook(instances, extractor, queryset.model)
-        self._output.replace(
-            {
-                _source_key(instance): _reloaded_documents(
-                    loaded.get(instance.pk), extractor
-                )
-                for instance in instances
-            }
-        )
+        for start in range(0, len(instances), _CHUNK_SIZE):
+            chunk = instances[start : start + _CHUNK_SIZE]
+            loaded = _loaded_by_hook(chunk, extractor, queryset.model)
+            self._output.replace(
+                {
+                    _source_key(instance): _reloaded_documents(
+                        loaded.get(instance.pk), extractor
+                    )
+                    for instance in chunk
+                }
+            )
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
