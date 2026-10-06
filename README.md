@@ -241,10 +241,10 @@ query as the instances (`select_related`), and each followed reverse foreign
 key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
 in chunks of 1000. Before each model's prune, one more query reads the
-primary keys its extractor's queryset keeps. `run_queryset` reads the
-queryset it is given in chunks of 1000 too, and reloads each chunk through
-the extractor's queryset in one more query, plus one per followed reverse
-relation. `run_instance` makes one query
+primary keys its extractor's queryset keeps. `run_queryset` reads only the
+primary keys of the queryset it is given, in chunks of 1000 too, and loads
+each chunk's instances through the extractor's queryset in one more query,
+plus one per followed reverse relation. `run_instance` makes one query
 to ask the extractor's queryset whether it keeps the instance, then at most
 one query per relation it crosses.
 
