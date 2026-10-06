@@ -40,7 +40,8 @@ def _in_document_order(queryset: QuerySet[Model]) -> Iterator[Model]:
 def _pks_in_document_order(queryset: QuerySet[Model]) -> Iterator[Any]:
     """Iterate over the primary keys of ``queryset``'s instances, in their order."""
     pks = queryset.order_by(_DOCUMENT_ORDER).values_list("pk", flat=True)
-    return pks.iterator(chunk_size=_CHUNK_SIZE)
+    # a join repeats an instance on adjacent rows: keep the first only
+    return (pk for pk, _ in groupby(pks.iterator(chunk_size=_CHUNK_SIZE)))
 
 
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
