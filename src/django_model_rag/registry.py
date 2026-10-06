@@ -526,8 +526,9 @@ class Registry:
         foreign keys ``model`` follows.
         """
         return _model_and_proxies(model) + [
-            relation.related_model
+            sender
             for relation in self.followed_reverse_relations(model)
+            for sender in _model_and_proxies(relation.related_model)
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:

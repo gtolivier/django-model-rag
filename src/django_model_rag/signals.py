@@ -206,7 +206,8 @@ def _followed_reverse_relations(
     return [
         relation
         for relation in rag.followed_reverse_relations(registered_model)
-        if relation.related_model is sender
+        # A proxy sends signals under its own sender: it is its concrete model.
+        if relation.related_model is sender._meta.concrete_model
     ]
 
 
