@@ -843,6 +843,62 @@ def test_pipeline_hands_once_an_instance_a_join_repeats_across_a_chunk_boundary(
     ]
 
 
+@pytest.mark.django_db
+def test_run_queryset_hands_once_an_instance_a_join_repeats_across_a_chunk_edge() -> (
+    None
+):
+    # Filtering the queryset handed over across the reverse foreign key yields
+    # a category once per product. 999 categories of one product each, then
+    # desks with two: desks' rows are the 1000th and 1001st, one at the end of
+    # the first chunk, the other alone in the second. A second group in the
+    # later chunk would extract desks again and hand its documents twice.
+    categories = Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(1000)
+    )
+    *others, desks = sorted(categories, key=lambda category: category.pk)
+    Product.objects.bulk_create(
+        Product(
+            name=f"Lamp {category.pk}",
+            description="A lamp.",
+            price="20.00",
+            category=category,
+        )
+        for category in others
+    )
+    Product.objects.create(
+        name="Desk lamp", description="A lamp.", price="20.00", category=desks
+    )
+    Product.objects.create(
+        name="Desk light", description="A light.", price="30.00", category=desks
+    )
+    extracted: list[Category] = []
+
+    @rag.register_extractor(Category)
+    class RecordingCategoryExtractor(BaseExtractor[Category]):
+        def extract(self, instance: Category) -> NormalizedDocument:
+            extracted.append(instance)
+            return self.build_document(instance, text=instance.name)
+
+    desks_key = f"testapp.category:{desks.pk}"
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(
+        Category.objects.filter(products__price__gte="0.00")
+    )
+
+    assert [groups[desks_key] for groups in output.replaced if desks_key in groups] == [
+        [
+            NormalizedDocument(
+                text=desks.name,
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=desks.pk,
+            ),
+        ],
+    ]
+    assert extracted.count(desks) == 1
+
+
 @pytest.fixture
 def package_signals_off(settings: Settings) -> None:
     """Turn the package's signals off for a test whose output changes the table.
