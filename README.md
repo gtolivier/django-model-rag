@@ -369,6 +369,16 @@ that are not a dict, and a class without one of the two methods fail with
 or a model that is not registered, but with `CommandError`. Both are raised
 before anything is sent.
 
+Your own code builds the same output with `configured_output()`, importable
+from `django_model_rag`: it reads the setting, makes the same checks, and
+returns a new instance of `BACKEND` built with `OPTIONS`:
+
+```python
+from django_model_rag import SyncPipeline, configured_output
+
+SyncPipeline(configured_output()).run_instance(instance)
+```
+
 **Trying it out.** `django_model_rag.output.ConsoleOutput` writes what it
 receives to standard output, or to the stream it is given
 (`ConsoleOutput(stream=...)`): each source key, then its documents' titles and
@@ -441,7 +451,8 @@ ORM signals do not see: `QuerySet.update()`, `bulk_create()`, raw SQL. A
 change to a related object whose text a registered model reads — through
 `follow` or a lookup path — leaves that model's documents stale until they
 are saved again. For all of these, run `sync_model_rag`, or call
-`SyncPipeline(output).run_instance(instance)` from a receiver of your own.
+`SyncPipeline(configured_output()).run_instance(instance)` from a receiver
+of your own, once its transaction commits (`transaction.on_commit`).
 
 **Failures.** An extractor, an output or a database error reloading the
 instance that raises at the commit is logged with `logger.exception` on the
