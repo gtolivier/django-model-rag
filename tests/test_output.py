@@ -256,6 +256,33 @@ def test_run_queryset_hands_nothing_to_its_output_for_an_empty_queryset() -> Non
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_the_documents_of_its_one_instance_without_pruning() -> None:
+    # Lamps exists but the queryset leaves it out: a prune keeping only the
+    # queryset's key would delete every document the output holds for lamps.
+    Category.objects.create(name="Lamps")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.filter(name="Lighting"))
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+    assert output.calls == ["replace"]
+
+
+@pytest.mark.django_db
 def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
     # run() loads instances through get_queryset(): a draft it leaves out must
     # not get indexed by run_instance() either, and the empty group deletes
