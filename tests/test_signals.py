@@ -25,9 +25,11 @@ from tests.testapp.models import (
     FeaturedProduct,
     Page,
     Product,
+    Shelf,
     Supplier,
     SupplierProfile,
     TextPlugin,
+    Warehouse,
 )
 
 # The logger the package reports a failed commit callback on.
@@ -358,6 +360,47 @@ def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it
                     source_model="supplier",
                     source_pk=birch.pk,
                     title="Birch Mill",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Warehouse is registered, following its shelves: Shelf itself is
+    # not.
+    rag.register(Warehouse, follow=["shelves"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Warehouse's own save never runs, so only the shelf's save below is
+    # observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The shelf's foreign key holds the Warehouse's code, "north", not its
+        # primary key.
+        Shelf.objects.create(warehouse=north, label="Timber")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Warehouse's group, under its primary key, not its code, with the
+    # shelf's label after the Warehouse's name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.warehouse:{north.pk}": [
+                NormalizedDocument(
+                    text="North depot\n\nTimber",
+                    source_app_label="testapp",
+                    source_model="warehouse",
+                    source_pk=north.pk,
+                    title="North depot",
                 ),
             ],
         }
