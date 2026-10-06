@@ -72,19 +72,25 @@ def configured_output() -> DocumentOutput:
             checked before building it.
         TypeError: the BACKEND class itself raises it while being built.
     """
-    output_setting = _output_setting()
-    output_class = _validated_output_class(output_setting)
-    options = _options(output_setting)
-    _require_accepted_options(output_class, options)
+    output_class, options = _validated_output_configuration()
     return output_class(**options)
 
 
 def check_output_configuration() -> None:
     """Fail unless the output setting names a usable output, building nothing."""
+    _validated_output_configuration()
+
+
+def _validated_output_configuration() -> tuple[type[DocumentOutput], dict[str, Any]]:
+    """Return the configured output class and its OPTIONS, building nothing.
+
+    Fail unless the output setting names a usable class that accepts them.
+    """
     output_setting = _output_setting()
-    _require_accepted_options(
-        _validated_output_class(output_setting), _options(output_setting)
-    )
+    output_class = _validated_output_class(output_setting)
+    options = _options(output_setting)
+    _require_accepted_options(output_class, options)
+    return output_class, options
 
 
 def _require_accepted_options(
