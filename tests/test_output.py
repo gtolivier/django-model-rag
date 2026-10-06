@@ -5,14 +5,16 @@ import pytest
 from django.db.models import F, QuerySet
 from pytest_django import Settings
 
+import django_model_rag
 from django_model_rag import (
     BaseExtractor,
     DocumentOutput,
     NormalizedDocument,
     SyncPipeline,
+    configured_output,
     rag,
 )
-from tests.recording import RecordingOutput
+from tests.recording import TRACKED_BACKEND, RecordingOutput, TrackedRecordingOutput
 from tests.testapp.models import AccordionItem, Category, Page, Product
 
 
@@ -86,6 +88,25 @@ def test_a_class_whose_prune_takes_a_mutable_set_is_not_a_document_output() -> N
     output: DocumentOutput = MutableSetPruneOutput()  # type: ignore[assignment]
 
     assert hasattr(output, "prune")
+
+
+def test_configured_output_is_public_and_builds_the_backend_with_its_options(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # A project wiring its own pipeline, outside the command and the signals,
+    # builds the configured output from the package root, as it does
+    # SyncPipeline: django_model_rag.output is not part of the public API.
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": TRACKED_BACKEND,
+        "OPTIONS": {"collection": "catalog", "batch_size": 50},
+    }
+
+    output = configured_output()
+
+    [built] = built_outputs
+    assert output is built
+    assert built.options == {"collection": "catalog", "batch_size": 50}
+    assert "configured_output" in django_model_rag.__all__
 
 
 @pytest.mark.django_db
