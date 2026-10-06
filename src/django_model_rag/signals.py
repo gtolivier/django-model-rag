@@ -162,10 +162,12 @@ def sync_saved_instance(
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
+    followers = _reverse_followers(sender, instance)
+    # A row just created has no follower pointing to it yet.
+    if not created:
+        followers += _forward_followers(sender, instance)
     _schedule_follower_replacements(
-        # A row just created has no follower pointing to it yet.
-        _followers(sender, instance, forward=not created)
-        + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+        followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
     )
 
 
@@ -195,28 +197,33 @@ def _batch_replacer(
     return replace_groups_as_committed
 
 
-def _followers(
-    sender: type[Model], instance: Model, forward: bool = True
-) -> list[_Follower]:
+def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered models following ``instance``, with their primary keys.
 
     Those following through a reverse foreign key, and those following through
     their own foreign key to ``instance``.
     """
-    reverse_followers = [
+    return _reverse_followers(sender, instance) + _forward_followers(sender, instance)
+
+
+def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through a reverse relation."""
+    return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         for relation in _followed_reverse_relations(registered_model, sender)
         for follower_pk in _follower_pks(registered_model, relation, instance)
     ]
-    forward_followers = [
+
+
+def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through their foreign key."""
+    return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        if forward
         for foreign_key in _followed_foreign_keys(registered_model, sender)
         for follower_pk in _pks_pointing_to(registered_model, foreign_key, instance)
     ]
-    return reverse_followers + forward_followers
 
 
 def _followed_foreign_keys(
