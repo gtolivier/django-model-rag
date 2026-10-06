@@ -236,8 +236,20 @@ class SyncPipeline:
 
     def run_queryset(self, queryset: QuerySet[Any]) -> None:
         """Hand the documents of the instances of ``queryset`` only to the output."""
-        for instance in queryset:
-            self.run_instance(instance)
+        instances = list(queryset)
+        if not instances:
+            return
+        extractor = rag.new_extractor(queryset.model)
+        self._output.replace(
+            {
+                _source_key(instance): (
+                    list(_own_documents(instance, extractor))
+                    if _is_kept_by_hook(instance, extractor)
+                    else []
+                )
+                for instance in instances
+            }
+        )
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
