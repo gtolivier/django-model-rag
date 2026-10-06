@@ -186,15 +186,15 @@ def _keyed_distinct(instances: Iterable[Model]) -> Iterator[tuple[str, Model]]:
 
 
 def _groups(
-    instances: Iterable[Model], extractor: BaseExtractor[Any]
+    keyed: Iterable[tuple[str, Model]], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
-    """Group the documents of ``instances`` by source key, each instance once.
+    """Group the documents of the keyed instances by source key.
 
     An instance without documents gets an empty group.
     """
     return {
         source_key: list(_own_documents(instance, extractor))
-        for source_key, instance in _keyed_distinct(instances)
+        for source_key, instance in keyed
     }
 
 
@@ -226,8 +226,8 @@ class SyncPipeline:
         Each chunk is handed over at once, grouped by source key; its instances
         without documents are handed over as empty groups.
         """
-        instances = _instances(model, extractor)
-        while chunk := list(islice(instances, _CHUNK_SIZE)):
+        keyed = _keyed_distinct(_instances(model, extractor))
+        while chunk := list(islice(keyed, _CHUNK_SIZE)):
             self._output.replace(_groups(chunk, extractor))
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
