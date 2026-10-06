@@ -67,6 +67,18 @@ def _hooked_queryset(
     return _checked_queryset(extractor.get_queryset(queryset), extractor, model)
 
 
+def _check_queryset_hook(model: type[Model], extractor: BaseExtractor[Any]) -> None:
+    """Fail now if ``extractor``'s get_queryset() is broken for ``model``.
+
+    Checked up front, a broken hook is reported even when there is nothing to
+    run, rather than once there is.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
+    """
+    _kept_queryset(model, extractor)
+
+
 def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     """Tell whether ``extractor``'s get_queryset() keeps ``instance``.
 
@@ -329,7 +341,7 @@ class SyncPipeline:
                 of the model's instances, even when ``queryset`` is empty.
         """
         extractor = rag.new_extractor(queryset.model)
-        _kept_queryset(queryset.model, extractor)
+        _check_queryset_hook(queryset.model, extractor)
         for chunk in _chunks(_in_document_order(queryset)):
             self._output.replace(_reloaded_groups(chunk, extractor, queryset.model))
 
