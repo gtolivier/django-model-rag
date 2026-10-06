@@ -382,10 +382,10 @@ reference.
     out was never read, and must not escape the prune.
   - **Kept keys:** those still there that produced documents, plus those
     still there that the run did not read (revised by 10d: every key still
-    there). An instance created during the
-    run is kept (its own signal sent its documents); an instance deleted
-    after its chunk was read is pruned, though the chunk's `replace()` may
-    have sent its documents back after the delete's empty group.
+    there). An instance created during the run is kept (its own signal sent
+    its documents); an instance deleted after its chunk was read is pruned,
+    though the chunk's `replace()` may have sent its documents back after
+    the delete's empty group.
   - **Memory:** the run holds the keys it read and the keys that produced
     documents, and keeps the current keys less those read without
     documents. Tracking only the keys read without documents, chunk by
@@ -406,7 +406,8 @@ reference.
     save, a short window;
   - ~~an instance read without documents, then saved during the run so
     that it has some: its signal sends them, and the prune deletes them~~ —
-    closed by 10d;
+    closed by 10d for a save after its chunk's `replace()`; saved before
+    it, the chunk's empty group removes them, the window above;
   - an instance created and committed between the second read and the
     `prune()` call is still deleted, a window of one call;
   - `get_queryset()` runs twice per model run: a filter that depends on
@@ -485,14 +486,16 @@ reference.
   - **The prune keeps every key** that the extractor's `get_queryset()`
     keeps once the model is run, those read without documents included:
     their empty group already removed what the output held for them. An
-    instance saved with documents during the run keeps what its signal
-    sent. The run no longer holds any set of keys while it reads, so 10b's
+    instance saved with documents during the run, once its chunk was
+    handed over, keeps what its signal sent. The run no longer holds any set of keys while it reads, so 10b's
     memory trade-off is gone.
   - **Nothing new is asked of an output**: the empty group is the existing
     contract, and django-minimal-rag keeps working without this package.
     The cost is one more group per instance without documents on every
     run, and removing a source the output does not hold must do nothing.
-    `ConsoleOutput` writes a `<key> removed` line for each.
+    `ConsoleOutput` writes a `<key> removed` line for each. The README
+    suggests filtering such instances out in `get_queryset()` on a large
+    table.
   - **Tests**: an output whose `replace()` renames, during the run, an
     instance read with an empty name, with the signals off.
 

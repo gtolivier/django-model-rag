@@ -299,7 +299,9 @@ class MyOutput:
   exception propagates: the batches already sent stay sent, and that model
   is not pruned. Running again is the retry. Every run thus sends an empty
   group for each instance without documents: removing a source the output
-  does not hold must do nothing.
+  does not hold must do nothing. On a large table where most instances
+  produce nothing, filter them out in the extractor's `get_queryset()`: an
+  instance it filters out costs no group, and the prune removes it.
 - **Saves and deletes during `run()`.** Just before a model's prune,
   `run()` reads again the primary keys its extractor's queryset keeps. An
   instance created since its table was read is not pruned: its own signal
@@ -309,7 +311,8 @@ class MyOutput:
   that chunk sent its documents back after the delete's empty group.
   Windows remain, each closed by the next save or sync:
   - an instance saved between its chunk's read and that chunk's
-    `replace()` gets its old documents back;
+    `replace()` gets its old documents back, or none when it was read
+    without documents;
   - an instance created between the second read and the `prune()` call has
     its documents pruned;
   - a second read that does not see rows committed since the run began
