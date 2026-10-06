@@ -143,15 +143,16 @@ def sync_saved_instance(
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
-    _schedule_follower_replacements(_followers(sender, instance))
     _schedule_follower_replacements(
-        instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+        _followers(sender, instance)
+        + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
     )
 
 
 def _schedule_follower_replacements(followers: list[tuple[type[Model], Any]]) -> None:
-    """Replace, at the commit, the group of each of ``followers``."""
-    for followed_by, followed_pk in followers:
+    """Replace, at the commit, the group of each of ``followers``, once each."""
+    # dict.fromkeys drops the duplicates and keeps the order.
+    for followed_by, followed_pk in dict.fromkeys(followers):
         transaction.on_commit(_group_replacer(followed_by, followed_pk))
 
 
