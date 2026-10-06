@@ -224,6 +224,8 @@ def _followed_reverse_relations(
         relation
         for relation in rag.followed_reverse_relations(registered_model)
         if relation.related_model in followed_models
+        # A multi-column relation is left out: no single value names a follower.
+        and len(relation.field.foreign_related_fields) == 1
     ]
 
 
