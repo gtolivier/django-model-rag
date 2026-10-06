@@ -471,6 +471,38 @@ def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
 
 
 @pytest.mark.django_db
+def test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # A working output, so that only the new row can keep the save from
+    # sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: neither the save nor the commit may read.
+    with (
+        django_assert_num_queries(1) as queries,
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+    ):
+        # A row just created: no Product can point to it yet.
+        Category.objects.create(name="Lighting")
+
+    # The only query is the save's INSERT: no lookup of followers. Nothing is
+    # deferred to the commit, and no output is built.
+    statements = _statements(queries)
+    assert statements == ["INSERT"]
+    assert callbacks == []
+    assert built_outputs == []
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
