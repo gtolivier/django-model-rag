@@ -458,6 +458,66 @@ def test_moving_a_followed_instance_to_another_follower_replaces_the_groups_of_b
 
 
 @pytest.mark.django_db
+def test_moving_a_followed_instance_built_with_an_existing_pk_replaces_both_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's move below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    existing_plugin = TextPlugin.objects.create(
+        page=about, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+
+    # Not loaded: built anew with the existing row's primary key, so Django
+    # marks it as being added, yet saves it as an UPDATE of that row.
+    moved_plugin = TextPlugin(
+        pk=existing_plugin.pk, page=workshop, body="We build chairs by hand."
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The row was updated, not duplicated: the move is the one being specified.
+    assert TextPlugin.objects.filter(pk=existing_plugin.pk, page=workshop).exists()
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Page is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Pages' groups as committed: the old Page keeps only its remaining
+    # plugin's text, the new Page gains the moved plugin's text.
+    assert received == {
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_updating_a_followed_instance_in_place_replaces_the_group_once(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
