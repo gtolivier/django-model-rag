@@ -29,7 +29,9 @@ from tests.testapp.models import (
     Supplier,
     SupplierProfile,
     TextPlugin,
+    Topic,
     Warehouse,
+    Workshop,
 )
 
 # The logger the package reports a failed commit callback on.
@@ -405,6 +407,33 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_instance_pointing_to_no_row_sends_nothing_and_logs_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its workshops: Workshop itself
+    # is not.
+    rag.register(Topic, follow=["workshops"])
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with (
+        caplog.at_level(logging.DEBUG, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Its nullable foreign key is null: no Topic follows this workshop.
+        Workshop.objects.create(title="Open bench", topic=None)
+
+    # Not even an output built, and nothing logged: there is no group to
+    # replace, not a failure to report.
+    assert built_outputs == []
+    assert _package_log_records(caplog) == []
 
 
 @pytest.mark.django_db
