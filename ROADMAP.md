@@ -450,6 +450,11 @@ reference.
     `queryset.db`. No public signature changes: a `using=` argument would
     be a second source of truth, and changing `get_queryset()` would break
     the contract of feature 8.
+  - **Followers take the alias of the save** (feature 11a): the read of the
+    followers a row had before its save, the follower lookup through a
+    `to_field`, the follower's commit callback and its reload all use the
+    signal's `using`. Django keeps a relation within one database, so the
+    follower lives on the same alias as the followed row.
   - **The group key keeps no alias.** Adding it would break `source_key`
     (feature 1) and the split that `prune` makes at the colon, make `run()`
     know the alias, and re-key every index. With one followed database per
