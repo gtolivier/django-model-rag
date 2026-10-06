@@ -52,14 +52,17 @@ def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]
 
 
 def _kept_queryset(
-    model: type[Model], extractor: BaseExtractor[Any]
+    model: type[Model], extractor: BaseExtractor[Any], using: str | None = None
 ) -> QuerySet[Model]:
     """Return ``model``'s instances that ``extractor``'s get_queryset() keeps.
+
+    They are read from the database alias ``using``, or the one Django's
+    routers pick by default.
 
     Raises:
         TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
     """
-    return _hooked_queryset(model._default_manager.all(), extractor, model)
+    return _hooked_queryset(model._default_manager.using(using), extractor, model)
 
 
 def _hooked_queryset(
@@ -338,11 +341,7 @@ class SyncPipeline:
         extractor = rag.new_extractor(queryset.model)
         # hooked before the first chunk, a broken get_queryset() fails even
         # when there is nothing to run
-        kept = _hooked_queryset(
-            queryset.model._default_manager.using(queryset.db),
-            extractor,
-            queryset.model,
-        )
+        kept = _kept_queryset(queryset.model, extractor, using=queryset.db)
         for pks in _chunks(_pks_in_document_order(queryset)):
             self._output.replace(_reloaded_groups(pks, kept, extractor))
 
