@@ -22,10 +22,12 @@ from tests.testapp.models import (
     Category,
     CategoryProxy,
     ClearanceProduct,
+    Exhibit,
     FeaturedProduct,
     Page,
     Product,
     Shelf,
+    Showroom,
     Supplier,
     SupplierProfile,
     TextPlugin,
@@ -381,6 +383,56 @@ def test_moving_a_followed_instance_to_another_row_replaces_the_groups_of_both(
                 source_pk=workshop.pk,
                 title="Our workshop",
                 url="/pages/our-workshop/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_an_instance_followed_by_two_models_replaces_the_group_of_each(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # An Exhibit is followed twice, through each of its foreign keys: by its
+    # Showroom and by its Category. Exhibit itself is not registered.
+    rag.register(Showroom, follow=["exhibits"])
+    rag.register(Category, follow=["exhibits"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the exhibit's save below is observed.
+    north = Showroom.objects.create(name="North hall")
+    tools = Category.objects.create(name="Tools")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Exhibit.objects.create(showroom=north, label="Hammer", category=tools)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per follower is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both followers' groups as committed, each with the exhibit's label after
+    # its own name.
+    assert received == {
+        f"testapp.showroom:{north.pk}": [
+            NormalizedDocument(
+                text="North hall\n\nHammer",
+                source_app_label="testapp",
+                source_model="showroom",
+                source_pk=north.pk,
+                title="North hall",
+            ),
+        ],
+        f"testapp.category:{tools.pk}": [
+            NormalizedDocument(
+                text="Tools\n\nHammer",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=tools.pk,
+                title="Tools",
             ),
         ],
     }
