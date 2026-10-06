@@ -331,6 +331,7 @@ class SyncPipeline:
                 of the model's instances, even when ``queryset`` is empty; or
                 ``queryset`` is sliced.
         """
+        # No public API tells a sliced queryset from one that is not.
         if queryset.query.is_sliced:
             msg = "run_queryset() needs a queryset that is not sliced"
             raise TypeError(msg)
