@@ -270,6 +270,23 @@ def test_run_queryset_rejects_an_empty_queryset_of_an_unregistered_model() -> No
 
 
 @pytest.mark.django_db
+def test_run_queryset_rejects_a_sliced_queryset_handing_nothing() -> None:
+    # Reading a slice in primary key order would sync other instances than
+    # the slice names: run_queryset() says what it needs up front, rather
+    # than letting Django's "Cannot reorder a query once a slice has been
+    # taken" surface from deep inside the run.
+    Category.objects.create(name="Lighting")
+    Category.objects.create(name="Lamps")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    with pytest.raises(TypeError, match="not sliced"):
+        SyncPipeline(output).run_queryset(Category.objects.order_by("pk")[:1])
+
+    assert output.calls == []
+
+
+@pytest.mark.django_db
 def test_run_queryset_hands_the_documents_of_its_one_instance_without_pruning() -> None:
     # Lamps exists but the queryset leaves it out: a prune keeping only the
     # queryset's key would delete every document the output holds for lamps.
