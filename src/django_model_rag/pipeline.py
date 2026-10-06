@@ -69,6 +69,22 @@ def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
 
 
+def _loaded_by_hook(
+    instances: Iterable[Model], extractor: BaseExtractor[Any], model: type[Model]
+) -> dict[Any, Model]:
+    """Reload ``instances`` of ``model`` as ``extractor``'s get_queryset() loads them.
+
+    What get_queryset() adds to them (an annotation...) then reaches extract().
+    The result maps the primary key of each instance it keeps to its reload.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
+    """
+    pks = [instance.pk for instance in instances]
+    kept = _kept_queryset(model, extractor).filter(pk__in=pks)
+    return {instance.pk: instance for instance in kept}
+
+
 def _checked_queryset(
     hooked: object, extractor: BaseExtractor[Any], model: type[Model]
 ) -> QuerySet[Model]:
@@ -177,6 +193,22 @@ def _kept_documents(
     return list(_own_documents(instance, extractor))
 
 
+def _reloaded_documents(
+    reloaded: Model | None, extractor: BaseExtractor[Any]
+) -> list[NormalizedDocument]:
+    """Return the documents of an instance as get_queryset() ``reloaded`` it.
+
+    There are none if get_queryset() filtered the instance out (``reloaded``
+    is then None): it is not extracted.
+
+    Raises:
+        TypeError: ``extractor``'s extract() returned a document of another source.
+    """
+    if reloaded is None:
+        return []
+    return list(_own_documents(reloaded, extractor))
+
+
 def _extractors_to_run(
     models: Sequence[type[Model]] | None,
 ) -> list[tuple[type[Model], BaseExtractor[Any]]]:
@@ -257,19 +289,11 @@ class SyncPipeline:
         if not instances:
             return
         extractor = rag.new_extractor(queryset.model)
-        # Extract the instances as get_queryset() loads them (annotations...).
-        loaded = {
-            instance.pk: instance
-            for instance in _kept_queryset(queryset.model, extractor).filter(
-                pk__in=[instance.pk for instance in instances]
-            )
-        }
+        loaded = _loaded_by_hook(instances, extractor, queryset.model)
         self._output.replace(
             {
-                _source_key(instance): (
-                    list(_own_documents(loaded[instance.pk], extractor))
-                    if instance.pk in loaded
-                    else []
+                _source_key(instance): _reloaded_documents(
+                    loaded.get(instance.pk), extractor
                 )
                 for instance in instances
             }
