@@ -328,8 +328,12 @@ class SyncPipeline:
             NotRegistered: the model of ``queryset`` is not registered, even
                 when ``queryset`` is empty.
             TypeError: its extractor's get_queryset() did not return a QuerySet
-                of the model's instances, even when ``queryset`` is empty.
+                of the model's instances, even when ``queryset`` is empty; or
+                ``queryset`` is sliced.
         """
+        if queryset.query.is_sliced:
+            msg = "run_queryset() needs a queryset that is not sliced"
+            raise TypeError(msg)
         extractor = rag.new_extractor(queryset.model)
         # hooked before the first chunk, a broken get_queryset() fails even
         # when there is nothing to run
