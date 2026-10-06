@@ -450,10 +450,13 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   `follow=["text_plugins"]` — replaces that parent's group, as a save of
   the parent would. A child moved to another parent replaces the groups of
   both; a parent deleted with its children (cascade) gets only its empty
-  group. Saving or deleting through a proxy of the child counts too.
-  Finding the parent costs no query when the foreign key targets its
-  primary key, one query for a `to_field`; a save that may move a child
-  reads its row as committed first, in `pre_save`. A model nothing follows
+  group. Saving or deleting through a proxy of the child counts too, and
+  so does saving a multi-table child of it. Finding the parent costs no
+  query when the foreign key targets its primary key, one query for a
+  `to_field`, none for a null foreign key; a save of an instance that
+  already has a primary key — it may move — reads its row as committed
+  first, in `pre_save`, so a model whose primary key gets a default (a
+  UUID) pays that read on each insert. A model nothing follows
   costs its saves no query, only a check, in Python, of what each
   registered model follows.
 
@@ -499,7 +502,8 @@ loading a fixture. Changes the ORM signals do not see:
 a related object whose text a registered model reads by any other way than
 a followed reverse foreign key or one-to-one leaves that model's documents
 stale until they are saved again: a forward foreign key or a many-to-many
-in `follow` (including a reverse one), a lookup path in `fields`, a
+in `follow` (including a reverse one), the reverse of a multi-column
+`ForeignObject`, a lookup path in `fields`, a
 `GenericRelation` (a photo's tags, say), or whatever a custom extractor
 reads — it has no `follow` to declare it. These are listed in the
 [roadmap](ROADMAP.md) as feature 11b. For all of these, run `sync_model_rag`, or sync the

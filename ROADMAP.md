@@ -566,19 +566,32 @@ reference.
     for a registered model, and a failing extractor is logged under the
     parent's source key.
   - **A move resyncs both parents**: `pre_save` reads the row as committed,
-    so that the parent it leaves is replaced too. A save that does not move
-    it replaces its parent once. A model nothing follows costs the save no
-    query.
+    so that the parent it leaves is replaced too. It does so whenever the
+    instance has a primary key, `adding` or not: an instance built with an
+    existing key is saved as an UPDATE, and can move too. A model whose
+    primary key gets a default (a UUID) pays that read on each insert. A
+    save that does not move it replaces its parent once. A model nothing
+    follows costs the save no query; a null foreign key schedules nothing.
   - **A delete** resyncs the parent without the deleted row; a parent
     deleted with its children (cascade) gets only its empty group.
-  - **Proxies**: a save or a delete through a proxy of the followed model
-    resyncs the parent too, and its proxies get the `post_delete` listener.
+  - **Proxies and multi-table children**: a save or a delete through a
+    proxy of the followed model resyncs the parent too, and its proxies get
+    the `post_delete` listener. A save of a multi-table child of the
+    followed model — a row of it too — resyncs the parent as well.
   - **Fast delete**: `post_delete` is connected to the followed model only
     while a registered model follows it; unregistering the last one gives
     its fast delete back. A reverse many-to-many in `follow` connects
-    nothing and sends nothing (11b).
+    nothing and sends nothing (11b); nor does the reverse of a multi-column
+    `ForeignObject`, where no single value names the parent.
   - **Several children of one parent** saved in one transaction replace its
     group once each: batching waits for 12b.
+  - **Left for later**, from the review: each save of any model checks, in
+    Python, what every registered model follows (an index of the followed
+    senders, built at registration, would avoid it); a save whose
+    `update_fields` names no followed foreign key still reads the row; a
+    cascade schedules one callback per deleted child; a group reached both
+    as a registered model and as a follower is replaced twice. None changes
+    what is sent; the duplicates belong with the batching of 12b.
 - [ ] **11b. Resync through lookup paths.** Generalize 11a to every
   dependency a registered model declares, written as a lookup path from it
   (`Registered.objects.filter(<path>=instance)`): forward foreign keys and
