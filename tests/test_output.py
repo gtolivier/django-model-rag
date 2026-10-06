@@ -376,12 +376,12 @@ def test_run_queryset_hands_an_empty_group_for_an_instance_without_documents() -
     ]
 
 
-@pytest.mark.django_db
-def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
-    # run() loads instances through get_queryset(): a draft it leaves out must
-    # not get indexed by run_instance() either, and the empty group deletes
-    # whatever the output still holds for it.
-    draft = Category.objects.create(name="Draft")
+def _register_published_category_extractor() -> list[Category]:
+    """Register a Category extractor whose get_queryset() leaves out "Draft".
+
+    It documents each category it extracts by its name, and returns the list
+    those categories are appended to, in the order it extracts them.
+    """
     extracted: list[Category] = []
 
     @rag.register_extractor(Category)
@@ -392,6 +392,17 @@ def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() 
         def extract(self, instance: Category) -> NormalizedDocument:
             extracted.append(instance)
             return self.build_document(instance, text=instance.name)
+
+    return extracted
+
+
+@pytest.mark.django_db
+def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
+    # run() loads instances through get_queryset(): a draft it leaves out must
+    # not get indexed by run_instance() either, and the empty group deletes
+    # whatever the output still holds for it.
+    draft = Category.objects.create(name="Draft")
+    extracted = _register_published_category_extractor()
 
     output = RecordingOutput()
     SyncPipeline(output).run_instance(draft)
@@ -409,16 +420,7 @@ def test_run_queryset_hands_an_empty_group_for_an_instance_its_queryset_omits() 
     # exclusion reach every instance would empty its group too.
     draft = Category.objects.create(name="Draft")
     lighting = Category.objects.create(name="Lighting")
-    extracted: list[Category] = []
-
-    @rag.register_extractor(Category)
-    class PublishedCategoryExtractor(BaseExtractor[Category]):
-        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
-            return queryset.exclude(name="Draft")
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            extracted.append(instance)
-            return self.build_document(instance, text=instance.name)
+    extracted = _register_published_category_extractor()
 
     output = RecordingOutput()
     SyncPipeline(output).run_queryset(Category.objects.order_by("pk"))
@@ -445,14 +447,7 @@ def test_run_instance_hands_the_documents_of_an_instance_its_queryset_keeps() ->
     # every instance, or tested the wrong one, would empty lighting's group.
     Category.objects.create(name="Draft")
     lighting = Category.objects.create(name="Lighting")
-
-    @rag.register_extractor(Category)
-    class PublishedCategoryExtractor(BaseExtractor[Category]):
-        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
-            return queryset.exclude(name="Draft")
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_published_category_extractor()
 
     output = RecordingOutput()
     SyncPipeline(output).run_instance(lighting)
@@ -471,11 +466,8 @@ def test_run_instance_hands_the_documents_of_an_instance_its_queryset_keeps() ->
     ]
 
 
-@pytest.mark.django_db
-def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() -> None:
-    # run() extracts the instances get_queryset() loads: an extractor relying
-    # on what the hook adds to them, here a count of products, must read it
-    # from run_queryset() too, though the queryset handed over lacks it.
+def _create_lighting_with_two_lamps() -> Category:
+    """Create the Lighting category with its Desk lamp and Floor lamp products."""
     lighting = Category.objects.create(name="Lighting")
     Product.objects.create(
         name="Desk lamp", description="A lamp.", price="20.00", category=lighting
@@ -483,6 +475,15 @@ def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() 
     Product.objects.create(
         name="Floor lamp", description="A tall lamp.", price="50.00", category=lighting
     )
+    return lighting
+
+
+@pytest.mark.django_db
+def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() -> None:
+    # run() extracts the instances get_queryset() loads: an extractor relying
+    # on what the hook adds to them, here a count of products, must read it
+    # from run_queryset() too, though the queryset handed over lacks it.
+    lighting = _create_lighting_with_two_lamps()
 
     @rag.register_extractor(Category)
     class CountingCategoryExtractor(BaseExtractor[Category]):
@@ -519,13 +520,7 @@ def test_pipeline_hands_once_the_documents_of_an_instance_a_join_repeats() -> No
     # Filtering across the reverse foreign key without distinct() yields
     # lighting once per matching product: a pipeline extracting every row
     # would hand its document twice in its group.
-    lighting = Category.objects.create(name="Lighting")
-    Product.objects.create(
-        name="Desk lamp", description="A lamp.", price="20.00", category=lighting
-    )
-    Product.objects.create(
-        name="Floor lamp", description="A tall lamp.", price="50.00", category=lighting
-    )
+    lighting = _create_lighting_with_two_lamps()
 
     @rag.register_extractor(Category)
     class LampCategoryExtractor(BaseExtractor[Category]):
@@ -556,13 +551,7 @@ def test_run_queryset_hands_and_extracts_once_an_instance_a_join_repeats() -> No
     # lighting once per matching product: run_queryset() reloading the
     # instances through get_queryset() and extracting every row would extract
     # lighting twice, and hand its document twice in its group.
-    lighting = Category.objects.create(name="Lighting")
-    Product.objects.create(
-        name="Desk lamp", description="A lamp.", price="20.00", category=lighting
-    )
-    Product.objects.create(
-        name="Floor lamp", description="A tall lamp.", price="50.00", category=lighting
-    )
+    lighting = _create_lighting_with_two_lamps()
     extracted: list[Category] = []
 
     @rag.register_extractor(Category)
@@ -592,6 +581,20 @@ def test_run_queryset_hands_and_extracts_once_an_instance_a_join_repeats() -> No
     assert extracted == [lighting]
 
 
+def _create_numbered_categories(count: int) -> list[str]:
+    """Create categories "Category 0" to "Category <count - 1>", in that order.
+
+    Return their source keys in primary key order.
+    """
+    Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(count)
+    )
+    return [
+        f"testapp.category:{pk}"
+        for pk in Category.objects.order_by("pk").values_list("pk", flat=True)
+    ]
+
+
 @pytest.mark.django_db
 def test_run_queryset_hands_its_instances_in_one_replace_per_chunk_in_pk_order() -> (
     None
@@ -600,19 +603,27 @@ def test_run_queryset_hands_its_instances_in_one_replace_per_chunk_in_pk_order()
     # queryset would miss the two batches. The queryset comes in reverse
     # primary key order: chunking it as given would put the newest instance
     # first, rather than alone in the last chunk as run() does.
-    Category.objects.bulk_create(
-        Category(name=f"Category {number}") for number in range(1001)
-    )
+    keys = _create_numbered_categories(1001)
     rag.register(Category, fields=["name"])
-    keys = [
-        f"testapp.category:{pk}"
-        for pk in Category.objects.order_by("pk").values_list("pk", flat=True)
-    ]
 
     output = RecordingOutput()
     SyncPipeline(output).run_queryset(Category.objects.order_by("-pk"))
 
     assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
+
+
+class ListingCategoryExtractor(BaseExtractor[Category]):
+    """A category extractor whose get_queryset() returns a list, not a QuerySet."""
+
+    # A list of the instances instead of a queryset is the slip under test:
+    # the type checker rightly rejects it.
+    def get_queryset(  # type: ignore[override]
+        self, queryset: QuerySet[Category]
+    ) -> list[Category]:
+        return list(queryset)
+
+    def extract(self, instance: Category) -> NormalizedDocument:
+        return self.build_document(instance, text=instance.name)
 
 
 @pytest.mark.django_db
@@ -621,18 +632,7 @@ def test_run_instance_rejects_a_get_queryset_that_returns_no_queryset() -> None:
     # hook: an empty group would delete the documents the output still holds
     # for lighting, as if get_queryset() had filtered it out.
     lighting = Category.objects.create(name="Lighting")
-
-    @rag.register_extractor(Category)
-    class ListingCategoryExtractor(BaseExtractor[Category]):
-        # A list of the instances instead of a queryset is the slip under
-        # test: the type checker rightly rejects it.
-        def get_queryset(  # type: ignore[override]
-            self, queryset: QuerySet[Category]
-        ) -> list[Category]:
-            return list(queryset)
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    rag.register_extractor(Category)(ListingCategoryExtractor)
 
     output = RecordingOutput()
     with pytest.raises(
@@ -652,18 +652,7 @@ def test_run_queryset_rejects_a_get_queryset_that_returns_no_queryset_when_empty
     # it until the queryset is no longer empty. Lighting exists but the
     # queryset leaves it out.
     Category.objects.create(name="Lighting")
-
-    @rag.register_extractor(Category)
-    class ListingCategoryExtractor(BaseExtractor[Category]):
-        # A list of the instances instead of a queryset is the slip under
-        # test: the type checker rightly rejects it.
-        def get_queryset(  # type: ignore[override]
-            self, queryset: QuerySet[Category]
-        ) -> list[Category]:
-            return list(queryset)
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    rag.register_extractor(Category)(ListingCategoryExtractor)
 
     output = RecordingOutput()
     with pytest.raises(
@@ -742,14 +731,8 @@ def test_pipeline_prunes_each_model_it_runs_in_order_under_its_own_label() -> No
 def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> None:
     # One more instance than a chunk holds: one replace per instance, or a
     # single replace for the whole model, would both miss the two batches.
-    Category.objects.bulk_create(
-        Category(name=f"Category {number}") for number in range(1001)
-    )
+    keys = _create_numbered_categories(1001)
     rag.register(Category, fields=["name"])
-    keys = [
-        f"testapp.category:{pk}"
-        for pk in Category.objects.order_by("pk").values_list("pk", flat=True)
-    ]
 
     output = RecordingOutput()
     SyncPipeline(output).run()
@@ -1054,14 +1037,7 @@ def test_pipeline_prune_drops_an_instance_its_queryset_omits() -> None:
     # table, rather than the ones the hook keeps, would keep it.
     draft = Category.objects.create(name="Draft")
     lighting = Category.objects.create(name="Lighting")
-
-    @rag.register_extractor(Category)
-    class PublishedCategoryExtractor(BaseExtractor[Category]):
-        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
-            return queryset.exclude(name="Draft")
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
+    _register_published_category_extractor()
 
     output = RecordingOutput()
     SyncPipeline(output).run()
@@ -1187,11 +1163,8 @@ def test_pipeline_hands_over_each_chunk_before_extracting_the_next() -> None:
     # The failure is on the first instance of the second chunk: a pipeline
     # extracting the whole model before handing anything over would lose the
     # 1000 documents already extracted.
-    Category.objects.bulk_create(
-        Category(name=f"Category {number}") for number in range(1001)
-    )
+    keys = _create_numbered_categories(1001)
     pks = list(Category.objects.order_by("pk").values_list("pk", flat=True))
-    keys = [f"testapp.category:{pk}" for pk in pks]
 
     @rag.register_extractor(Category)
     class FailingLastCategoryExtractor(BaseExtractor[Category]):
