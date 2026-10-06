@@ -36,6 +36,7 @@ from tests.testapp.models import (
     FeaturedProduct,
     Page,
     Product,
+    Seminar,
     Shelf,
     Showroom,
     Supplier,
@@ -43,6 +44,7 @@ from tests.testapp.models import (
     TextPlugin,
     TextPluginProxy,
     Topic,
+    Venue,
     Warehouse,
     Workshop,
 )
@@ -834,6 +836,47 @@ def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
     # Django's deletion Collector fast-deletes a model with no post_delete
     # listener: nothing listens to Course's deletes.
     assert not post_delete.has_listeners(Course)
+
+
+@pytest.mark.django_db
+def test_a_seminar_of_a_venue_following_a_reverse_multi_column_relation_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the kind of relation can keep the save
+    # and the delete from sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, following its seminars by the reverse of
+    # the multi-column ForeignObject ``venue``: Seminar itself is not.
+    rag.register(Venue, follow=["seminars"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Venue's own save never runs, so only the seminar's saves and delete
+    # below are observed.
+    Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        seminar = Seminar.objects.create(
+            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+        )
+        seminar.title = "Acoustics of large halls"
+        seminar.save()
+        seminar.delete()
+        # A ForeignObject has no database constraint: a seminar may name a
+        # venue no Venue row matches.
+        stray_seminar = Seminar.objects.create(
+            title="Lighting", venue_city="Paris", venue_name="Nowhere"
+        )
+        stray_seminar.title = "Stage lighting"
+        stray_seminar.save()
+        stray_seminar.delete()
+
+    # A multi-column relation is left out of the followed relations: the
+    # seminars' saves and deletes send nothing for the Venue.
+    assert _replaced(built_outputs) == []
 
 
 @pytest.mark.django_db

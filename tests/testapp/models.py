@@ -803,3 +803,35 @@ class Track(models.Model):
 
 class BonusTrack(Track):
     note = models.CharField(max_length=200)
+
+
+# --- A multi-column relation --------------------------------------------
+# A Seminar points to a Venue by two columns of its own, matched to the
+# Venue's city and name, unique together, through a ForeignObject: a relation
+# with no database column of its own. The Venue reaches its Seminars by the
+# reverse relation ``seminars``, matched to it by both columns.
+
+
+class Venue(models.Model):
+    city = models.CharField(max_length=100)
+    name = models.CharField(max_length=200)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["city", "name"], name="testapp_venue_city_name_unique"
+            )
+        ]
+
+
+class Seminar(models.Model):
+    title = models.CharField(max_length=200)
+    venue_city = models.CharField(max_length=100)
+    venue_name = models.CharField(max_length=200)
+    venue = models.ForeignObject(
+        Venue,
+        on_delete=models.CASCADE,
+        from_fields=["venue_city", "venue_name"],
+        to_fields=["city", "name"],
+        related_name="seminars",
+    )
