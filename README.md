@@ -336,16 +336,28 @@ class MyOutput:
 - **`run_queryset(queryset)`** sends the groups of the instances of
   `queryset` only, a queryset of a registered model, in batches: one
   `replace()` per chunk of 1000 instances, in primary key order whatever
-  order `queryset` sets. An instance a join repeats is sent once — though
-  one whose rows in `queryset` straddle two chunks is sent in both, with
-  the same documents. An instance without documents,
-  or that its extractor's queryset filters out, gets an empty group. It
-  never prunes: the model's other instances keep their documents. An empty
-  queryset sends nothing. A model that is not registered raises
-  `NotRegistered`, and an extractor whose `get_queryset()` returns no
-  `QuerySet` of the model's instances raises `TypeError`, both before
-  anything is sent, even for an empty queryset. Use it rather than one
-  `run_instance()` per instance to sync many instances at once.
+  order `queryset` sets. An instance a join in `queryset` repeats is
+  extracted and sent once, even when its rows straddle two chunks. The
+  instances are reloaded from the database `queryset` reads from, so a
+  queryset bound with `.using()` syncs that database's rows. An instance
+  without documents, or that its extractor's queryset filters out, gets an
+  empty group. It never prunes: the model's other instances keep their
+  documents. An empty queryset sends nothing. A model that is not
+  registered raises `NotRegistered`; an extractor whose `get_queryset()`
+  returns no `QuerySet` of the model's instances, or a sliced `queryset`,
+  raises `TypeError` — all before anything is sent, even for an empty
+  queryset. A slice would be reordered by primary key and sync other
+  instances than it names: to sync the 50 last updated products, filter on
+  a subquery of their primary keys — or, on MySQL, which rejects `LIMIT`
+  in such a subquery, read the primary keys first and filter on that list:
+
+  ```python
+  latest = Product.objects.order_by("-updated").values("pk")[:50]
+  pipeline.run_queryset(Product.objects.filter(pk__in=latest))
+  ```
+
+  Use it rather than one `run_instance()` per instance to sync many
+  instances at once.
 - **A document's source is the instance it was extracted from.** An
   extractor returning a document whose source is another instance fails
   with `TypeError`: it would replace that other instance's documents.

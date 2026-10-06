@@ -531,12 +531,24 @@ reference.
     group without being extracted, what it adds (an annotation) reaches
     `extract()`, and an instance a join repeats is sent once. An instance
     without documents gets an empty group too.
+  - **The caller's queryset names the instances, nothing more**: only its
+    primary keys are read, distinct — an instance a join in it repeats is
+    extracted and sent once, even across two chunks — and from the
+    database it reads from, so `.using()` is honoured.
   - **Errors before anything is sent**, even for an empty queryset: a model
-    that is not registered raises `NotRegistered`, a `get_queryset()` that
-    returns no `QuerySet` of the model's instances raises `TypeError`.
-  - **Not decided here**: `run_instance()` still extracts the instance it is
-    given rather than the one `get_queryset()` loads, so an annotation the
-    hook adds does not reach `extract()` there.
+    that is not registered raises `NotRegistered`; a `get_queryset()` that
+    returns no `QuerySet` of the model's instances, or a sliced queryset,
+    raises `TypeError`. Reordered by primary key, a slice would name other
+    instances; the README shows the `pk__in` subquery to use instead.
+  - **Not decided here**: a `values()` queryset works, since only its
+    primary keys are read, but no test pins it down.
+- [ ] **10g. `run_instance()` extracts the instance `get_queryset()`
+  loads.** It still extracts the instance it is given, after asking the
+  hook's queryset whether it keeps it, so what the hook adds (an
+  annotation, a `select_related`) does not reach `extract()` there, while
+  `run()` and `run_queryset()` extract the reloaded instance. Aligning it
+  costs no extra query: the query asking whether the hook keeps the
+  instance can load it.
 
 ## Not planned here
 
