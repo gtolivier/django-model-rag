@@ -426,6 +426,30 @@ def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read(
     ]
 
 
+@pytest.mark.django_db
+def test_pipeline_prune_drops_an_instance_its_queryset_omits() -> None:
+    # The draft exists all along, but get_queryset() filters it out: the run
+    # never reads it, so whatever the output still holds for it is stale. A
+    # prune keeping every primary key the model has once the run read the
+    # table, rather than the ones the hook keeps, would keep it.
+    draft = Category.objects.create(name="Draft")
+    lighting = Category.objects.create(name="Lighting")
+
+    @rag.register_extractor(Category)
+    class PublishedCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.exclude(name="Draft")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert output.pruned == [("testapp.category", {f"testapp.category:{lighting.pk}"})]
+    assert f"testapp.category:{draft.pk}" not in output.pruned[0][1]
+
+
 class ExtractionFailedError(Exception):
     """Raised by an extractor in the middle of a run."""
 
