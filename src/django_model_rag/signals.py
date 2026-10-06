@@ -10,6 +10,7 @@ from django.db import transaction
 from django.db.models import Model
 
 from django_model_rag.documents import model_source_key
+from django_model_rag.extractors import DeclaredFieldsExtractor, relations_by_accessor
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import rag
@@ -117,11 +118,35 @@ def sync_saved_instance(
     The output configuration was checked before the save, by
     check_output_before_save.
     """
-    registered_models = _registered_models(sender)
-    if raw or not _is_synced(registered_models):
+    if raw or not _signals_enabled():
         return
 
+    registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
+    for followed_by, followed_pk in _followers(sender, instance):
+        transaction.on_commit(_group_replacer(followed_by, followed_pk))
+
+
+def _followers(sender: type[Model], instance: Model) -> list[tuple[type[Model], Any]]:
+    """Return the registered models following ``instance``, with their primary keys.
+
+    Only the reverse foreign keys are looked at.
+    """
+    followers: list[tuple[type[Model], Any]] = []
+    for registered_model in rag.registered_models():
+        extractor = rag.new_extractor(registered_model)
+        if not isinstance(extractor, DeclaredFieldsExtractor):
+            continue
+        relations = relations_by_accessor(registered_model)
+        for accessor in extractor.follow:
+            relation = relations[accessor]
+            if getattr(relation, "related_model", None) is sender and hasattr(
+                relation, "field"
+            ):
+                followers.append(
+                    (registered_model, getattr(instance, relation.field.attname))
+                )
+    return followers
 
 
 def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
