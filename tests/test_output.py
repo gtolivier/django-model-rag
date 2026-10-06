@@ -283,6 +283,57 @@ def test_run_queryset_hands_the_documents_of_its_one_instance_without_pruning() 
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_only_its_instances_each_under_its_key_in_one_replace() -> (
+    None
+):
+    # Two products of three: the floor lamp exists but the queryset leaves it
+    # out. One replace per instance, rather than one for the queryset, would
+    # split the batch; running the whole model would hand the floor lamp too.
+    lighting = Category.objects.create(name="Lighting")
+    desk_lamp = Product.objects.create(
+        name="Desk lamp", description="A lamp.", price="20.00", category=lighting
+    )
+    Product.objects.create(
+        name="Floor lamp", description="A tall lamp.", price="50.00", category=lighting
+    )
+    reading_lamp = Product.objects.create(
+        name="Reading lamp", description="A lamp.", price="15.00", category=lighting
+    )
+
+    @rag.register_extractor(Product)
+    class ProductNameExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(
+        Product.objects.filter(name__in=["Desk lamp", "Reading lamp"])
+    )
+
+    assert output.replaced == [
+        {
+            f"testapp.product:{desk_lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=desk_lamp.pk,
+                ),
+            ],
+            f"testapp.product:{reading_lamp.pk}": [
+                NormalizedDocument(
+                    text="Reading lamp",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=reading_lamp.pk,
+                ),
+            ],
+        }
+    ]
+    assert output.calls == ["replace"]
+
+
+@pytest.mark.django_db
 def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
     # run() loads instances through get_queryset(): a draft it leaves out must
     # not get indexed by run_instance() either, and the empty group deletes
