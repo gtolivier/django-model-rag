@@ -9,7 +9,11 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
 from django.db.models.signals import post_delete
-from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
+from pytest_django import (
+    DjangoAssertNumQueries,
+    DjangoCaptureOnCommitCallbacks,
+    Settings,
+)
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
@@ -1228,6 +1232,42 @@ def test_deleting_a_registered_instance_with_signals_off_sends_nothing(
     # Nothing is even deferred to the commit, and no output is built.
     assert callbacks == []
     assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_saving_and_deleting_a_followed_instance_with_signals_off_costs_nothing_more(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_SIGNALS = False
+    # A working output, so that only the setting can keep the save and the
+    # delete from deferring anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # The commit callbacks run: one sending anything would build an output.
+    # With signals on, the save of an existing row would read its committed
+    # followers first: one query more than the save's own.
+    with (
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+        django_assert_num_queries(2) as queries,
+    ):
+        plugin.body = "We ship worldwide."
+        plugin.save()
+        plugin.delete()
+
+    # Nothing is deferred to the commit, and the only queries are the save's
+    # UPDATE and the delete's DELETE.
+    assert callbacks == []
+    statements = [query["sql"].split()[0] for query in queries.captured_queries]
+    assert statements == ["UPDATE", "DELETE"]
 
 
 @pytest.mark.django_db
