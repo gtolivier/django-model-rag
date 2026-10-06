@@ -241,7 +241,10 @@ query as the instances (`select_related`), and each followed reverse foreign
 key, many-to-many or generic relation in one more query
 (`prefetch_related`), whatever the number of instances; instances are read
 in chunks of 1000. Before each model's prune, one more query reads the
-primary keys its extractor's queryset keeps. `run_instance` makes one query
+primary keys its extractor's queryset keeps. `run_queryset` reads only the
+primary keys of the queryset it is given, in chunks of 1000 too, and loads
+each chunk's instances through the extractor's queryset in one more query,
+plus one per followed reverse relation. `run_instance` makes one query
 to ask the extractor's queryset whether it keeps the instance, then at most
 one query per relation it crosses.
 
@@ -261,8 +264,12 @@ of the model's instances: a `values()` queryset, or another model's, raises
 sets, and an instance repeated by a join is extracted once, from its
 first row, even when its rows straddle two of `run()`'s chunks. An instance
 the hook filters out is not extracted: `run()` skips it and prunes its
-documents, and `run_instance`, which already holds the instance, only asks
-the hook's queryset whether it keeps it, and sends an empty group if not.
+documents; `run_queryset` reloads the instances it is given through the
+hook's queryset, so that what the hook adds to them (an annotation, say)
+reaches `extract()`, and sends an empty group for an instance the hook
+filters out; and `run_instance`, which already holds the instance, only asks
+the hook's queryset whether it keeps it, and sends an empty group if not —
+it extracts the instance it was given, not one reloaded by the hook.
 
 ## The output
 
@@ -326,12 +333,37 @@ class MyOutput:
   extractor's queryset filters out, is removed. It never prunes, and sends
   nothing if the extractor raises. An unsaved instance (no primary key)
   raises `ValueError`.
+- **`run_queryset(queryset)`** sends the groups of the instances of
+  `queryset` only, a queryset of a registered model, in batches: one
+  `replace()` per chunk of 1000 instances, in primary key order whatever
+  order `queryset` sets. An instance a join in `queryset` repeats is
+  extracted and sent once, even when its rows straddle two chunks. The
+  instances are reloaded from the database `queryset` reads from, so a
+  queryset bound with `.using()` syncs that database's rows. An instance
+  without documents, or that its extractor's queryset filters out, gets an
+  empty group. It never prunes: the model's other instances keep their
+  documents. An empty queryset sends nothing. A model that is not
+  registered raises `NotRegistered`; an extractor whose `get_queryset()`
+  returns no `QuerySet` of the model's instances, or a sliced `queryset`,
+  raises `TypeError` — all before anything is sent, even for an empty
+  queryset. A slice would be reordered by primary key and sync other
+  instances than it names: to sync the 50 last updated products, filter on
+  a subquery of their primary keys — or, on MySQL, which rejects `LIMIT`
+  in such a subquery, read the primary keys first and filter on that list:
+
+  ```python
+  latest = Product.objects.order_by("-updated").values("pk")[:50]
+  pipeline.run_queryset(Product.objects.filter(pk__in=latest))
+  ```
+
+  Use it rather than one `run_instance()` per instance to sync many
+  instances at once.
 - **A document's source is the instance it was extracted from.** An
   extractor returning a document whose source is another instance fails
   with `TypeError`: it would replace that other instance's documents.
 
-`run()` and `run_instance()` return `None`: the documents go only to the
-output.
+`run()`, `run_queryset()` and `run_instance()` return `None`: the documents
+go only to the output.
 
 ## Synchronizing: `sync_model_rag`
 
@@ -454,12 +486,13 @@ change to a related object whose text a registered model reads — through
 `follow` or a lookup path — leaves that model's documents stale until they
 are saved again. For all of these, run `sync_model_rag`, or sync the
 instances concerned from a receiver of your own: in a
-`transaction.on_commit` callback, reload them and call
-`SyncPipeline(configured_output()).run_instance(instance)` for each.
-`run_instance` extracts the instance it is given as it stands in memory:
-reload it at the commit, as the signals do, rather than keep one loaded
-earlier in the transaction. Catch and log what the callback raises, as the
-signals do, or pass `robust=True` to `on_commit`: otherwise an error reaches
+`transaction.on_commit` callback, call
+`SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
+of them, which reads them at the commit and sends them in batches — or
+`run_instance(instance)` for a single one. `run_instance` extracts the
+instance it is given as it stands in memory: reload it at the commit, as
+the signals do, rather than keep one loaded earlier in the transaction.
+Catch and log what the callback raises, as the signals do, or pass `robust=True` to `on_commit`: otherwise an error reaches
 the code that committed, after the commit, and the callbacks queued after
 it do not run.
 

@@ -518,6 +518,37 @@ reference.
   can read the class's signature — rather than with the class's own
   `TypeError`. Found by the demo project, whose
   receivers resync the blocks of a saved page.
+- [x] **10f. `SyncPipeline.run_queryset(queryset)`.** The demo project's
+  receivers resynced the instances related to a saved one by calling
+  `run_instance()` once per instance: one `replace()` each. `run_queryset()`
+  sends the groups of the instances of a queryset of a registered model in
+  batches, like `run()`, without pruning: the model's other instances keep
+  their documents. Decided in this feature:
+  - **Batches as in `run()`**: one `replace()` per chunk of 1000 instances,
+    in primary key order whatever order the queryset sets.
+  - **The extractor's `get_queryset()` decides, as in `run()`**: each chunk
+    is reloaded through it, so an instance it filters out gets an empty
+    group without being extracted, what it adds (an annotation) reaches
+    `extract()`, and an instance a join repeats is sent once. An instance
+    without documents gets an empty group too.
+  - **The caller's queryset names the instances, nothing more**: only its
+    primary keys are read, distinct — an instance a join in it repeats is
+    extracted and sent once, even across two chunks — and from the
+    database it reads from, so `.using()` is honoured.
+  - **Errors before anything is sent**, even for an empty queryset: a model
+    that is not registered raises `NotRegistered`; a `get_queryset()` that
+    returns no `QuerySet` of the model's instances, or a sliced queryset,
+    raises `TypeError`. Reordered by primary key, a slice would name other
+    instances; the README shows the `pk__in` subquery to use instead.
+  - **Not decided here**: a `values()` queryset works, since only its
+    primary keys are read, but no test pins it down.
+- [ ] **10g. `run_instance()` extracts the instance `get_queryset()`
+  loads.** It still extracts the instance it is given, after asking the
+  hook's queryset whether it keeps it, so what the hook adds (an
+  annotation, a `select_related`) does not reach `extract()` there, while
+  `run()` and `run_queryset()` extract the reloaded instance. Aligning it
+  costs no extra query: the query asking whether the hook keeps the
+  instance can load it.
 
 ## Not planned here
 

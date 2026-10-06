@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Iterator, Sequence
 from itertools import groupby, islice
-from typing import Any
+from typing import Any, TypeVar
 
 from django.db.models import Model, QuerySet
 from django.db.models.query import ModelIterable
@@ -18,6 +18,8 @@ _CHUNK_SIZE = 1000
 # the order of a model's documents, whatever its extractor's get_queryset() asks
 _DOCUMENT_ORDER = "pk"
 
+_Item = TypeVar("_Item")
+
 
 def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Model]:
     """Iterate over ``model``'s instances, in primary key order.
@@ -27,7 +29,28 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     hooked = _hooked_queryset(
         model._default_manager.order_by(_DOCUMENT_ORDER), extractor, model
     )
-    return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+    return _in_document_order(hooked)
+
+
+def _in_document_order(queryset: QuerySet[Model]) -> Iterator[Model]:
+    """Iterate over the instances of ``queryset``, in primary key order."""
+    return queryset.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
+
+
+def _pks_in_document_order(queryset: QuerySet[Model]) -> Iterator[Any]:
+    """Iterate over the primary keys of ``queryset``'s instances, in their order."""
+    pks = queryset.order_by(_DOCUMENT_ORDER).values_list("pk", flat=True)
+    return _skipping_adjacent_repeats(pks.iterator(chunk_size=_CHUNK_SIZE))
+
+
+def _skipping_adjacent_repeats(rows: Iterable[_Item]) -> Iterator[_Item]:
+    """Yield ``rows``, skipping a repeat of the previous row.
+
+    A join can repeat an instance's row. Only adjacent repeats are skipped:
+    ``rows`` must come in primary key order, which puts all the rows of an
+    instance next to each other, so each is yielded once.
+    """
+    return (row for row, _ in groupby(rows))
 
 
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
@@ -39,14 +62,17 @@ def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]
 
 
 def _kept_queryset(
-    model: type[Model], extractor: BaseExtractor[Any]
+    model: type[Model], extractor: BaseExtractor[Any], using: str | None = None
 ) -> QuerySet[Model]:
     """Return ``model``'s instances that ``extractor``'s get_queryset() keeps.
+
+    They are read from the database alias ``using``, or the one Django's
+    routers pick by default.
 
     Raises:
         TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
     """
-    return _hooked_queryset(model._default_manager.all(), extractor, model)
+    return _hooked_queryset(model._default_manager.using(using), extractor, model)
 
 
 def _hooked_queryset(
@@ -67,6 +93,17 @@ def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
         TypeError: get_queryset() did not return a QuerySet of the model's instances.
     """
     return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
+
+
+def _reloaded_by_hook(pks: Iterable[Any], kept: QuerySet[Model]) -> dict[Any, Model]:
+    """Reload the instances of ``pks`` from ``kept``, as get_queryset() hooked it.
+
+    What get_queryset() adds to them (an annotation...) then reaches extract().
+    The result maps the primary key of each instance it keeps to its reload.
+    """
+    # streamed: a join in get_queryset() can multiply the rows to cache
+    reloads = kept.filter(pk__in=pks).iterator(chunk_size=_CHUNK_SIZE)
+    return {instance.pk: instance for instance in reloads}
 
 
 def _checked_queryset(
@@ -160,6 +197,39 @@ def _own_documents(
         yield document
 
 
+def _kept_documents(
+    instance: Model, extractor: BaseExtractor[Any]
+) -> list[NormalizedDocument]:
+    """Return the documents of ``instance``, none if get_queryset() filters it out.
+
+    An instance filtered out is not extracted.
+
+    Raises:
+        TypeError: ``extractor``'s get_queryset() did not return a QuerySet of
+            the model's instances, or its extract() returned a document of
+            another source.
+    """
+    if not _is_kept_by_hook(instance, extractor):
+        return []
+    return list(_own_documents(instance, extractor))
+
+
+def _reloaded_documents(
+    reloaded: Model | None, extractor: BaseExtractor[Any]
+) -> list[NormalizedDocument]:
+    """Return the documents of an instance as get_queryset() ``reloaded`` it.
+
+    There are none if get_queryset() filtered the instance out (``reloaded``
+    is then None): it is not extracted.
+
+    Raises:
+        TypeError: ``extractor``'s extract() returned a document of another source.
+    """
+    if reloaded is None:
+        return []
+    return list(_own_documents(reloaded, extractor))
+
+
 def _extractors_to_run(
     models: Sequence[type[Model]] | None,
 ) -> list[tuple[type[Model], BaseExtractor[Any]]]:
@@ -180,12 +250,20 @@ def _keyed_skipping_adjacent_repeats(
 ) -> Iterator[tuple[str, Model]]:
     """Pair ``instances`` with their source key, skipping a repeat of the previous key.
 
-    A join in get_queryset() can repeat an instance's row. Only adjacent repeats
-    are skipped: ``instances`` must come in primary key order, which puts all
-    the rows of an instance next to each other, so each is yielded once.
+    ``instances`` must come in primary key order (see _skipping_adjacent_repeats).
     """
-    for source_key, rows in groupby(instances, key=_source_key):
-        yield source_key, next(rows)
+    keyed = ((_source_key(instance), instance) for instance in instances)
+    return _skipping_adjacent_repeats(keyed)
+
+
+def _chunks(items: Iterable[_Item]) -> Iterator[list[_Item]]:
+    """Cut ``items`` into lists of ``_CHUNK_SIZE``, the last one possibly shorter.
+
+    Only one chunk is held at a time.
+    """
+    remaining = iter(items)
+    while chunk := list(islice(remaining, _CHUNK_SIZE)):
+        yield chunk
 
 
 def _groups(
@@ -198,6 +276,26 @@ def _groups(
     return {
         source_key: list(_own_documents(instance, extractor))
         for source_key, instance in keyed
+    }
+
+
+def _reloaded_groups(
+    pks: Sequence[Any], kept: QuerySet[Model], extractor: BaseExtractor[Any]
+) -> dict[str, list[NormalizedDocument]]:
+    """Group by source key the documents of the instances of ``pks``, reloaded.
+
+    They are reloaded from ``kept``, the queryset ``extractor``'s get_queryset()
+    hooked; an instance it filters out, or without documents, gets an empty group.
+
+    Raises:
+        TypeError: extract() returned a document of another source.
+    """
+    reloaded = _reloaded_by_hook(pks, kept)
+    return {
+        model_source_key(kept.model, pk): _reloaded_documents(
+            reloaded.get(pk), extractor
+        )
+        for pk in pks
     }
 
 
@@ -230,9 +328,30 @@ class SyncPipeline:
         without documents are handed over as empty groups.
         """
         keyed = _keyed_skipping_adjacent_repeats(_instances(model, extractor))
-        while chunk := list(islice(keyed, _CHUNK_SIZE)):
+        for chunk in _chunks(keyed):
             self._output.replace(_groups(chunk, extractor))
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
+
+    def run_queryset(self, queryset: QuerySet[Any]) -> None:
+        """Hand the documents of the instances of ``queryset`` only to the output.
+
+        Raises:
+            NotRegistered: the model of ``queryset`` is not registered, even
+                when ``queryset`` is empty.
+            TypeError: its extractor's get_queryset() did not return a QuerySet
+                of the model's instances, even when ``queryset`` is empty; or
+                ``queryset`` is sliced.
+        """
+        # No public API tells a sliced queryset from one that is not.
+        if queryset.query.is_sliced:
+            msg = "run_queryset() needs a queryset that is not sliced"
+            raise TypeError(msg)
+        extractor = rag.new_extractor(queryset.model)
+        # hooked before the first chunk, a broken get_queryset() fails even
+        # when there is nothing to run
+        kept = _kept_queryset(queryset.model, extractor, using=queryset.db)
+        for pks in _chunks(_pks_in_document_order(queryset)):
+            self._output.replace(_reloaded_groups(pks, kept, extractor))
 
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
@@ -251,9 +370,6 @@ class SyncPipeline:
         if instance.pk is None:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
-        documents = (
-            list(_own_documents(instance, extractor))
-            if _is_kept_by_hook(instance, extractor)
-            else []
+        self._output.replace(
+            {_source_key(instance): _kept_documents(instance, extractor)}
         )
-        self._output.replace({_source_key(instance): documents})
