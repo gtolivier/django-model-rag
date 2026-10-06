@@ -37,18 +37,23 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
-def _registered_models(sender: type[Model]) -> list[type[Model]]:
-    """Return the registered models whose groups ``sender``'s instances feed."""
-    # A proxy sends signals under its own sender: its group is the concrete model's.
+def _models_of_the_row(sender: type[Model]) -> tuple[type[Model], ...]:
+    """Return the models a row of ``sender`` is a row of, nearest first."""
+    # A proxy sends signals under its own sender: it is its concrete model.
     concrete_model = sender._meta.concrete_model
     if concrete_model is None:
-        return []
-    # A multi-table child feeds the group of its registered parents too.
-    candidates: tuple[type[Model], ...] = (
-        concrete_model,
-        *concrete_model._meta.get_parent_list(),
-    )
-    return [candidate for candidate in candidates if rag.is_registered(candidate)]
+        return ()
+    # A multi-table child is a row of each of its parents too.
+    return (concrete_model, *concrete_model._meta.get_parent_list())
+
+
+def _registered_models(sender: type[Model]) -> list[type[Model]]:
+    """Return the registered models whose groups ``sender``'s instances feed."""
+    return [
+        candidate
+        for candidate in _models_of_the_row(sender)
+        if rag.is_registered(candidate)
+    ]
 
 
 def _schedule_commit_callbacks(
@@ -211,12 +216,7 @@ def _followed_reverse_relations(
     registered_model: type[Model], sender: type[Model]
 ) -> list[ForeignObjectRel]:
     """Return the reverse relations to ``sender`` that ``registered_model`` follows."""
-    concrete_model = sender._meta.concrete_model
-    if concrete_model is None:
-        return []
-    # A proxy sends signals under its own sender: it is its concrete model. A
-    # multi-table child is a row of each of its parents too.
-    followed_models = (concrete_model, *concrete_model._meta.get_parent_list())
+    followed_models = _models_of_the_row(sender)
     return [
         relation
         for relation in rag.followed_reverse_relations(registered_model)
