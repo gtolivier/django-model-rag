@@ -219,17 +219,17 @@ def _followed_reverse_relations(
     ]
 
 
-def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
+def _group_replacer(registered_model: type[Model], pk: Any) -> Callable[[], None]:
     """Return a commit callback replacing the group of ``registered_model``'s row.
 
-    ``saved_pk`` is the primary key of that row: a saved instance's own, or a
+    ``pk`` is the primary key of that row: a saved instance's own, or a
     follower's of a saved or deleted instance.
     """
 
     def replace_group_as_committed() -> None:
         _send_group(
-            lambda: _replace_group(registered_model, saved_pk),
-            model_source_key(registered_model, saved_pk),
+            lambda: _replace_group(registered_model, pk),
+            model_source_key(registered_model, pk),
         )
 
     return replace_group_as_committed
