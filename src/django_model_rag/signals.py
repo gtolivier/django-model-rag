@@ -7,7 +7,7 @@ from typing import Any
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import Model
+from django.db.models import ForeignObjectRel, Model
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.extractors import DeclaredFieldsExtractor, relations_by_accessor
@@ -132,21 +132,28 @@ def _followers(sender: type[Model], instance: Model) -> list[tuple[type[Model], 
 
     Only the reverse foreign keys are looked at.
     """
-    followers: list[tuple[type[Model], Any]] = []
-    for registered_model in rag.registered_models():
-        extractor = rag.new_extractor(registered_model)
-        if not isinstance(extractor, DeclaredFieldsExtractor):
-            continue
-        relations = relations_by_accessor(registered_model)
-        for accessor in extractor.follow:
-            relation = relations[accessor]
-            if getattr(relation, "related_model", None) is sender and hasattr(
-                relation, "field"
-            ):
-                followers.append(
-                    (registered_model, getattr(instance, relation.field.attname))
-                )
-    return followers
+    return [
+        (registered_model, getattr(instance, relation.field.attname))
+        for registered_model in rag.registered_models()
+        for relation in _followed_reverse_relations(registered_model, sender)
+    ]
+
+
+def _followed_reverse_relations(
+    registered_model: type[Model], sender: type[Model]
+) -> list[ForeignObjectRel]:
+    """Return the reverse relations to ``sender`` that ``registered_model`` follows."""
+    extractor = rag.new_extractor(registered_model)
+    if not isinstance(extractor, DeclaredFieldsExtractor):
+        return []
+
+    relations = relations_by_accessor(registered_model)
+    followed = [relations[accessor] for accessor in extractor.follow]
+    return [
+        relation
+        for relation in followed
+        if isinstance(relation, ForeignObjectRel) and relation.related_model is sender
+    ]
 
 
 def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
