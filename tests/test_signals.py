@@ -1034,6 +1034,25 @@ def test_a_save_in_autocommit_with_no_output_setting_fails_and_writes_no_row() -
     assert not Category.objects.exists()
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_followed_save_with_no_output_setting_fails_and_writes_no_row() -> None:
+    # Created before Page is registered: with no MODEL_RAG_OUTPUT, its own
+    # save would fail otherwise.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT. Only the Page is
+    # registered, following its text plugins: TextPlugin itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # No transaction around the save (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the save must fail before its
+    # INSERT does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    assert not TextPlugin.objects.exists()
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_with_a_backend_lacking_replace_fails_at_the_save(
     settings: Settings,
