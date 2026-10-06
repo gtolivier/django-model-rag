@@ -25,11 +25,13 @@ from tests.recording import (
 )
 from tests.testapp.models import (
     Album,
+    Bin,
     BonusTrack,
     Category,
     CategoryProxy,
     ClearanceProduct,
     Course,
+    Depot,
     Exhibit,
     FeaturedProduct,
     Page,
@@ -723,6 +725,31 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_a_null_foreign_key_to_a_nullable_unique_column_sends_nothing_for_a_null_row(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Depot is registered, following its bins: Bin itself is not.
+    rag.register(Depot, follow=["bins"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Depot's own save never runs, so only the bin's save below is observed.
+    # Its code is null, as the bin's foreign key will be.
+    Depot.objects.create(name="Unnamed depot", code=None)
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        # Its nullable foreign key is null: it points to no Depot, not even to
+        # the one whose code is null, as the database never joins NULL to NULL.
+        Bin.objects.create(depot=None, label="Spare parts")
+
+    assert _replaced(built_outputs) == []
 
 
 @pytest.mark.django_db

@@ -618,6 +618,31 @@ class Shelf(models.Model):
     )
 
 
+# --- A foreign key to a unique, nullable column -------------------------
+# A Bin may point to a Depot by the Depot's unique code, a slug, not by its
+# primary key, or to nothing, its foreign key being nullable. A Depot's code
+# is nullable too: a Depot may have none yet, stored as None. The Depot
+# reaches its Bins by the reverse foreign key ``bins``, matched to it by that
+# code.
+
+
+class Depot(models.Model):
+    name = models.CharField(max_length=200)
+    code = models.SlugField(unique=True, blank=True, null=True)
+
+
+class Bin(models.Model):
+    label = models.CharField(max_length=100)
+    depot = models.ForeignKey(
+        Depot,
+        to_field="code",
+        related_name="bins",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
 # --- A default manager that already follows a foreign key --------------
 # A Listing's default manager follows its foreign key ``category`` with
 # select_related(), as a project may do so that every listing it shows comes
