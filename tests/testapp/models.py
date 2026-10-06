@@ -618,6 +618,31 @@ class Shelf(models.Model):
     )
 
 
+# --- A foreign key to a unique, nullable column -------------------------
+# A Bin may point to a Depot by the Depot's unique code, a slug, not by its
+# primary key, or to nothing, its foreign key being nullable. A Depot's code
+# is nullable too: a Depot may have none yet, stored as None. The Depot
+# reaches its Bins by the reverse foreign key ``bins``, matched to it by that
+# code.
+
+
+class Depot(models.Model):
+    name = models.CharField(max_length=200)
+    code = models.SlugField(unique=True, blank=True, null=True)
+
+
+class Bin(models.Model):
+    label = models.CharField(max_length=100)
+    depot = models.ForeignKey(
+        Depot,
+        to_field="code",
+        related_name="bins",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
 # --- A default manager that already follows a foreign key --------------
 # A Listing's default manager follows its foreign key ``category`` with
 # select_related(), as a project may do so that every listing it shows comes
@@ -747,3 +772,66 @@ class Engagement(models.Model):
 class CategoryProxy(Category):
     class Meta:
         proxy = True
+
+
+# --- A proxy of a followed model ----------------------------------------
+# A TextPluginProxy is a TextPlugin under another class: saving or deleting
+# one writes or deletes the TextPlugin's row, which its Page may follow, yet
+# Django sends the signals with the proxy, not TextPlugin, as their sender.
+
+
+class TextPluginProxy(TextPlugin):
+    class Meta:
+        proxy = True
+
+
+# --- A multi-table child of a followed model ----------------------------
+# An Album reaches its Tracks by the reverse foreign key ``tracks``. A
+# BonusTrack is a Track with a note of its own, in a table of its own: saving
+# one writes a Track row, which its Album may follow, yet Django sends the
+# save's signals with BonusTrack, not Track, as their sender.
+
+
+class Album(models.Model):
+    title = models.CharField(max_length=200)
+
+
+class Track(models.Model):
+    album = models.ForeignKey(Album, related_name="tracks", on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+
+
+class BonusTrack(Track):
+    note = models.CharField(max_length=200)
+
+
+# --- A multi-column relation --------------------------------------------
+# A Seminar points to a Venue by two columns of its own, matched to the
+# Venue's city and name, unique together, through a ForeignObject: a relation
+# with no database column of its own. The Venue reaches its Seminars by the
+# reverse relation ``seminars``, matched to it by both columns.
+
+
+class Venue(models.Model):
+    city = models.CharField(max_length=100)
+    name = models.CharField(max_length=200)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["city", "name"], name="testapp_venue_city_name_unique"
+            )
+        ]
+
+
+class Seminar(models.Model):
+    title = models.CharField(max_length=200)
+    venue_city = models.CharField(max_length=100)
+    venue_name = models.CharField(max_length=200)
+    venue = models.ForeignObject(
+        Venue,
+        on_delete=models.CASCADE,
+        from_fields=["venue_city", "venue_name"],
+        to_fields=["city", "name"],
+        related_name="seminars",
+    )

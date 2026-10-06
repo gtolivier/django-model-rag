@@ -6,7 +6,7 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Model
+from django.db.models import ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete
 
@@ -507,13 +507,49 @@ class Registry:
             NotRegistered: ``model`` is not registered.
         """
         self._require_registered(model)
+        senders = self._delete_senders(model)
         del self._registrations[model]
-        for sender in _model_and_proxies(model):
-            # A proxy of a model that stays registered keeps its listener.
-            concrete_model = sender._meta.concrete_model
-            if concrete_model is not None and self.is_registered(concrete_model):
-                continue
-            post_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
+        # A sender another registered model still listens to keeps its listener.
+        kept = {
+            sender
+            for registered in self._registrations
+            for sender in self._delete_senders(registered)
+        }
+        for sender in senders:
+            if sender not in kept:
+                post_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
+
+    def _delete_senders(self, model: type[Model]) -> list[type[Model]]:
+        """List the senders whose deletions change the group of ``model``.
+
+        They are ``model`` and its proxies, and the models of the reverse
+        foreign keys ``model`` follows and their proxies.
+        """
+        return _model_and_proxies(model) + [
+            sender
+            for relation in self.followed_reverse_relations(model)
+            for sender in _model_and_proxies(relation.related_model)
+        ]
+
+    def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
+        """List the reverse foreign keys ``model`` follows.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
+        # Relations are only read when something is followed: models may still
+        # be loading otherwise.
+        if not isinstance(extractor, DeclaredFieldsExtractor) or not extractor.follow:
+            return []
+
+        relations = relations_by_accessor(model)
+        followed = [relations[accessor] for accessor in extractor.follow]
+        return [
+            relation
+            for relation in followed
+            if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
+        ]
 
     def _add(
         self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
@@ -526,7 +562,7 @@ class Registry:
         self._registrations[model] = factory
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
-        for sender in _model_and_proxies(model):
+        for sender in self._delete_senders(model):
             post_delete.connect(
                 sync_deleted_instance, sender=sender, dispatch_uid=_delete_uid(sender)
             )

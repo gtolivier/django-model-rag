@@ -14,9 +14,14 @@ class ModelRagConfig(AppConfig):
     def ready(self) -> None:
         from django_model_rag.signals import (
             check_output_before_save,
+            remember_followers_before_save,
             sync_saved_instance,
         )
 
+        pre_save.connect(
+            remember_followers_before_save,
+            dispatch_uid="django_model_rag.remember_followers",
+        )
         pre_save.connect(
             check_output_before_save, dispatch_uid="django_model_rag.check_output"
         )

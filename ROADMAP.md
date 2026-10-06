@@ -340,11 +340,11 @@ reference.
   - text that comes from another model — through `follow`, a lookup path,
     or a parent that a custom extractor reads — goes stale when that model
     changes, unless the dependent instances are found and re-extracted.
-    Doing it automatically needs `m2m_changed` too, and a category followed
-    by thousands of products means thousands of extractions: it waits for
-    background tasks. Until then, a project connects its own receiver that
-    runs `run_instance` on the dependent instances, and the command repairs
-    the rest;
+    Reverse foreign keys and one-to-ones in `follow` are done (11a); the
+    rest needs `m2m_changed` too, and a category followed by thousands of
+    products means thousands of extractions (11b). Until then, a project
+    connects its own receiver that runs `run_queryset` on the dependent
+    instances, and the command repairs the rest;
   - background tasks: a slow output delays the response that saves the
     instance. A task — Django's `django.tasks` (6.0+; a separate package
     on 5.2), or a queue on Redis or RabbitMQ — would receive the model
@@ -353,12 +353,12 @@ reference.
   - retrying a failed signal: the output's job (transient errors) or a
     queue's, probably the project's call;
   - a context manager pausing the signals for a bulk import followed by a
-    sync (`with rag.signals_paused():`), on top of the setting;
+    sync (`with rag.signals_paused():`), on top of the setting (12a);
   - batching: each saved or deleted instance gets its own commit callback,
     which builds its own output and makes its own `replace()` call, so
     deleting a queryset of 10,000 rows makes 10,000 of each, in the
     committing request. Batching them per transaction needs state shared
-    by the callbacks of one transaction; background tasks may settle it;
+    by the callbacks of one transaction (12b);
   - a proxy registered instead of its concrete model gets no sync from the
     signals, which look up the concrete model and its parents;
   - a proxy defined after its concrete model is registered gets no
@@ -450,6 +450,11 @@ reference.
     `queryset.db`. No public signature changes: a `using=` argument would
     be a second source of truth, and changing `get_queryset()` would break
     the contract of feature 8.
+  - **Followers take the alias of the save** (feature 11a): the read of the
+    followers a row had before its save, the follower lookup through a
+    `to_field`, the follower's commit callback and its reload all use the
+    signal's `using`. Django keeps a relation within one database, so the
+    follower lives on the same alias as the followed row.
   - **The group key keeps no alias.** Adding it would break `source_key`
     (feature 1) and the split that `prune` makes at the colon, make `run()`
     know the alias, and re-key every index. With one followed database per
@@ -549,6 +554,74 @@ reference.
   `run()` and `run_queryset()` extract the reloaded instance. Aligning it
   costs no extra query: the query asking whether the hook keeps the
   instance can load it.
+- [x] **11a. Resync the instances that follow a reverse relation.** Saving
+  or deleting an instance that a registered model reaches through a reverse
+  foreign key or reverse one-to-one it follows — a text plugin of a page
+  registered with `follow=["text_plugins"]` — replaces that registered
+  instance's group at the commit, as a save of the instance itself does.
+  Requested by the demo project, whose receivers resynced a page when one of
+  its blocks was saved. Decided in this feature:
+  - **Fan-out 1**: the changed row points to its single parent through the
+    foreign key, so finding it costs no query when the key targets the
+    parent's primary key — one query for a `to_field`. A forward foreign key
+    or a many-to-many reaches many instances: that is 11b.
+  - **Same path as a save**: at the commit, the parent is reloaded,
+    extracted and its group replaced; `MODEL_RAG_SIGNALS`, raw saves and a
+    missing `MODEL_RAG_OUTPUT` (raised at the save or the delete) behave as
+    for a registered model, and a failing extractor is logged under the
+    parent's source key.
+  - **A move resyncs both parents**: `pre_save` reads the row as committed,
+    so that the parent it leaves is replaced too. It does so whenever the
+    instance has a primary key, `adding` or not: an instance built with an
+    existing key is saved as an UPDATE, and can move too. A model whose
+    primary key gets a default (a UUID) pays that read on each insert. A
+    save that does not move it replaces its parent once. A model nothing
+    follows costs the save no query; a null foreign key schedules nothing.
+  - **A delete** resyncs the parent without the deleted row; a parent
+    deleted with its children (cascade) gets only its empty group.
+  - **Proxies and multi-table children**: a save or a delete through a
+    proxy of the followed model resyncs the parent too, and its proxies get
+    the `post_delete` listener. A save of a multi-table child of the
+    followed model — a row of it too — resyncs the parent as well.
+  - **Fast delete**: `post_delete` is connected to the followed model only
+    while a registered model follows it; unregistering the last one gives
+    its fast delete back. A reverse many-to-many in `follow` connects
+    nothing and sends nothing (11b); nor does the reverse of a multi-column
+    `ForeignObject`, where no single value names the parent.
+  - **Several children of one parent** saved in one transaction replace its
+    group once each: batching waits for 12b.
+  - **Left for later**, from the review: each save of any model checks, in
+    Python, what every registered model follows (an index of the followed
+    senders, built at registration, would avoid it); a save whose
+    `update_fields` names no followed foreign key still reads the row; a
+    cascade schedules one callback per deleted child; a group reached both
+    as a registered model and as a follower is replaced twice. None changes
+    what is sent; the duplicates belong with the batching of 12b.
+- [ ] **11b. Resync through lookup paths.** Generalize 11a to every
+  dependency a registered model declares, written as a lookup path from it
+  (`Registered.objects.filter(<path>=instance)`): forward foreign keys and
+  one-to-ones in `follow`, many-to-many (with `m2m_changed`), the lookup
+  paths of `fields`, and a `depends_on` declaration for custom extractors
+  (`register_extractor`), which have no `follow` today. A change can then
+  reach many instances; deletes are resolved in `pre_delete`, while the
+  path still leads somewhere. 11a keeps its shortcut through the foreign
+  key's column, which costs no query.
+- [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
+  "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
+  — the `post_delete` listeners included, so every model keeps Django's fast
+  delete, which `MODEL_RAG_SIGNALS = False` does not give back today. The
+  wiring is decided at startup and redone on `setting_changed` (tests).
+  Adds `rag.signals_paused()`, a context manager for a bulk import followed
+  by a sync. A mode per model is not needed yet.
+- [ ] **12b. Notify mode.** The package sends a signal of its own at the
+  commit (`sources_changed`, say: the model and primary keys), once per
+  transaction and grouped by model, with the deleted keys apart. In `auto`,
+  the built-in receiver is connected to it and syncs; in `notify`, only
+  detection and the signal run — no extraction, no output, no output
+  check — and the project syncs when it wants (a task queue, a batch). Adds
+  a public `SyncPipeline.run_pks(model, pks)`, which sends an empty group
+  for a key whose row is gone. Settles the batching left open by 10 and
+  11a.
 
 ## Not planned here
 

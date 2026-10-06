@@ -9,7 +9,12 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
 from django.db.models.signals import post_delete
-from pytest_django import DjangoCaptureOnCommitCallbacks, Settings
+from django.test.utils import CaptureQueriesContext
+from pytest_django import (
+    DjangoAssertNumQueries,
+    DjangoCaptureOnCommitCallbacks,
+    Settings,
+)
 
 from django_model_rag import BaseExtractor, NormalizedDocument, rag
 from tests.recording import (
@@ -19,11 +24,29 @@ from tests.recording import (
     TrackedRecordingOutput,
 )
 from tests.testapp.models import (
+    Album,
+    Bin,
+    BonusTrack,
     Category,
     CategoryProxy,
     ClearanceProduct,
+    Course,
+    Depot,
+    Exhibit,
     FeaturedProduct,
+    Page,
     Product,
+    Seminar,
+    Shelf,
+    Showroom,
+    Supplier,
+    SupplierProfile,
+    TextPlugin,
+    TextPluginProxy,
+    Topic,
+    Venue,
+    Warehouse,
+    Workshop,
 )
 
 # The logger the package reports a failed commit callback on.
@@ -53,6 +76,11 @@ def _package_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRe
     return [record for record in caplog.records if record.name == PACKAGE_LOGGER]
 
 
+def _statements(queries: CaptureQueriesContext) -> list[str]:
+    """The kind of each captured query (its first SQL keyword), in query order."""
+    return [query["sql"].split()[0] for query in queries.captured_queries]
+
+
 def _register_categories_by_name() -> None:
     """Register Category, each instance extracted to one document: its name."""
 
@@ -69,6 +97,11 @@ def _register_products_by_name() -> None:
     class ProductExtractor(BaseExtractor[Product]):
         def extract(self, instance: Product) -> NormalizedDocument:
             return self.build_document(instance, text=instance.name)
+
+
+def _register_pages_following_their_plugins() -> None:
+    """Register only Page, following its text plugins: TextPlugin itself is not."""
+    rag.register(Page, follow=["text_plugins"])
 
 
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
@@ -282,6 +315,628 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group, with the plugin's text after the Page's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe build chairs by hand.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # TextPlugin is registered itself, and also followed by its Page.
+    _register_pages_following_their_plugins()
+    rag.register(TextPlugin, fields=["body"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per group is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both groups as committed: the plugin's own, with its body, and the
+    # Page's, with the plugin's text after the Page's own title.
+    assert received == {
+        f"testapp.textplugin:{plugin.pk}": [
+            NormalizedDocument(
+                text="We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=plugin.pk,
+                # Without a title field, the first declared field's text.
+                title="We build chairs by hand.",
+            ),
+        ],
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_moving_a_followed_instance_to_another_follower_replaces_the_groups_of_both(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's move below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    moved_plugin = TextPlugin.objects.create(
+        page=about, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_plugin.page = workshop
+        moved_plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Page is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Pages' groups as committed: the old Page keeps only its remaining
+    # plugin's text, the new Page gains the moved plugin's text.
+    assert received == {
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_moving_a_followed_instance_built_with_an_existing_pk_replaces_both_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's move below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    existing_plugin = TextPlugin.objects.create(
+        page=about, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+
+    # Not loaded: built anew with the existing row's primary key, so Django
+    # marks it as being added, yet saves it as an UPDATE of that row.
+    moved_plugin = TextPlugin(
+        pk=existing_plugin.pk, page=workshop, body="We build chairs by hand."
+    )
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The row was updated, not duplicated: the move is the one being specified.
+    assert TextPlugin.objects.filter(pk=existing_plugin.pk, page=workshop).exists()
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Page is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Pages' groups as committed: the old Page keeps only its remaining
+    # plugin's text, the new Page gains the moved plugin's text.
+    assert received == {
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_updating_a_followed_instance_in_place_replaces_the_group_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's update below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # The plugin stays on its Page: the Page it had before the save is the
+    # Page it has after.
+    with django_capture_on_commit_callbacks(execute=True):
+        plugin.body = "We ship worldwide."
+        plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call, not one for the Page before the save and another for
+    # the same Page after it.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_or_deleting_through_a_proxy_of_a_followed_model_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither TextPlugin nor its proxy is registered.
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the saves and deletes below are observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # Django sends post_save with the proxy as its sender, not TextPlugin.
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPluginProxy.objects.create(page=page, body="We ship worldwide.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group as committed, with the text of both plugins.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe build chairs by hand.\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+    built_outputs.clear()
+
+    # Django sends post_delete with the proxy as its sender, not TextPlugin.
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPluginProxy.objects.get(pk=plugin.pk).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group as committed: the deleted plugin's text is gone.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_multi_table_child_of_a_followed_model_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither Track nor BonusTrack is registered.
+    rag.register(Album, follow=["tracks"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Album's own save never runs, so only the bonus track's save is observed.
+    album = Album.objects.create(title="Abbey Road")
+
+    # Django sends post_save with BonusTrack as its sender, not Track, though
+    # the save writes a Track row the Album follows.
+    with django_capture_on_commit_callbacks(execute=True):
+        BonusTrack.objects.create(
+            album=album, title="Her Majesty", note="Hidden after the last track"
+        )
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Album's group as committed, with the track's title after its own.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.album:{album.pk}": [
+                NormalizedDocument(
+                    text="Abbey Road\n\nHer Majesty",
+                    source_app_label="testapp",
+                    source_model="album",
+                    source_pk=album.pk,
+                    title="Abbey Road",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_an_instance_followed_by_two_models_replaces_the_group_of_each(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # An Exhibit is followed twice, through each of its foreign keys: by its
+    # Showroom and by its Category. Exhibit itself is not registered.
+    rag.register(Showroom, follow=["exhibits"])
+    rag.register(Category, follow=["exhibits"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the exhibit's save below is observed.
+    north = Showroom.objects.create(name="North hall")
+    tools = Category.objects.create(name="Tools")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Exhibit.objects.create(showroom=north, label="Hammer", category=tools)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per follower is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both followers' groups as committed, each with the exhibit's label after
+    # its own name.
+    assert received == {
+        f"testapp.showroom:{north.pk}": [
+            NormalizedDocument(
+                text="North hall\n\nHammer",
+                source_app_label="testapp",
+                source_model="showroom",
+                source_pk=north.pk,
+                title="North hall",
+            ),
+        ],
+        f"testapp.category:{tools.pk}": [
+            NormalizedDocument(
+                text="Tools\n\nHammer",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=tools.pk,
+                title="Tools",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Supplier is registered, following its profile by the reverse
+    # one-to-one accessor ``profile``: SupplierProfile itself is not.
+    rag.register(Supplier, follow=["profile"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Supplier's own save never runs, so only the profile's save below is
+    # observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Supplier's group, with the profile's text after the Supplier's name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill\n\nKiln-dried boards.",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                    title="Birch Mill",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Warehouse is registered, following its shelves: Shelf itself is
+    # not.
+    rag.register(Warehouse, follow=["shelves"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Warehouse's own save never runs, so only the shelf's save below is
+    # observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The shelf's foreign key holds the Warehouse's code, "north", not its
+        # primary key.
+        Shelf.objects.create(warehouse=north, label="Timber")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Warehouse's group, under its primary key, not its code, with the
+    # shelf's label after the Warehouse's name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.warehouse:{north.pk}": [
+                NormalizedDocument(
+                    text="North depot\n\nTimber",
+                    source_app_label="testapp",
+                    source_model="warehouse",
+                    source_pk=north.pk,
+                    title="North depot",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_a_null_foreign_key_to_a_nullable_unique_column_sends_nothing_for_a_null_row(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Depot is registered, following its bins: Bin itself is not.
+    rag.register(Depot, follow=["bins"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Depot's own save never runs, so only the bin's save below is observed.
+    # Its code is null, as the bin's foreign key will be.
+    Depot.objects.create(name="Unnamed depot", code=None)
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        # Its nullable foreign key is null: it points to no Depot, not even to
+        # the one whose code is null, as the database never joins NULL to NULL.
+        Bin.objects.create(depot=None, label="Spare parts")
+
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_instance_with_no_follower_sends_nothing_and_logs_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its workshops: Workshop itself
+    # is not.
+    rag.register(Topic, follow=["workshops"])
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with (
+        caplog.at_level(logging.DEBUG, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Its nullable foreign key is null: no Topic follows this workshop.
+        Workshop.objects.create(title="Open bench", topic=None)
+
+    # Not even an output built, and nothing logged: there is no group to
+    # replace, not a failure to report.
+    assert built_outputs == []
+    assert _package_log_records(caplog) == []
+
+
+@pytest.mark.django_db
+def test_saving_a_followed_instance_with_no_follower_defers_nothing_to_the_commit(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its workshops: Workshop itself
+    # is not.
+    rag.register(Topic, follow=["workshops"])
+
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        # Its nullable foreign key is null: no Topic follows this workshop.
+        Workshop.objects.create(title="Open bench", topic=None)
+
+    # No follower, so no group to replace: nothing is even deferred to the
+    # commit.
+    assert callbacks == []
+
+
+@pytest.mark.django_db
+def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the kind of relation can keep the save
+    # and the delete from sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its courses by the reverse
+    # many-to-many ``courses``: Course itself is not.
+    rag.register(Topic, follow=["courses"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Topic's own save never runs, so only the course's saves and delete below
+    # are observed.
+    joinery = Topic.objects.create(
+        summary="Joining wood.", title="Joinery", slug="joinery"
+    )
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        course = Course.objects.create(title="Woodworking basics")
+        course.topics.add(joinery)
+        course.title = "Woodworking for beginners"
+        course.save()
+        course.delete()
+
+    # A Course row holds no key of a Topic: its saves and deletes send nothing
+    # for the Topic.
+    assert _replaced(built_outputs) == []
+    # Django's deletion Collector fast-deletes a model with no post_delete
+    # listener: nothing listens to Course's deletes.
+    assert not post_delete.has_listeners(Course)
+
+
+@pytest.mark.django_db
+def test_a_seminar_of_a_venue_following_a_reverse_multi_column_relation_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the kind of relation can keep the save
+    # and the delete from sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, following its seminars by the reverse of
+    # the multi-column ForeignObject ``venue``: Seminar itself is not.
+    rag.register(Venue, follow=["seminars"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Venue's own save never runs, so only the seminar's saves and delete
+    # below are observed.
+    Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        seminar = Seminar.objects.create(
+            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+        )
+        seminar.title = "Acoustics of large halls"
+        seminar.save()
+        seminar.delete()
+        # A ForeignObject has no database constraint: a seminar may name a
+        # venue no Venue row matches.
+        stray_seminar = Seminar.objects.create(
+            title="Lighting", venue_city="Paris", venue_name="Nowhere"
+        )
+        stray_seminar.title = "Stage lighting"
+        stray_seminar.save()
+        stray_seminar.delete()
+
+    # A multi-column relation is left out of the followed relations: the
+    # seminars' saves and deletes send nothing for the Venue.
+    assert _replaced(built_outputs) == []
 
 
 @pytest.mark.django_db
@@ -543,6 +1198,75 @@ def test_deleting_a_child_with_a_primary_key_of_its_own_empties_its_parents_grou
 
 
 @pytest.mark.django_db
+def test_deleting_a_followed_related_instance_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's delete below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    deleted_plugin = TextPlugin.objects.create(
+        page=page, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        deleted_plugin.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group as committed: the deleted plugin's text is gone, the
+    # remaining plugin's text stays after the Page's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_page_whose_followed_plugins_cascade_sends_only_its_empty_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the Page's delete below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    page_pk = page.pk
+    TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+
+    # The plugins are deleted with the Page by cascade: Django sends
+    # post_delete for each of them as well as for the Page.
+    with django_capture_on_commit_callbacks(execute=True):
+        page.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's empty group, once, and no replacement of it with documents.
+    assert _replaced(built_outputs) == [{f"testapp.page:{page_pk}": []}]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -587,6 +1311,49 @@ def test_saving_an_instance_of_a_model_since_unregistered_sends_nothing(
 
     # Not even an output built: the registration it once had is forgotten.
     assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the unregistration can keep the save and
+    # the delete from deferring anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # The same instance is updated once while the Page is still registered:
+    # its save sends the Page's group.
+    with django_capture_on_commit_callbacks(execute=True):
+        plugin.body = "We ship worldwide."
+        plugin.save()
+    replaced_while_registered = _replaced(built_outputs)
+    # Merged across replace calls: how many calls the update makes is not what
+    # this test is about.
+    assert list(_received_groups(built_outputs)) == [f"testapp.page:{page.pk}"]
+
+    rag.unregister(Page)
+
+    # Django's deletion Collector fast-deletes a model with no post_delete
+    # listener: nothing is left listening to TextPlugin's deletes.
+    assert not post_delete.has_listeners(TextPlugin)
+
+    # The commit callbacks run: one sending anything would reach the output.
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        plugin.body = "We build tables by hand."
+        plugin.save()
+        plugin.delete()
+
+    # The registration the Page once had is forgotten: nothing is deferred to
+    # the commit, and nothing more reaches the output.
+    assert callbacks == []
+    assert _replaced(built_outputs) == replaced_while_registered
 
 
 @pytest.mark.django_db
@@ -649,6 +1416,26 @@ def test_a_save_in_autocommit_with_no_output_setting_fails_and_writes_no_row() -
         Category.objects.create(name="Lighting")
 
     assert not Category.objects.exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_followed_instance_saved_with_no_output_setting_fails_and_writes_no_row() -> (
+    None
+):
+    # Created before Page is registered: with no MODEL_RAG_OUTPUT, its own
+    # save would fail otherwise.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+    _register_pages_following_their_plugins()
+
+    # No transaction around the save (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the save must fail before its
+    # INSERT does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    assert not TextPlugin.objects.exists()
 
 
 @pytest.mark.django_db
@@ -763,6 +1550,27 @@ def test_deleting_a_registered_instance_without_an_output_setting_fails_at_the_d
 
 
 @pytest.mark.django_db
+def test_deleting_a_followed_instance_without_an_output_setting_fails_at_the_delete(
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # Created before Page is registered: with no MODEL_RAG_OUTPUT, their own
+    # saves would fail otherwise.
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+    _register_pages_following_their_plugins()
+
+    # The commit callbacks are captured and never run: only an error raised by
+    # the delete itself is caught, not one deferred to the commit.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"),
+    ):
+        plugin.delete()
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_with_signals_off_sends_nothing_and_raises_nothing(
     settings: Settings,
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -807,6 +1615,40 @@ def test_deleting_a_registered_instance_with_signals_off_sends_nothing(
 
 
 @pytest.mark.django_db
+def test_saving_and_deleting_a_followed_instance_with_signals_off_costs_nothing_more(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_SIGNALS = False
+    # A working output, so that only the setting can keep the save and the
+    # delete from deferring anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # The commit callbacks run: one sending anything would build an output.
+    # With signals on, the save of an existing row would read its committed
+    # followers first: one query more than the save's own.
+    with (
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+        django_assert_num_queries(2) as queries,
+    ):
+        plugin.body = "We ship worldwide."
+        plugin.save()
+        plugin.delete()
+
+    # Nothing is deferred to the commit, and the only queries are the save's
+    # UPDATE and the delete's DELETE.
+    assert callbacks == []
+    statements = _statements(queries)
+    assert statements == ["UPDATE", "DELETE"]
+
+
+@pytest.mark.django_db
 def test_a_raw_save_of_a_registered_instance_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -827,6 +1669,51 @@ def test_a_raw_save_of_a_registered_instance_sends_nothing(
     # The row is there, yet not even an output is built, even after the commit.
     assert Category.objects.filter(name="Lighting").exists()
     assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_a_raw_save_of_a_followed_instance_defers_nothing_and_reads_nothing_first(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the raw saves can keep them from deferring
+    # anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    plugin = TextPlugin.objects.get(pk=plugin.pk)
+
+    # A new row saved as loaddata saves a fixture, then an existing row saved
+    # the way loaddata saves each deserialized object: save_base(raw=True).
+    # With a regular save, the existing row would read its committed followers
+    # first.
+    fixture = [
+        {
+            "model": "testapp.textplugin",
+            "pk": plugin.pk + 1,
+            "fields": {"page": page.pk, "body": "We ship worldwide."},
+        }
+    ]
+    with (
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+        CaptureQueriesContext(connection) as queries,
+    ):
+        for deserialized in serializers.deserialize("python", fixture):
+            deserialized.save()
+        plugin.body = "We build tables by hand."
+        plugin.save_base(raw=True)
+
+    # Both rows are written, yet nothing is deferred to the commit, no output
+    # is built, and the only queries are the saves' writes: none reads anything.
+    assert TextPlugin.objects.filter(page=page).count() == len(fixture) + 1
+    assert callbacks == []
+    assert built_outputs == []
+    statements = set(_statements(queries))
+    assert statements <= {"UPDATE", "INSERT"}
 
 
 class _RolledBackError(Exception):
@@ -884,6 +1771,46 @@ def test_an_extractor_failing_at_the_commit_of_a_save_is_logged_without_raising(
     assert record.exc_info is not None
     assert isinstance(record.exc_info[1], _ExtractionError)
     # Not even an empty group: what the output held for the instance is kept.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_a_follower_failing_at_the_commit_of_a_followed_save_is_logged_without_raising(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    def fail_to_extract(self: object, instance: object) -> NormalizedDocument:
+        raise _ExtractionError
+
+    # The Page's extractor, the one rag.register built, fails on every Page.
+    monkeypatch.setattr(type(rag.new_extractor(Page)), "extract", fail_to_extract)
+
+    # The commit callbacks run, and an error escaping them would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the Page's group, not the plugin, and carries the error.
+    assert f"testapp.page:{page.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], _ExtractionError)
+    # Not even an empty group: what the output held for the Page is kept.
     assert _replaced(built_outputs) == []
 
 
