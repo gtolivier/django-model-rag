@@ -699,6 +699,74 @@ def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row()
     assert not Category.objects.exists()
 
 
+def _save_with_signals_off(settings: Settings, category: Category) -> None:
+    """Turn the signals off, then save the category the regular way."""
+    settings.MODEL_RAG_SIGNALS = False
+    category.save()
+
+
+def _save_as_loaddata_does(settings: Settings, category: Category) -> None:
+    """Save the category's row as loaddata saves a fixture: a raw save.
+
+    The signals stay on: only the raw save can keep it from syncing.
+    """
+    fixture = [
+        {"model": "testapp.category", "pk": category.pk, "fields": {"name": "Lamps"}}
+    ]
+    for deserialized in serializers.deserialize("python", fixture):
+        deserialized.save()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "save",
+    [
+        pytest.param(_save_with_signals_off, id="signals_off"),
+        pytest.param(_save_as_loaddata_does, id="raw_save"),
+    ],
+)
+def test_a_category_followed_by_foreign_key_saved_unsynced_costs_nothing_more(
+    save: Callable[[Settings, Category], None],
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # A working output, so that only the setting or the raw save can keep the
+    # save from sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    lighting = Category.objects.create(name="Lighting")
+    Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits. With signals on and a regular save, the save of
+    # an existing row would look its followers up: one query more.
+    with (
+        django_assert_num_queries(1) as queries,
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+    ):
+        lighting.name = "Lamps"
+        save(settings, lighting)
+
+    # The row is written, yet the only query is the save's UPDATE: no lookup of
+    # followers. Nothing is deferred to the commit, and no output is built.
+    assert Category.objects.get(pk=lighting.pk).name == "Lamps"
+    statements = _statements(queries)
+    assert statements == ["UPDATE"]
+    assert callbacks == []
+    assert built_outputs == []
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
