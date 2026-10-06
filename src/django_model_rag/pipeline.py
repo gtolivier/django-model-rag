@@ -234,6 +234,11 @@ class SyncPipeline:
             self._output.replace(_groups(chunk, extractor))
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
+    def run_queryset(self, queryset: QuerySet[Any]) -> None:
+        """Hand the documents of the instances of ``queryset`` only to the output."""
+        for instance in queryset:
+            self.run_instance(instance)
+
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
 
