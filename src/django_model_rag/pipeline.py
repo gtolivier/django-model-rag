@@ -160,6 +160,23 @@ def _own_documents(
         yield document
 
 
+def _kept_documents(
+    instance: Model, extractor: BaseExtractor[Any]
+) -> list[NormalizedDocument]:
+    """Return the documents of ``instance``, none if get_queryset() filters it out.
+
+    An instance filtered out is not extracted.
+
+    Raises:
+        TypeError: ``extractor``'s get_queryset() did not return a QuerySet of
+            the model's instances, or its extract() returned a document of
+            another source.
+    """
+    if not _is_kept_by_hook(instance, extractor):
+        return []
+    return list(_own_documents(instance, extractor))
+
+
 def _extractors_to_run(
     models: Sequence[type[Model]] | None,
 ) -> list[tuple[type[Model], BaseExtractor[Any]]]:
@@ -242,11 +259,7 @@ class SyncPipeline:
         extractor = rag.new_extractor(queryset.model)
         self._output.replace(
             {
-                _source_key(instance): (
-                    list(_own_documents(instance, extractor))
-                    if _is_kept_by_hook(instance, extractor)
-                    else []
-                )
+                _source_key(instance): _kept_documents(instance, extractor)
                 for instance in instances
             }
         )
@@ -268,9 +281,6 @@ class SyncPipeline:
         if instance.pk is None:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
-        documents = (
-            list(_own_documents(instance, extractor))
-            if _is_kept_by_hook(instance, extractor)
-            else []
+        self._output.replace(
+            {_source_key(instance): _kept_documents(instance, extractor)}
         )
-        self._output.replace({_source_key(instance): documents})
