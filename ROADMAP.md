@@ -514,8 +514,9 @@ reference.
   is now importable from `django_model_rag`, as the command and the
   signals use it: same checks, a new output on each call. `OPTIONS` its
   class does not accept now fail with `ImproperlyConfigured`, naming the
-  class, before it is built — as the signals already checked — rather than
-  with the class's own `TypeError`. Found by the demo project, whose
+  class, before it is built — as the signals already checked, when Python
+  can read the class's signature — rather than with the class's own
+  `TypeError`. Found by the demo project, whose
   receivers resync the blocks of a saved page.
 
 ## Not planned here
