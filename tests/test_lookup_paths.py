@@ -10,7 +10,7 @@ from django.db.models import Model
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import rag
-from tests.recording import run_documents, run_instance_documents
+from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
 from tests.testapp.models import (
     Category,
     Course,
@@ -98,7 +98,7 @@ def test_one_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
     _create_product(name="Lamp", category_name="Lighting")
     rag.register(Product, fields=["name", "category__name"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -124,7 +124,7 @@ def test_lookup_path_loads_only_the_related_column_it_reads(
     Lesson.objects.create(title="Deep dive", topic=advanced)
     rag.register(Lesson, fields=["title", "topic__title"])
 
-    with django_assert_num_queries(1) as queries:
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -184,7 +184,7 @@ def test_several_hop_lookup_path_is_read_with_its_instances_in_a_single_query(
     _create_three_reviews_of_products_in_their_own_categories()
     rag.register(Review, fields=["title", "product__category__name"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -227,7 +227,7 @@ def test_title_field_lookup_path_outside_fields_is_read_in_a_single_query(
     _create_three_reviews_of_products_in_their_own_categories()
     rag.register(Review, fields=["title"], title_field="product__category__name")
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [(document.title, document.text) for document in documents] == [
@@ -274,7 +274,7 @@ def test_reverse_one_to_one_lookup_path_by_query_name_is_read_in_a_single_query(
         _create_supplier(name=name, profile_body=body)
     rag.register(Supplier, fields=["name", "supplier_profile__body"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -303,7 +303,7 @@ def test_reverse_one_to_one_past_the_first_link_by_query_name_is_read_in_one_que
         SupplierOrder, fields=["reference", "supplier__supplier_profile__body"]
     )
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -347,7 +347,7 @@ def test_lookup_path_and_follow_on_its_first_relation_are_read_in_a_single_query
         Review, fields=["title", "product__category__name"], follow=["product"]
     )
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [

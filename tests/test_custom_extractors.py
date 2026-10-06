@@ -11,7 +11,7 @@ from django_model_rag import (
     NormalizedDocument,
     rag,
 )
-from tests.recording import run_documents, run_instance_documents
+from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
 from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
 
 
@@ -241,7 +241,7 @@ def test_extractor_get_queryset_shapes_the_queryset_its_instances_are_read_from(
                 instance, text=" ".join(plugin.body for plugin in plugins)
             )
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
@@ -279,7 +279,7 @@ def test_extractor_get_queryset_may_select_the_related_objects_extract_reads(
                 instance, text=f"{instance.name}, filed under {instance.category.name}."
             )
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [
@@ -335,7 +335,7 @@ def test_extractor_attribute_named_like_a_registration_option_shapes_nothing(
         def extract(self, instance: Product) -> NormalizedDocument:
             return self.build_document(instance, text=instance.name)
 
-    with django_assert_num_queries(1) as queries:
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [

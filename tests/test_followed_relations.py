@@ -10,7 +10,7 @@ from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import rag
-from tests.recording import run_documents, run_instance_documents
+from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
 from tests.testapp.models import (
     AccordionItem,
     Band,
@@ -208,7 +208,7 @@ def test_followed_foreign_key_is_read_with_its_instances_in_a_single_query(
     )
     rag.register(Product, follow=["category"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -250,7 +250,7 @@ def test_followed_foreign_key_loads_only_the_text_columns_of_the_related(
     Lesson.objects.create(title="Spindles", topic=turning)
     rag.register(Lesson, follow=["topic"])
 
-    with django_assert_num_queries(1) as queries:
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -345,7 +345,7 @@ def test_title_from_str_loads_the_own_columns_str_reads_with_the_instances(
     Delivery.objects.create(quantity=5, delivered_on=date(2026, 4, 2), product=product)
     rag.register(Delivery, follow=["product"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.title for document in documents] == [
@@ -444,7 +444,7 @@ def test_followed_reverse_foreign_key_is_read_in_one_query_for_all_instances(
     TextPlugin.objects.create(page=visits, body="Book a week ahead.")
     rag.register(Page, follow=["text_plugins"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -487,7 +487,7 @@ def test_followed_reverse_foreign_key_loads_only_the_text_columns_of_the_related
     )
     rag.register(Category, follow=["products"])
 
-    with django_assert_num_queries(2) as queries:
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -513,7 +513,7 @@ def test_followed_reverse_foreign_key_to_a_unique_column_keeps_that_column_loade
     Shelf.objects.create(label="Varnish", warehouse=south)
     rag.register(Warehouse, fields=["name"], follow=["shelves"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -539,7 +539,7 @@ def test_followed_reverse_foreign_key_whose_manager_joins_another_foreign_key(
     Exhibit.objects.create(showroom=south, label="Spade", category=tools)
     rag.register(Showroom, follow=["exhibits"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -626,7 +626,7 @@ def test_followed_reverse_one_to_one_is_read_with_its_instances_in_a_single_quer
     PageIntro.objects.create(page=visits, body="Visits on Saturdays.")
     rag.register(Page, follow=["intro"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -649,7 +649,7 @@ def test_followed_reverse_one_to_one_with_its_own_query_name_uses_its_accessor(
     SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
     rag.register(Supplier, follow=["profile"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -672,7 +672,7 @@ def test_followed_forward_one_to_one_is_read_with_its_instances_in_a_single_quer
     PageIntro.objects.create(page=visits, body="Visits on Saturdays.")
     rag.register(PageIntro, follow=["page"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -742,7 +742,7 @@ def test_followed_many_to_many_is_read_in_one_query_for_all_instances(
     restoration.topics.add(carving, turning)
     rag.register(Course, follow=["topics"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -770,7 +770,7 @@ def test_followed_many_to_many_loads_only_the_text_columns_of_the_related(
     furniture.topics.add(carving, joinery)
     rag.register(Course, follow=["topics"])
 
-    with django_assert_num_queries(2) as queries:
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -799,7 +799,7 @@ def test_followed_many_to_many_through_a_key_to_a_unique_column_keeps_it_loaded(
     south.members.add(smith, weaver)
     rag.register(Guild, fields=["name"], follow=["members"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -825,7 +825,7 @@ def test_followed_reverse_many_to_many_through_a_key_to_a_unique_column_keeps_it
     ben.bands.add(trio, duo)
     rag.register(Musician, fields=["name"], follow=["bands"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -874,7 +874,7 @@ def test_followed_reverse_many_to_many_is_read_in_one_query_for_all_instances(
     carving.courses.add(restoration, furniture)
     rag.register(Topic, follow=["courses"])
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -909,7 +909,7 @@ def test_followed_generic_relation_is_read_in_one_query_for_all_instances(
     ContentType.objects.clear_cache()
     ContentType.objects.get_for_model(Photo)
 
-    with django_assert_num_queries(2):
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [document.text for document in documents] == [
@@ -939,7 +939,7 @@ def test_followed_generic_relation_loads_only_the_text_columns_of_the_related(
     ContentType.objects.clear_cache()
     ContentType.objects.get_for_model(Photo)
 
-    with django_assert_num_queries(2) as queries:
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [document.text for document in documents] == [

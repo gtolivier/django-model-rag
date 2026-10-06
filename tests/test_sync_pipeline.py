@@ -3,7 +3,7 @@ from django.core.exceptions import ImproperlyConfigured
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, rag
-from tests.recording import run_documents, run_instance_documents
+from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
 from tests.testapp.models import (
     Bookmark,
     Bulletin,
@@ -532,7 +532,7 @@ def test_declared_own_fields_load_only_their_columns(
     )
     rag.register(Digest, fields=["title"])
 
-    with django_assert_num_queries(1) as queries:
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [
@@ -553,7 +553,7 @@ def test_several_declared_own_fields_load_only_their_columns(
     faq, help_panel = create_faq_and_help_panels()
     rag.register(Panel, fields=["label", "body"])
 
-    with django_assert_num_queries(1) as queries:
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [
@@ -575,7 +575,7 @@ def test_own_title_field_outside_the_declared_fields_is_loaded_with_them(
     faq, help_panel = create_faq_and_help_panels()
     rag.register(Panel, fields=["body"], title_field="heading")
 
-    with django_assert_num_queries(1) as queries:
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY) as queries:
         documents = run_documents()
 
     assert [
@@ -598,7 +598,7 @@ def test_own_language_field_is_loaded_with_the_instances(
     english = Bulletin.objects.create(title="Hello", locale="en")
     rag.register(Bulletin, fields=["title"], language_field="locale")
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [
@@ -619,7 +619,7 @@ def test_guessed_language_field_is_loaded_with_the_instances(
     english = Notice.objects.create(title="Hello", language="en")
     rag.register(Notice, fields=["title"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [
@@ -640,7 +640,7 @@ def test_own_url_field_is_loaded_with_the_instances(
     example = Bookmark.objects.create(title="Example", link="https://example.com/b")
     rag.register(Bookmark, fields=["title"], url_field="link")
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [
@@ -665,7 +665,7 @@ def test_foreign_key_the_default_manager_selects_stays_loaded_and_joined(
     rake = Listing.objects.create(title="Rake", link="/rake/", category=garden)
     rag.register(Listing, fields=["title"], url_field="link")
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [
@@ -691,7 +691,7 @@ def test_relation_the_default_manager_selects_past_a_lookup_path_stays_joined(
     autumn = Offer.objects.create(title="Autumn sale", product=rake)
     rag.register(Offer, fields=["title", "product__name"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert [(document.source_pk, document.text) for document in documents] == [

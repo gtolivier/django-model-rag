@@ -3,6 +3,7 @@ from collections.abc import Set as AbstractSet
 
 import pytest
 from django.db.models import QuerySet
+from pytest_django import Settings
 
 from django_model_rag import (
     BaseExtractor,
@@ -380,6 +381,49 @@ def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> 
     SyncPipeline(output).run()
 
     assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
+
+
+class CategoryCreatingOutput(RecordingOutput):
+    """A recording output whose first replace creates a category.
+
+    The category is saved after the run read the table, as a save in another
+    process would while sync_model_rag runs.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.created: list[Category] = []
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        if not self.created:
+            self.created.append(Category.objects.create(name="Desks"))
+        super().replace(groups)
+
+
+@pytest.mark.django_db
+def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read(
+    settings: Settings,
+) -> None:
+    # The output plays the part of the post_save signal: with the package's
+    # own signals on, the save would also need an output of its own.
+    settings.MODEL_RAG_SIGNALS = False
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so desks is saved after the read. A prune
+    # keeping only the extracted keys would delete the documents its own
+    # signal handed over.
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryCreatingOutput()
+    SyncPipeline(output).run()
+
+    [desks] = output.created
+    assert output.pruned == [
+        (
+            "testapp.category",
+            {f"testapp.category:{lighting.pk}", f"testapp.category:{desks.pk}"},
+        )
+    ]
 
 
 class ExtractionFailedError(Exception):
