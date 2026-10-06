@@ -644,6 +644,37 @@ def test_run_instance_rejects_a_get_queryset_that_returns_no_queryset() -> None:
 
 
 @pytest.mark.django_db
+def test_run_queryset_rejects_a_get_queryset_that_returns_no_queryset_when_empty() -> (
+    None
+):
+    # A broken hook is a programming error, which run() reports even for a
+    # model without instances: staying silent on an empty queryset would hide
+    # it until the queryset is no longer empty. Lighting exists but the
+    # queryset leaves it out.
+    Category.objects.create(name="Lighting")
+
+    @rag.register_extractor(Category)
+    class ListingCategoryExtractor(BaseExtractor[Category]):
+        # A list of the instances instead of a queryset is the slip under
+        # test: the type checker rightly rejects it.
+        def get_queryset(  # type: ignore[override]
+            self, queryset: QuerySet[Category]
+        ) -> list[Category]:
+            return list(queryset)
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    with pytest.raises(
+        TypeError, match=r"ListingCategoryExtractor\.get_queryset\(\).*QuerySet"
+    ):
+        SyncPipeline(output).run_queryset(Category.objects.filter(name="Desks"))
+
+    assert output.calls == []
+
+
+@pytest.mark.django_db
 def test_pipeline_prunes_a_model_without_instances_keeping_no_key() -> None:
     # No instance left: every document the output still holds for the model
     # is stale, and only prune can delete them.
