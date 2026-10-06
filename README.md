@@ -258,7 +258,8 @@ instances are loaded from by overriding `get_queryset(queryset)` — to add
 `select_related` or `prefetch_related`, say — and must return a `QuerySet`
 of the model's instances: a `values()` queryset, or another model's, raises
 `TypeError`. The documents stay in primary key order whatever order the hook
-sets, and an instance repeated by a join is extracted once. An instance
+sets, and an instance repeated by a join is extracted once, from its
+first row, even when its rows straddle two of `run()`'s chunks. An instance
 the hook filters out is not extracted: `run()` skips it and prunes its
 documents, and `run_instance`, which already holds the instance, only asks
 the hook's queryset whether it keeps it, and sends an empty group if not.

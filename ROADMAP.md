@@ -487,8 +487,8 @@ reference.
     keeps once the model is run, those read without documents included:
     their empty group already removed what the output held for them. An
     instance saved with documents during the run, once its chunk was
-    handed over, keeps what its signal sent. The run no longer holds any set of keys while it reads, so 10b's
-    memory trade-off is gone.
+    handed over, keeps what its signal sent. The run no longer holds any
+    set of keys while it reads, so 10b's memory trade-off is gone.
   - **Nothing new is asked of an output**: the empty group is the existing
     contract, and django-minimal-rag keeps working without this package.
     The cost is one more group per instance without documents on every
@@ -496,15 +496,16 @@ reference.
     `ConsoleOutput` writes a `<key> removed` line for each. The README
     suggests filtering such instances out in `get_queryset()` on a large
     table.
+  - **An instance a join repeats is handed over once, from its first row**,
+    even when its rows straddle two chunks: without it, an empty group in
+    the later chunk would delete what the earlier one sent. Rows come in
+    primary key order, so an instance's rows are adjacent, and the run only
+    remembers the previous key, not a set of every key read.
   - **Tests**: an output whose `replace()` renames, during the run, an
-    instance read with an empty name, with the signals off.
-
-  Still open:
-  - a join in `get_queryset()` that repeats an instance across two chunks,
-    with an annotation that differs between its rows, sends one group per
-    chunk: the later one wins, though within a chunk the first row does. In
-    10b, a later chunk producing nothing sent no group and kept the earlier
-    documents.
+    instance read with an empty name, with the signals off; an output that
+    holds what it receives shows the documents of that save survive the
+    prune. A join annotating each category with its products' names puts
+    one category's rows on both sides of a chunk boundary.
 
 ## Not planned here
 
