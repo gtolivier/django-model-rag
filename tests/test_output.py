@@ -2,17 +2,25 @@ from collections.abc import Mapping, Sequence
 from collections.abc import Set as AbstractSet
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models import F, QuerySet
 from pytest_django import Settings
 
+import django_model_rag
 from django_model_rag import (
     BaseExtractor,
     DocumentOutput,
     NormalizedDocument,
     SyncPipeline,
+    configured_output,
     rag,
 )
-from tests.recording import RecordingOutput
+from tests.recording import (
+    FAILING_ON_KEY_BACKEND,
+    TRACKED_BACKEND,
+    RecordingOutput,
+    TrackedRecordingOutput,
+)
 from tests.testapp.models import AccordionItem, Category, Page, Product
 
 
@@ -86,6 +94,40 @@ def test_a_class_whose_prune_takes_a_mutable_set_is_not_a_document_output() -> N
     output: DocumentOutput = MutableSetPruneOutput()  # type: ignore[assignment]
 
     assert hasattr(output, "prune")
+
+
+def test_configured_output_is_public_and_builds_the_configured_backend(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # A project wiring its own pipeline, outside the command and the signals,
+    # builds the configured output from the package root, as it imports
+    # SyncPipeline. The command's tests cover how OPTIONS are passed.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    output = configured_output()
+
+    [built] = built_outputs
+    assert output is built
+    assert "configured_output" in django_model_rag.__all__
+
+
+def test_configured_output_rejects_options_its_backend_cannot_take_building_nothing(
+    settings: Settings, built_outputs: list[TrackedRecordingOutput]
+) -> None:
+    # FailingOnKeyOutput requires a failing_source_key the OPTIONS lack: the
+    # misconfiguration must be reported as one, naming the output, rather
+    # than as the TypeError its constructor would raise.
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"collection": "catalog"},
+    }
+
+    with pytest.raises(
+        ImproperlyConfigured, match="FailingOnKeyOutput.*failing_source_key"
+    ):
+        configured_output()
+
+    assert built_outputs == []
 
 
 @pytest.mark.django_db

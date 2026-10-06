@@ -506,6 +506,18 @@ reference.
     holds what it receives shows the documents of that save survive the
     prune. A join annotating each category with its products' names puts
     one category's rows on both sides of a chunk boundary.
+- [x] **10e. `configured_output` in the public API.** The README tells a
+  project to call `run_instance()` from a receiver of its own for what the
+  signals miss — a related object whose text a registered model reads, a
+  `QuerySet.update()` — but the output built from `MODEL_RAG_OUTPUT` was
+  only reachable through `django_model_rag.output`. `configured_output()`
+  is now importable from `django_model_rag`, as the command and the
+  signals use it: same checks, a new output on each call. `OPTIONS` its
+  class does not accept now fail with `ImproperlyConfigured`, naming the
+  class, before it is built — as the signals already checked, when Python
+  can read the class's signature — rather than with the class's own
+  `TypeError`. Found by the demo project, whose
+  receivers resync the blocks of a saved page.
 
 ## Not planned here
 

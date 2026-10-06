@@ -2,7 +2,7 @@
 
 from django_model_rag.documents import NormalizedDocument
 from django_model_rag.extractors import BaseExtractor
-from django_model_rag.output import DocumentOutput
+from django_model_rag.output import DocumentOutput, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import AlreadyRegistered, NotRegistered, rag
 
@@ -13,5 +13,6 @@ __all__ = [
     "NormalizedDocument",
     "NotRegistered",
     "SyncPipeline",
+    "configured_output",
     "rag",
 ]

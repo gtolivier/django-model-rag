@@ -7,8 +7,7 @@ from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db.models import Model
 
-from django_model_rag import SyncPipeline, rag
-from django_model_rag.output import configured_output
+from django_model_rag import SyncPipeline, configured_output, rag
 
 _LABELS_ARGUMENT = "labels"
 _VERBOSITY_OPTION = "verbosity"

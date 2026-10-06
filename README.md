@@ -359,15 +359,27 @@ MODEL_RAG_OUTPUT = {
 }
 ```
 
-The command imports `BACKEND`, builds a new instance with `OPTIONS` as its
-keyword arguments, and checks the class has a callable `replace` and
-`prune`. It does all this before running any model. A missing setting,
-a setting that is not a dict or has no `BACKEND`, a `BACKEND` that is not a
-string, cannot be imported or names something other than a class, `OPTIONS`
-that are not a dict, and a class without one of the two methods fail with
-`ImproperlyConfigured`. So does a label naming no model of an installed app,
-or a model that is not registered, but with `CommandError`. Both are raised
-before anything is sent.
+The command imports `BACKEND`, checks the class has a callable `replace`
+and `prune` and accepts `OPTIONS`, then builds a new instance with
+`OPTIONS` as its keyword arguments. It does all this before running any
+model. A missing setting, a setting that is not a dict or has no
+`BACKEND`, a `BACKEND` that is not a string, cannot be imported or names
+something other than a class, `OPTIONS` that are not a dict, a class
+without one of the two methods, and `OPTIONS` the class does not accept
+(when Python can read its signature) fail with `ImproperlyConfigured`. A
+label naming no model of an installed app, or a model that is not
+registered, fails too, but with `CommandError`. Both are raised before
+anything is sent.
+
+Your own code builds the same output with `configured_output()`, importable
+from `django_model_rag`: it reads the setting, makes the same checks as the
+command, and returns a new instance of `BACKEND` built with `OPTIONS`.
+
+```python
+from django_model_rag import SyncPipeline, configured_output
+
+SyncPipeline(configured_output()).run_instance(instance)
+```
 
 **Trying it out.** `django_model_rag.output.ConsoleOutput` writes what it
 receives to standard output, or to the stream it is given
@@ -440,8 +452,16 @@ their proxies. Raw saves, such as `loaddata` loading a fixture. Changes the
 ORM signals do not see: `QuerySet.update()`, `bulk_create()`, raw SQL. A
 change to a related object whose text a registered model reads — through
 `follow` or a lookup path — leaves that model's documents stale until they
-are saved again. For all of these, run `sync_model_rag`, or call
-`SyncPipeline(output).run_instance(instance)` from a receiver of your own.
+are saved again. For all of these, run `sync_model_rag`, or sync the
+instances concerned from a receiver of your own: in a
+`transaction.on_commit` callback, reload them and call
+`SyncPipeline(configured_output()).run_instance(instance)` for each.
+`run_instance` extracts the instance it is given as it stands in memory:
+reload it at the commit, as the signals do, rather than keep one loaded
+earlier in the transaction. Catch and log what the callback raises, as the
+signals do, or pass `robust=True` to `on_commit`: otherwise an error reaches
+the code that committed, after the commit, and the callbacks queued after
+it do not run.
 
 **Failures.** An extractor, an output or a database error reloading the
 instance that raises at the commit is logged with `logger.exception` on the

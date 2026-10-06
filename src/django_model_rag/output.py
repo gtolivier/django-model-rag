@@ -63,18 +63,37 @@ def configured_output() -> DocumentOutput:
     """Build the output named by the BACKEND of the output setting.
 
     Its OPTIONS, if any, are passed to that class as keyword arguments.
+
+    Raises:
+        ImproperlyConfigured: the output setting is missing or not a dict; its
+            BACKEND is missing, not a string, cannot be imported, is not a
+            class or lacks a callable ``replace`` or ``prune``; its OPTIONS
+            are not a dict; or the BACKEND class's signature rejects its
+            OPTIONS, which is checked before building it.
+        Exception: whatever the BACKEND class raises while being built,
+            unchanged. That includes its own TypeError for OPTIONS it rejects
+            when its signature cannot be read, since they could not be checked
+            beforehand.
     """
-    output_setting = _output_setting()
-    output_class = _validated_output_class(output_setting)
-    return output_class(**_options(output_setting))
+    output_class, options = _validated_output_configuration()
+    return output_class(**options)
 
 
 def check_output_configuration() -> None:
     """Fail unless the output setting names a usable output, building nothing."""
+    _validated_output_configuration()
+
+
+def _validated_output_configuration() -> tuple[type[DocumentOutput], dict[str, Any]]:
+    """Return the configured output class and its OPTIONS, building nothing.
+
+    Fail unless the output setting names a usable class that accepts them.
+    """
     output_setting = _output_setting()
-    _require_accepted_options(
-        _validated_output_class(output_setting), _options(output_setting)
-    )
+    output_class = _validated_output_class(output_setting)
+    options = _options(output_setting)
+    _require_accepted_options(output_class, options)
+    return output_class, options
 
 
 def _require_accepted_options(
