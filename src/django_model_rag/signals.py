@@ -109,6 +109,30 @@ def check_output_before_save(
     check_output_configuration()
 
 
+def remember_followers_before_save(
+    sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
+) -> None:
+    """Keep the followers the row had before the save, for the commit to replace.
+
+    A save may move the row to other followed rows: the old ones change too.
+    """
+    if raw or instance._state.adding or not _signals_enabled():
+        return
+
+    # A model nothing follows costs the save no query.
+    if not any(
+        _followed_reverse_relations(registered_model, sender)
+        for registered_model in rag.registered_models()
+    ):
+        return
+
+    committed_instance = _committed_instance(sender, instance.pk)
+    if committed_instance is not None:
+        instance._model_rag_previous_followers = _followers(  # type: ignore[attr-defined]  # ad hoc attribute read back by sync_saved_instance
+            sender, committed_instance
+        )
+
+
 def sync_saved_instance(
     sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
 ) -> None:
@@ -123,6 +147,9 @@ def sync_saved_instance(
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
     _schedule_follower_replacements(_followers(sender, instance))
+    _schedule_follower_replacements(
+        getattr(instance, "_model_rag_previous_followers", [])
+    )
 
 
 def _schedule_follower_replacements(followers: list[tuple[type[Model], Any]]) -> None:
