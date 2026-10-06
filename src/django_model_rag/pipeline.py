@@ -40,8 +40,17 @@ def _in_document_order(queryset: QuerySet[Model]) -> Iterator[Model]:
 def _pks_in_document_order(queryset: QuerySet[Model]) -> Iterator[Any]:
     """Iterate over the primary keys of ``queryset``'s instances, in their order."""
     pks = queryset.order_by(_DOCUMENT_ORDER).values_list("pk", flat=True)
-    # a join repeats an instance on adjacent rows: keep the first only
-    return (pk for pk, _ in groupby(pks.iterator(chunk_size=_CHUNK_SIZE)))
+    return _skipping_adjacent_repeats(pks.iterator(chunk_size=_CHUNK_SIZE))
+
+
+def _skipping_adjacent_repeats(rows: Iterable[_Item]) -> Iterator[_Item]:
+    """Yield ``rows``, skipping a repeat of the previous row.
+
+    A join can repeat an instance's row. Only adjacent repeats are skipped:
+    ``rows`` must come in primary key order, which puts all the rows of an
+    instance next to each other, so each is yielded once.
+    """
+    return (row for row, _ in groupby(rows))
 
 
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
@@ -241,12 +250,10 @@ def _keyed_skipping_adjacent_repeats(
 ) -> Iterator[tuple[str, Model]]:
     """Pair ``instances`` with their source key, skipping a repeat of the previous key.
 
-    A join in get_queryset() can repeat an instance's row. Only adjacent repeats
-    are skipped: ``instances`` must come in primary key order, which puts all
-    the rows of an instance next to each other, so each is yielded once.
+    ``instances`` must come in primary key order (see _skipping_adjacent_repeats).
     """
-    for source_key, rows in groupby(instances, key=_source_key):
-        yield source_key, next(rows)
+    keyed = ((_source_key(instance), instance) for instance in instances)
+    return _skipping_adjacent_repeats(keyed)
 
 
 def _chunks(items: Iterable[_Item]) -> Iterator[list[_Item]]:
