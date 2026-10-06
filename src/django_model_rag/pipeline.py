@@ -188,12 +188,14 @@ def _distinct(instances: Iterable[Model]) -> Iterator[Model]:
 def _groups(
     instances: Iterable[Model], extractor: BaseExtractor[Any]
 ) -> dict[str, list[NormalizedDocument]]:
-    """Group the documents of ``instances`` by source key, each instance once."""
-    groups: dict[str, list[NormalizedDocument]] = {}
-    for instance in _distinct(instances):
-        for document in _own_documents(instance, extractor):
-            groups.setdefault(document.source_key, []).append(document)
-    return groups
+    """Group the documents of ``instances`` by source key, each instance once.
+
+    An instance without documents gets an empty group.
+    """
+    return {
+        _source_key(instance): list(_own_documents(instance, extractor))
+        for instance in _distinct(instances)
+    }
 
 
 def _hand_over(
@@ -201,12 +203,13 @@ def _hand_over(
 ) -> set[str]:
     """Hand the documents of ``instances`` to ``output`` at once, grouped by source key.
 
-    Returns the source keys handed over.
+    Instances without documents are handed over as empty groups. Returns the
+    source keys handed over with documents.
     """
     groups = _groups(instances, extractor)
     if groups:
         output.replace(groups)
-    return set(groups)
+    return {source_key for source_key, documents in groups.items() if documents}
 
 
 def _keys_to_keep(
