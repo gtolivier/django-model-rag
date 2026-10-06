@@ -136,14 +136,30 @@ def _followers(sender: type[Model], instance: Model) -> list[tuple[type[Model], 
         (registered_model, followed_pk)
         for registered_model in rag.registered_models()
         for relation in _followed_reverse_relations(registered_model, sender)
-        for followed_pk in registered_model._default_manager.filter(
-            **{
-                relation.field.foreign_related_fields[0].attname: getattr(
-                    instance, relation.field.attname
-                )
-            }
-        ).values_list("pk", flat=True)
+        for followed_pk in _followed_pks(registered_model, relation, instance)
     ]
+
+
+def _followed_pks(
+    registered_model: type[Model], relation: ForeignObjectRel, instance: Model
+) -> list[Any]:
+    """Return the primary keys of the ``registered_model`` rows ``instance`` points to.
+
+    ``instance`` points to them through the foreign key behind ``relation``.
+    """
+    foreign_key = relation.field
+    target_field = foreign_key.foreign_related_fields[0]
+    target_value = getattr(instance, foreign_key.attname)
+    if target_field.primary_key:
+        # The common case costs the save no query: the value already is the key.
+        return [target_value]
+
+    # A foreign key with a to_field holds another unique column: the group is
+    # named after the primary key, which only the followed row knows.
+    followed_rows = registered_model._base_manager.filter(
+        **{target_field.attname: target_value}
+    )
+    return list(followed_rows.values_list("pk", flat=True))
 
 
 def _followed_reverse_relations(
