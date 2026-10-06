@@ -63,6 +63,13 @@ def configured_output() -> DocumentOutput:
     """Build the output named by the BACKEND of the output setting.
 
     Its OPTIONS, if any, are passed to that class as keyword arguments.
+
+    Raises:
+        ImproperlyConfigured: the output setting is missing or not a dict; its
+            BACKEND is missing, not a string, cannot be imported, is not a
+            class or lacks a callable ``replace`` or ``prune``; or its OPTIONS
+            are not a dict.
+        TypeError: the BACKEND class rejects its OPTIONS (raised by the class).
     """
     output_setting = _output_setting()
     output_class = _validated_output_class(output_setting)
