@@ -1400,6 +1400,48 @@ def test_an_extractor_failing_at_the_commit_of_a_save_is_logged_without_raising(
 
 
 @pytest.mark.django_db
+def test_a_follower_failing_at_the_commit_of_a_followed_save_is_logged_without_raising(
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    def fail_to_extract(self: object, instance: object) -> NormalizedDocument:
+        raise _ExtractionError
+
+    # The Page's extractor, the one rag.register built, fails on every Page.
+    monkeypatch.setattr(type(rag.new_extractor(Page)), "extract", fail_to_extract)
+
+    # The commit callbacks run, and an error escaping them would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the Page's group, not the plugin, and carries the error.
+    assert f"testapp.page:{page.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], _ExtractionError)
+    # Not even an empty group: what the output held for the Page is kept.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
 def test_deleting_an_instance_empties_its_group_without_going_through_its_extractor(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
