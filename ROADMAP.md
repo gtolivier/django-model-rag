@@ -369,15 +369,51 @@ reference.
     `post_save` with the parent as sender fires. Finding the child row costs
     a query per registered child model on every parent save; it belongs with
     the text that comes from another model, above.
-- [ ] **10b. Signals during a sync.** A signal that fires while
-  `sync_model_rag` runs: the run's final `prune` deletes an instance created
+- [x] **10b. Signals during a sync.** A signal that fires while
+  `sync_model_rag` runs: the run's final `prune` deleted an instance created
   since the run read the table — a live source lost, which the contract
-  promises never happens. Fix it in `run()`: just before the `prune`, read
-  the primary keys that exist again, and keep those the run did not see.
-  Still open: a chunk read before an update puts the old text back until
-  the next save, a short window; and with a replica router, the primary keys
-  read again come from the replica, which may not have the new instance yet
-  (see 10c).
+  promises never happens. Fixed in `run()`: just before each model's
+  `prune`, it reads the primary keys that exist again. Decided in this
+  feature:
+  - **The second read goes through the extractor's `get_queryset()`**, not
+    the default manager: an existing instance that `get_queryset()` filters
+    out was never read, and must not escape the prune.
+  - **Kept keys:** those still there that produced documents, plus those
+    still there that the run did not read. An instance created during the
+    run is kept (its own signal sent its documents); an instance deleted
+    after its chunk was read is pruned, though the chunk's `replace()` may
+    have sent its documents back after the delete's empty group.
+  - **Memory:** the run holds the keys it read and the keys that produced
+    documents, and keeps the current keys less those read without
+    documents. Tracking only the keys read without documents, chunk by
+    chunk, would be cheaper, but it is not the same set when a join in
+    `get_queryset()` repeats an instance across two chunks, the first
+    producing documents and the second none: it would prune documents the
+    output holds.
+  - **One more query** per model run, after every other, streamed with
+    `iterator()`.
+  - **Transaction isolation** is accepted and documented: under an outer
+    `atomic()` in REPEATABLE READ (MySQL's default), the second read sees
+    the transaction's snapshot and misses the new instance.
+  - **Tests** simulate the signal with an output whose `replace()` creates
+    or deletes an instance during the run, with the signals off.
+
+  Still open:
+  - a chunk read before an update puts the old text back until the next
+    save, a short window;
+  - an instance read without documents, then saved during the run so that
+    it has some: its signal sends them, and the prune deletes them. Keeping
+    every key read without documents would undo the prune of an instance
+    that now produces none; telling them apart needs to know which signals
+    fired during the run;
+  - an instance created and committed between the second read and the
+    `prune()` call is still deleted, a window of one call;
+  - `get_queryset()` runs twice per model run: a filter that depends on
+    the time (`published_at__lte=now()`) can keep, as created during the
+    run, an instance that became visible without a save, and that the run
+    never extracted;
+  - with a replica router, the primary keys read again come from the
+    replica, which may not have the new instance yet (see 10c).
 - [ ] **10c. Signals on several databases** — postponed: no project needs
   several databases yet, and nothing here depends on it. The signals follow
   the default database only: `transaction.on_commit` is attached to it, and

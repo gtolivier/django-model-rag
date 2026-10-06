@@ -3,6 +3,7 @@ from collections.abc import Set as AbstractSet
 
 import pytest
 from django.db.models import QuerySet
+from pytest_django import Settings
 
 from django_model_rag import (
     BaseExtractor,
@@ -380,6 +381,118 @@ def test_pipeline_hands_a_model_groups_in_one_batch_per_chunk_of_instances() -> 
     SyncPipeline(output).run()
 
     assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
+
+
+class CategoryCreatingOutput(RecordingOutput):
+    """A recording output whose first replace creates a category.
+
+    The category is saved after the run read the table, as a save in another
+    process would while sync_model_rag runs.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.created: list[Category] = []
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        if not self.created:
+            self.created.append(Category.objects.create(name="Desks"))
+        super().replace(groups)
+
+
+@pytest.mark.django_db
+def test_pipeline_prune_keeps_an_instance_created_after_the_model_was_read(
+    settings: Settings,
+) -> None:
+    # The output plays the part of the post_save signal: with the package's
+    # own signals on, the save would also need an output of its own.
+    settings.MODEL_RAG_SIGNALS = False
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so desks is saved after the read. A prune
+    # keeping only the extracted keys would delete the documents its own
+    # signal handed over.
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryCreatingOutput()
+    SyncPipeline(output).run()
+
+    [desks] = output.created
+    assert output.pruned == [
+        (
+            "testapp.category",
+            {f"testapp.category:{lighting.pk}", f"testapp.category:{desks.pk}"},
+        )
+    ]
+
+
+class CategoryDeletingOutput(RecordingOutput):
+    """A recording output whose first replace deletes a category.
+
+    The category is deleted after the run read the table and after its
+    groups were recorded, as a delete in another process would while
+    sync_model_rag runs.
+    """
+
+    def __init__(self, doomed: Category) -> None:
+        super().__init__()
+        self.doomed = doomed
+        self.deleted_keys: list[str] = []
+
+    def replace(self, groups: Mapping[str, Sequence[NormalizedDocument]]) -> None:
+        super().replace(groups)
+        if not self.deleted_keys:
+            # delete() clears the instance's primary key: read it before.
+            self.deleted_keys.append(f"testapp.category:{self.doomed.pk}")
+            self.doomed.delete()
+
+
+@pytest.mark.django_db
+def test_pipeline_prune_drops_an_instance_deleted_after_the_model_was_read(
+    settings: Settings,
+) -> None:
+    # The output plays the part of the post_delete signal: with the package's
+    # own signals on, the delete would also need an output of its own.
+    settings.MODEL_RAG_SIGNALS = False
+    # Fewer instances than a chunk holds: the run reads the whole table
+    # before its first replace, so lamps is deleted after the read, and that
+    # replace hands its documents over. The prune is the only thing left to
+    # delete them: keeping every extracted key would keep them.
+    lamps = Category.objects.create(name="Lamps")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = CategoryDeletingOutput(lamps)
+    SyncPipeline(output).run()
+
+    [lamps_key] = output.deleted_keys
+    assert lamps_key in output.received_groups()
+    assert output.pruned == [("testapp.category", {f"testapp.category:{lighting.pk}"})]
+    assert lamps_key not in output.pruned[0][1]
+
+
+@pytest.mark.django_db
+def test_pipeline_prune_drops_an_instance_its_queryset_omits() -> None:
+    # The draft exists all along, but get_queryset() filters it out: the run
+    # never reads it, so whatever the output still holds for it is stale. A
+    # prune keeping every primary key the model has once the run read the
+    # table, rather than the ones the hook keeps, would keep it.
+    draft = Category.objects.create(name="Draft")
+    lighting = Category.objects.create(name="Lighting")
+
+    @rag.register_extractor(Category)
+    class PublishedCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.exclude(name="Draft")
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.name)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run()
+
+    assert output.pruned == [("testapp.category", {f"testapp.category:{lighting.pk}"})]
+    assert f"testapp.category:{draft.pk}" not in output.pruned[0][1]
 
 
 class ExtractionFailedError(Exception):

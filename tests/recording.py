@@ -8,6 +8,11 @@ from django.db.models import Model
 
 from django_model_rag import NormalizedDocument, SyncPipeline
 
+# run() reads each model's primary keys again before its prune, so that an
+# instance created during the run keeps its documents: one more query per
+# model run, after every other.
+PRUNE_KEYS_QUERY = 1
+
 
 class RecordingOutput:
     """An output that records what the pipeline hands it."""

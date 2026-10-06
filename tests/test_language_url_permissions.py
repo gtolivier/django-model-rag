@@ -6,7 +6,7 @@ from django.urls import NoReverseMatch
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import rag
-from tests.recording import run_documents, run_instance_documents
+from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
 from tests.testapp.models import (
     Announcement,
     Bookmark,
@@ -200,7 +200,7 @@ def test_language_field_lookup_path_is_read_with_its_instances_in_a_single_query
         Excerpt.objects.create(title=title, notice=notice)
     rag.register(Excerpt, fields=["title"], language_field="notice__language")
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert {document.text: document.language for document in documents} == {
@@ -300,7 +300,7 @@ def test_get_absolute_url_reads_undeclared_own_columns_loaded_with_the_instances
     Page.objects.create(title="Contact", slug="contact")
     rag.register(Page, fields=["title"])
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {
@@ -422,7 +422,7 @@ def test_url_field_lookup_path_is_read_with_its_instances_in_a_single_query(
         Citation.objects.create(title=title, bookmark=bookmark)
     rag.register(Citation, fields=["title"], url_field="bookmark__link")
 
-    with django_assert_num_queries(1):
+    with django_assert_num_queries(1 + PRUNE_KEYS_QUERY):
         documents = run_documents()
 
     assert {document.text: document.url for document in documents} == {

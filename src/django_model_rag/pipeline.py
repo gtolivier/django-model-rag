@@ -30,6 +30,25 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
 
 
+def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
+    """Return the source keys of ``model``'s instances ``extractor`` keeps now."""
+    kept_pks = _kept_queryset(model, extractor).values_list("pk", flat=True)
+    return {
+        model_source_key(model, pk) for pk in kept_pks.iterator(chunk_size=_CHUNK_SIZE)
+    }
+
+
+def _kept_queryset(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> QuerySet[Model]:
+    """Return ``model``'s instances that ``extractor``'s get_queryset() keeps.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
+    """
+    return _hooked_queryset(model._default_manager.all(), extractor, model)
+
+
 def _hooked_queryset(
     queryset: QuerySet[Model], extractor: BaseExtractor[Any], model: type[Model]
 ) -> QuerySet[Model]:
@@ -47,9 +66,7 @@ def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     Raises:
         TypeError: get_queryset() did not return a QuerySet of the model's instances.
     """
-    model = type(instance)
-    hooked = _hooked_queryset(model._default_manager.all(), extractor, model)
-    return hooked.filter(pk=instance.pk).exists()
+    return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
 
 
 def _checked_queryset(
@@ -192,6 +209,22 @@ def _hand_over(
     return set(groups)
 
 
+def _keys_to_keep(
+    handed_keys: set[str], read_keys: set[str], current_keys: set[str]
+) -> set[str]:
+    """Return the source keys a model's prune keeps, once its run is over.
+
+    The prune keeps the ``current_keys`` but those read without documents. An
+    instance deleted during the run was handed over, but is gone. An
+    instance created during the run was not read: its own signal handed its
+    documents over, which the prune must not delete.
+
+    Every handed key was read, so only the keys read without documents need a
+    set of their own, not two the size of the table.
+    """
+    return current_keys - (read_keys - handed_keys)
+
+
 class SyncPipeline:
     """Turn registered models into normalized documents, handed to an output."""
 
@@ -203,8 +236,9 @@ class SyncPipeline:
         """Hand the documents of the registered models to the output.
 
         Only the given ``models`` are run, in their order, or every registered
-        model by default. Each model is then pruned down to the source keys
-        that produced documents.
+        model by default. Each model is then pruned down to the source keys of
+        the instances its extractor keeps once the model is run, less those
+        read without producing documents.
 
         Raises:
             NotRegistered: one of ``models`` is not registered.
@@ -214,10 +248,15 @@ class SyncPipeline:
 
     def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
         """Hand ``model``'s documents over chunk by chunk, then prune the model."""
-        kept_keys: set[str] = set()
+        handed_keys: set[str] = set()
+        read_keys: set[str] = set()
         instances = _instances(model, extractor)
         while chunk := list(islice(instances, _CHUNK_SIZE)):
-            kept_keys |= _hand_over(chunk, extractor, self._output)
+            read_keys.update(_source_key(instance) for instance in chunk)
+            handed_keys |= _hand_over(chunk, extractor, self._output)
+        kept_keys = _keys_to_keep(
+            handed_keys, read_keys, _current_keys(model, extractor)
+        )
         self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
