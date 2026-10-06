@@ -30,6 +30,12 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
     return hooked.order_by(_DOCUMENT_ORDER).iterator(chunk_size=_CHUNK_SIZE)
 
 
+def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
+    """Return the source keys of ``model``'s instances ``extractor`` keeps now."""
+    hooked = _hooked_queryset(model._default_manager.all(), extractor, model)
+    return {model_source_key(model, pk) for pk in hooked.values_list("pk", flat=True)}
+
+
 def _hooked_queryset(
     queryset: QuerySet[Model], extractor: BaseExtractor[Any], model: type[Model]
 ) -> QuerySet[Model]:
@@ -215,9 +221,14 @@ class SyncPipeline:
     def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
         """Hand ``model``'s documents over chunk by chunk, then prune the model."""
         kept_keys: set[str] = set()
+        read_keys: set[str] = set()
         instances = _instances(model, extractor)
         while chunk := list(islice(instances, _CHUNK_SIZE)):
+            read_keys.update(_source_key(instance) for instance in chunk)
             kept_keys |= _hand_over(chunk, extractor, self._output)
+        # An instance created during the run was not read: its own signal
+        # handed its documents over, which the prune must not delete.
+        kept_keys |= _current_keys(model, extractor) - read_keys
         self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
