@@ -133,9 +133,16 @@ def _followers(sender: type[Model], instance: Model) -> list[tuple[type[Model], 
     Only the reverse foreign keys are looked at.
     """
     return [
-        (registered_model, getattr(instance, relation.field.attname))
+        (registered_model, followed_pk)
         for registered_model in rag.registered_models()
         for relation in _followed_reverse_relations(registered_model, sender)
+        for followed_pk in registered_model._default_manager.filter(
+            **{
+                relation.field.foreign_related_fields[0].attname: getattr(
+                    instance, relation.field.attname
+                )
+            }
+        ).values_list("pk", flat=True)
     ]
 
 
