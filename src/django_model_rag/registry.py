@@ -545,7 +545,9 @@ class Registry:
         relations = relations_by_accessor(model)
         followed = [relations[accessor] for accessor in extractor.follow]
         return [
-            relation for relation in followed if isinstance(relation, ForeignObjectRel)
+            relation
+            for relation in followed
+            if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
     def _add(
