@@ -11,6 +11,7 @@ from django_model_rag import (
     BaseExtractor,
     DocumentOutput,
     NormalizedDocument,
+    NotRegistered,
     SyncPipeline,
     configured_output,
     rag,
@@ -251,6 +252,19 @@ def test_run_queryset_hands_nothing_to_its_output_for_an_empty_queryset() -> Non
 
     output = RecordingOutput()
     SyncPipeline(output).run_queryset(Category.objects.filter(name="Desks"))
+
+    assert output.calls == []
+
+
+@pytest.mark.django_db
+def test_run_queryset_rejects_an_empty_queryset_of_an_unregistered_model() -> None:
+    # An empty queryset of a registered model has nothing to sync; one of an
+    # unregistered model is a programming error, which run_instance() and
+    # run([model]) report too: staying silent would hide it until the
+    # queryset is no longer empty.
+    output = RecordingOutput()
+    with pytest.raises(NotRegistered, match=r"\bCategory\b"):
+        SyncPipeline(output).run_queryset(Category.objects.none())
 
     assert output.calls == []
 
