@@ -445,6 +445,49 @@ def test_moving_a_followed_instance_to_another_row_replaces_the_groups_of_both(
 
 
 @pytest.mark.django_db
+def test_updating_a_followed_instance_in_place_replaces_the_group_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's update below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # The plugin stays on its Page: the Page it had before the save is the
+    # Page it has after.
+    with django_capture_on_commit_callbacks(execute=True):
+        plugin.body = "We ship worldwide."
+        plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call, not one for the Page before the save and another for
+    # the same Page after it.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_followed_by_two_models_replaces_the_group_of_each(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
