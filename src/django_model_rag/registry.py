@@ -6,7 +6,7 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import ForeignKey, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete
 
@@ -549,6 +549,25 @@ class Registry:
             relation
             for relation in followed
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
+        ]
+
+    def followed_forward_foreign_keys(
+        self, model: type[Model]
+    ) -> list["ForeignKey[Any, Any]"]:
+        """List the foreign keys of ``model`` it follows.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
+        if not isinstance(extractor, DeclaredFieldsExtractor) or not extractor.follow:
+            return []
+
+        relations = relations_by_accessor(model)
+        return [
+            relation
+            for accessor in extractor.follow
+            if isinstance(relation := relations[accessor], ForeignKey)
         ]
 
     def _add(

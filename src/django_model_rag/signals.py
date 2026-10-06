@@ -174,14 +174,25 @@ def _schedule_follower_replacements(followers: list[_Follower]) -> None:
 def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered models following ``instance``, with their primary keys.
 
-    Only the reverse foreign keys are looked at.
+    Those following through a reverse foreign key, and those following through
+    their own foreign key to ``instance``.
     """
-    return [
+    reverse_followers = [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         for relation in _followed_reverse_relations(registered_model, sender)
         for follower_pk in _follower_pks(registered_model, relation, instance)
     ]
+    forward_followers = [
+        (registered_model, follower_pk)
+        for registered_model in rag.registered_models()
+        for foreign_key in rag.followed_forward_foreign_keys(registered_model)
+        if foreign_key.related_model in _models_of_the_row(sender)
+        for follower_pk in registered_model._base_manager.filter(
+            **{foreign_key.name: instance.pk}
+        ).values_list("pk", flat=True)
+    ]
+    return reverse_followers + forward_followers
 
 
 def _is_followed(sender: type[Model]) -> bool:
