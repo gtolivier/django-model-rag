@@ -579,6 +579,29 @@ def test_run_queryset_hands_and_extracts_once_an_instance_a_join_repeats() -> No
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_its_instances_in_one_replace_per_chunk_in_pk_order() -> (
+    None
+):
+    # One more instance than a chunk holds: a single replace for the whole
+    # queryset would miss the two batches. The queryset comes in reverse
+    # primary key order: chunking it as given would put the newest instance
+    # first, rather than alone in the last chunk as run() does.
+    Category.objects.bulk_create(
+        Category(name=f"Category {number}") for number in range(1001)
+    )
+    rag.register(Category, fields=["name"])
+    keys = [
+        f"testapp.category:{pk}"
+        for pk in Category.objects.order_by("pk").values_list("pk", flat=True)
+    ]
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.order_by("-pk"))
+
+    assert [list(groups) for groups in output.replaced] == [keys[:1000], keys[1000:]]
+
+
+@pytest.mark.django_db
 def test_run_instance_rejects_a_get_queryset_that_returns_no_queryset() -> None:
     # Telling whether the hook keeps the instance must not swallow a broken
     # hook: an empty group would delete the documents the output still holds
