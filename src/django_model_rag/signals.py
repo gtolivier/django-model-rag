@@ -122,15 +122,17 @@ def remember_followers_before_save(
 ) -> None:
     """Keep the followers the row had before the save, for the commit to replace.
 
-    A save may move the row to other followers: the old ones change too.
+    A save may move the row to other followers: the old ones change too. Only
+    the followers the row points to can move; those pointing to the row through
+    their own foreign key still do after the save, and are found then.
     """
     # An instance built with an existing primary key is "adding" yet saved as an
     # UPDATE: only a missing primary key means there is no row before the save.
     if raw or instance.pk is None or not _signals_enabled():
         return
 
-    # A model nothing follows costs the save no query.
-    if not _is_followed(sender):
+    # A model followed only through foreign keys to it costs the save no query.
+    if not _is_followed_through_reverse_relations(sender):
         return
 
     committed_instance = _committed_instance(sender, instance.pk)
@@ -138,7 +140,7 @@ def remember_followers_before_save(
         setattr(
             instance,
             _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-            _followers(sender, committed_instance),
+            _reverse_followers(sender, committed_instance),
         )
 
 
@@ -256,9 +258,23 @@ def _pks_pointing_to(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
+    return _is_followed_through_reverse_relations(
+        sender
+    ) or _is_followed_through_foreign_keys(sender)
+
+
+def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
+    """Return whether a registered model follows ``sender`` by a reverse relation."""
     return any(
         _followed_reverse_relations(registered_model, sender)
-        or _followed_foreign_keys(registered_model, sender)
+        for registered_model in rag.registered_models()
+    )
+
+
+def _is_followed_through_foreign_keys(sender: type[Model]) -> bool:
+    """Return whether a registered model follows ``sender`` by its own foreign key."""
+    return any(
+        _followed_foreign_keys(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
