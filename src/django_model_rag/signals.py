@@ -245,8 +245,11 @@ def _pks_pointing_to(
 
     Those rows point to ``instance`` through ``foreign_key``.
     """
+    # The foreign key holds the value of the column it targets, not always the
+    # primary key.
+    target_field = foreign_key.foreign_related_fields[0]
     pointing_rows = registered_model._base_manager.filter(
-        **{foreign_key.name: instance.pk}
+        **{foreign_key.attname: getattr(instance, target_field.attname)}
     )
     return list(pointing_rows.values_list("pk", flat=True))
 
