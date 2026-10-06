@@ -359,21 +359,21 @@ MODEL_RAG_OUTPUT = {
 }
 ```
 
-The command imports `BACKEND`, builds a new instance with `OPTIONS` as its
-keyword arguments, and checks the class has a callable `replace` and
-`prune`. It does all this before running any model. A missing setting,
-a setting that is not a dict or has no `BACKEND`, a `BACKEND` that is not a
-string, cannot be imported or names something other than a class, `OPTIONS`
-that are not a dict, and a class without one of the two methods fail with
-`ImproperlyConfigured`. So does a label naming no model of an installed app,
+The command imports `BACKEND`, checks the class has a callable `replace`
+and `prune` and accepts `OPTIONS`, then builds a new instance with
+`OPTIONS` as its keyword arguments. It does all this before running any
+model. A missing setting, a setting that is not a dict or has no
+`BACKEND`, a `BACKEND` that is not a string, cannot be imported or names
+something other than a class, `OPTIONS` that are not a dict, a class
+without one of the two methods, and `OPTIONS` the class does not accept —
+when Python can read its signature — fail with `ImproperlyConfigured`,
+naming the class for the last two. So does a label naming no model of an installed app,
 or a model that is not registered, but with `CommandError`. Both are raised
 before anything is sent.
 
 Your own code builds the same output with `configured_output()`, importable
 from `django_model_rag`: it reads the setting, makes the same checks as the
 command, and returns a new instance of `BACKEND` built with `OPTIONS`.
-`OPTIONS` that the class rejects are not checked beforehand: building it
-raises the class's own `TypeError`.
 
 ```python
 from django_model_rag import SyncPipeline, configured_output

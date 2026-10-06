@@ -512,8 +512,11 @@ reference.
   `QuerySet.update()` — but the output built from `MODEL_RAG_OUTPUT` was
   only reachable through `django_model_rag.output`. `configured_output()`
   is now importable from `django_model_rag`, as the command and the
-  signals use it: same checks, a new output on each call. Found by the
-  demo project, whose receivers resync the blocks of a saved page.
+  signals use it: same checks, a new output on each call. `OPTIONS` its
+  class does not accept now fail with `ImproperlyConfigured`, naming the
+  class, before it is built — as the signals already checked — rather than
+  with the class's own `TypeError`. Found by the demo project, whose
+  receivers resync the blocks of a saved page.
 
 ## Not planned here
 
