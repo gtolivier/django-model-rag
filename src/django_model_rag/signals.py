@@ -200,6 +200,9 @@ def _follower_pks(
     foreign_key = relation.field
     target_field = foreign_key.foreign_related_fields[0]
     target_value = getattr(instance, foreign_key.attname)
+    if target_value is None:
+        # A null foreign key points to no follower.
+        return []
     if target_field.primary_key:
         # The common case costs the save no query: the value already is the key.
         return [target_value]
