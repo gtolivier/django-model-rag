@@ -393,6 +393,34 @@ def test_run_queryset_hands_an_empty_group_for_an_instance_without_documents() -
     ]
 
 
+@pytest.mark.django_db(databases=["default", "other"])
+def test_run_queryset_reloads_its_instances_from_the_database_of_its_queryset() -> None:
+    # The queryset reads from "other": its instances must be reloaded there.
+    # Default holds a category under the same primary key but another name: a
+    # reload from default would hand Desks' document under lighting's key, or
+    # an empty group if default held nothing.
+    lighting = Category.objects.using("other").create(name="Lighting")
+    Category.objects.create(pk=lighting.pk, name="Desks")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.using("other").all())
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
 def _register_published_category_extractor() -> list[Category]:
     """Register a Category extractor whose get_queryset() leaves out "Draft".
 

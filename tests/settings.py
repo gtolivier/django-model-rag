@@ -11,7 +11,11 @@ INSTALLED_APPS = [
     "tests.testapp",
     "tests.otherapp",
 ]
-DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}}
+# other: a second database, for a queryset bound to another alias than default.
+DATABASES = {
+    "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
+    "other": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"},
+}
 # Pinned: the default changed to BigAutoField in Django 6.0, so leaving it
 # unset would make the test app's migration drift between supported versions.
 DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
