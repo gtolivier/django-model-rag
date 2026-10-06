@@ -454,7 +454,8 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   Finding the parent costs no query when the foreign key targets its
   primary key, one query for a `to_field`; a save that may move a child
   reads its row as committed first, in `pre_save`. A model nothing follows
-  costs its saves nothing.
+  costs its saves no query, only a check, in Python, of what each
+  registered model follows.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
