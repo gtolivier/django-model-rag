@@ -695,6 +695,49 @@ def test_deleting_a_child_with_a_primary_key_of_its_own_empties_its_parents_grou
 
 
 @pytest.mark.django_db
+def test_deleting_a_followed_related_instance_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: TextPlugin
+    # itself is not.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's delete below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    deleted_plugin = TextPlugin.objects.create(
+        page=page, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        deleted_plugin.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group as committed: the deleted plugin's text is gone, the
+    # remaining plugin's text stays after the Page's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_of_an_unregistered_model_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
