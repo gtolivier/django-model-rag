@@ -241,6 +241,21 @@ def test_run_instance_hands_an_empty_group_for_an_instance_without_documents() -
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_nothing_to_its_output_for_an_empty_queryset() -> None:
+    # Lighting exists but the queryset leaves it out: run_queryset() syncs
+    # only the instances it is given. Running the whole model would replace
+    # lighting's documents, and a prune keeping the queryset's keys, none
+    # here, would delete every document the output holds for the model.
+    Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.filter(name="Desks"))
+
+    assert output.calls == []
+
+
+@pytest.mark.django_db
 def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
     # run() loads instances through get_queryset(): a draft it leaves out must
     # not get indexed by run_instance() either, and the empty group deletes
