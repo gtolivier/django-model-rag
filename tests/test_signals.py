@@ -333,6 +333,56 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
 
 
 @pytest.mark.django_db
+def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # TextPlugin is registered itself, and also followed by its Page.
+    rag.register(Page, follow=["text_plugins"])
+    rag.register(TextPlugin, fields=["body"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per group is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both groups as committed: the plugin's own, with its body, and the
+    # Page's, with the plugin's text after the Page's own title.
+    assert received == {
+        f"testapp.textplugin:{plugin.pk}": [
+            NormalizedDocument(
+                text="We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=plugin.pk,
+                # Without a title field, the first declared field's text.
+                title="We build chairs by hand.",
+            ),
+        ],
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_moving_a_followed_instance_to_another_row_replaces_the_groups_of_both(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
