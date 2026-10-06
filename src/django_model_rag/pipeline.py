@@ -257,9 +257,20 @@ class SyncPipeline:
         if not instances:
             return
         extractor = rag.new_extractor(queryset.model)
+        # Extract the instances as get_queryset() loads them (annotations...).
+        loaded = {
+            instance.pk: instance
+            for instance in _kept_queryset(queryset.model, extractor).filter(
+                pk__in=[instance.pk for instance in instances]
+            )
+        }
         self._output.replace(
             {
-                _source_key(instance): _kept_documents(instance, extractor)
+                _source_key(instance): (
+                    list(_own_documents(loaded[instance.pk], extractor))
+                    if instance.pk in loaded
+                    else []
+                )
                 for instance in instances
             }
         )
