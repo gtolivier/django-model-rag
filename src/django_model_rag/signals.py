@@ -145,7 +145,7 @@ def sync_saved_instance(
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
     _schedule_follower_replacements(_followers(sender, instance))
     _schedule_follower_replacements(
-        getattr(instance, _PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+        instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
     )
 
 
