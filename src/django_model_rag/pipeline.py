@@ -207,6 +207,18 @@ def _hand_over(
     return set(groups)
 
 
+def _keys_to_keep(
+    handed_keys: set[str], read_keys: set[str], current_keys: set[str]
+) -> set[str]:
+    """Return the source keys a model's prune keeps, once its run is over.
+
+    An instance deleted during the run was handed over, but is gone. An
+    instance created during the run was not read: its own signal handed its
+    documents over, which the prune must not delete.
+    """
+    return (handed_keys & current_keys) | (current_keys - read_keys)
+
+
 class SyncPipeline:
     """Turn registered models into normalized documents, handed to an output."""
 
@@ -235,11 +247,9 @@ class SyncPipeline:
         while chunk := list(islice(instances, _CHUNK_SIZE)):
             read_keys.update(_source_key(instance) for instance in chunk)
             handed_keys |= _hand_over(chunk, extractor, self._output)
-        current_keys = _current_keys(model, extractor)
-        # An instance deleted during the run was handed over, but is gone.
-        # An instance created during the run was not read: its own signal
-        # handed its documents over, which the prune must not delete.
-        kept_keys = (handed_keys & current_keys) | (current_keys - read_keys)
+        kept_keys = _keys_to_keep(
+            handed_keys, read_keys, _current_keys(model, extractor)
+        )
         self._output.prune(model._meta.label_lower, kept_keys)
 
     def run_instance(self, instance: Model) -> None:
