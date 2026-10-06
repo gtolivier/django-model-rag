@@ -37,6 +37,7 @@ from tests.testapp.models import (
     Supplier,
     SupplierProfile,
     TextPlugin,
+    TextPluginProxy,
     Topic,
     Warehouse,
     Workshop,
@@ -471,6 +472,69 @@ def test_updating_a_followed_instance_in_place_replaces_the_group_once(
 
     # One replace call, not one for the Page before the save and another for
     # the same Page after it.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_or_deleting_through_a_proxy_of_a_followed_model_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, following its text plugins: neither
+    # TextPlugin nor its proxy is.
+    rag.register(Page, follow=["text_plugins"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the saves and deletes below are observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+    # Django sends post_save with the proxy as its sender, not TextPlugin.
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPluginProxy.objects.create(page=page, body="We ship worldwide.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group as committed, with the text of both plugins.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.page:{page.pk}": [
+                NormalizedDocument(
+                    text="About us\n\nWe build chairs by hand.\n\nWe ship worldwide.",
+                    source_app_label="testapp",
+                    source_model="page",
+                    source_pk=page.pk,
+                    title="About us",
+                    url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+    built_outputs.clear()
+
+    # Django sends post_delete with the proxy as its sender, not TextPlugin.
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPluginProxy.objects.get(pk=plugin.pk).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Page's group as committed: the deleted plugin's text is gone.
     assert _replaced(built_outputs) == [
         {
             f"testapp.page:{page.pk}": [

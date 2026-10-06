@@ -747,3 +747,14 @@ class Engagement(models.Model):
 class CategoryProxy(Category):
     class Meta:
         proxy = True
+
+
+# --- A proxy of a followed model ----------------------------------------
+# A TextPluginProxy is a TextPlugin under another class: saving or deleting
+# one writes or deletes the TextPlugin's row, which its Page may follow, yet
+# Django sends the signals with the proxy, not TextPlugin, as their sender.
+
+
+class TextPluginProxy(TextPlugin):
+    class Meta:
+        proxy = True
