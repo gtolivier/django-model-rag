@@ -321,11 +321,11 @@ class SyncPipeline:
 
     def run_queryset(self, queryset: QuerySet[Any]) -> None:
         """Hand the documents of the instances of ``queryset`` only to the output."""
+        extractor = rag.new_extractor(queryset.model)
         chunks = _chunks(_in_document_order(queryset))
         first_chunk = next(chunks, None)
         if first_chunk is None:
             return
-        extractor = rag.new_extractor(queryset.model)
         for chunk in chain([first_chunk], chunks):
             self._output.replace(_reloaded_groups(chunk, extractor, queryset.model))
 
