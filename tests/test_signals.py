@@ -24,6 +24,8 @@ from tests.recording import (
     TrackedRecordingOutput,
 )
 from tests.testapp.models import (
+    Album,
+    BonusTrack,
     Category,
     CategoryProxy,
     ClearanceProduct,
@@ -548,6 +550,46 @@ def test_saving_or_deleting_through_a_proxy_of_a_followed_model_replaces_the_gro
                     source_pk=page.pk,
                     title="About us",
                     url="/pages/about-us/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_multi_table_child_of_a_followed_model_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither Track nor BonusTrack is registered.
+    rag.register(Album, follow=["tracks"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Album's own save never runs, so only the bonus track's save is observed.
+    album = Album.objects.create(title="Abbey Road")
+
+    # Django sends post_save with BonusTrack as its sender, not Track, though
+    # the save writes a Track row the Album follows.
+    with django_capture_on_commit_callbacks(execute=True):
+        BonusTrack.objects.create(
+            album=album, title="Her Majesty", note="Hidden after the last track"
+        )
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Album's group as committed, with the track's title after its own.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.album:{album.pk}": [
+                NormalizedDocument(
+                    text="Abbey Road\n\nHer Majesty",
+                    source_app_label="testapp",
+                    source_model="album",
+                    source_pk=album.pk,
+                    title="Abbey Road",
                 ),
             ],
         }

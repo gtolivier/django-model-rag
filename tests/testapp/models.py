@@ -758,3 +758,23 @@ class CategoryProxy(Category):
 class TextPluginProxy(TextPlugin):
     class Meta:
         proxy = True
+
+
+# --- A multi-table child of a followed model ----------------------------
+# An Album reaches its Tracks by the reverse foreign key ``tracks``. A
+# BonusTrack is a Track with a note of its own, in a table of its own: saving
+# one writes a Track row, which its Album may follow, yet Django sends the
+# save's signals with BonusTrack, not Track, as their sender.
+
+
+class Album(models.Model):
+    title = models.CharField(max_length=200)
+
+
+class Track(models.Model):
+    album = models.ForeignKey(Album, related_name="tracks", on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+
+
+class BonusTrack(Track):
+    note = models.CharField(max_length=200)
