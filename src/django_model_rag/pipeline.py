@@ -175,14 +175,14 @@ def _extractors_to_run(
     return [(model, rag.new_extractor(model)) for model in models]
 
 
-def _distinct(instances: Iterable[Model]) -> Iterator[Model]:
-    """Yield ``instances``, skipping the ones whose source key was already yielded."""
+def _keyed_distinct(instances: Iterable[Model]) -> Iterator[tuple[str, Model]]:
+    """Pair ``instances`` with their source key, skipping already yielded keys."""
     seen_keys: set[str] = set()
     for instance in instances:
         source_key = _source_key(instance)
         if source_key not in seen_keys:
             seen_keys.add(source_key)
-            yield instance
+            yield source_key, instance
 
 
 def _groups(
@@ -193,19 +193,9 @@ def _groups(
     An instance without documents gets an empty group.
     """
     return {
-        _source_key(instance): list(_own_documents(instance, extractor))
-        for instance in _distinct(instances)
+        source_key: list(_own_documents(instance, extractor))
+        for source_key, instance in _keyed_distinct(instances)
     }
-
-
-def _hand_over(
-    instances: Iterable[Model], extractor: BaseExtractor[Any], output: DocumentOutput
-) -> None:
-    """Hand the documents of ``instances`` to ``output`` at once, grouped by source key.
-
-    Instances without documents are handed over as empty groups.
-    """
-    output.replace(_groups(instances, extractor))
 
 
 class SyncPipeline:
@@ -231,10 +221,14 @@ class SyncPipeline:
             self._run_model(model, extractor)
 
     def _run_model(self, model: type[Model], extractor: BaseExtractor[Any]) -> None:
-        """Hand ``model``'s documents over chunk by chunk, then prune the model."""
+        """Hand ``model``'s documents over chunk by chunk, then prune the model.
+
+        Each chunk is handed over at once, grouped by source key; its instances
+        without documents are handed over as empty groups.
+        """
         instances = _instances(model, extractor)
         while chunk := list(islice(instances, _CHUNK_SIZE)):
-            _hand_over(chunk, extractor, self._output)
+            self._output.replace(_groups(chunk, extractor))
         self._output.prune(model._meta.label_lower, _current_keys(model, extractor))
 
     def run_instance(self, instance: Model) -> None:
