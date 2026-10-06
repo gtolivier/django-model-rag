@@ -753,6 +753,26 @@ def test_saving_a_followed_instance_with_no_follower_sends_nothing_and_logs_noth
 
 
 @pytest.mark.django_db
+def test_saving_a_followed_instance_with_no_follower_defers_nothing_to_the_commit(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its workshops: Workshop itself
+    # is not.
+    rag.register(Topic, follow=["workshops"])
+
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        # Its nullable foreign key is null: no Topic follows this workshop.
+        Workshop.objects.create(title="Open bench", topic=None)
+
+    # No follower, so no group to replace: nothing is even deferred to the
+    # commit.
+    assert callbacks == []
+
+
+@pytest.mark.django_db
 def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
