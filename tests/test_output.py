@@ -334,6 +334,35 @@ def test_run_queryset_hands_only_its_instances_each_under_its_key_in_one_replace
 
 
 @pytest.mark.django_db
+def test_run_queryset_hands_an_empty_group_for_an_instance_without_documents() -> None:
+    # run_queryset() prunes nothing: replacing the empty instance's documents
+    # with none is the only way to delete what the output still holds for it.
+    # Lighting shares the queryset: its group must come in that same call,
+    # next to the empty one.
+    empty = Category.objects.create(name="")
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_queryset(Category.objects.all())
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{empty.pk}": [],
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_run_instance_hands_an_empty_group_for_an_instance_its_queryset_omits() -> None:
     # run() loads instances through get_queryset(): a draft it leaves out must
     # not get indexed by run_instance() either, and the empty group deletes
