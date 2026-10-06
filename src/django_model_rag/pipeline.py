@@ -32,8 +32,19 @@ def _instances(model: type[Model], extractor: BaseExtractor[Any]) -> Iterator[Mo
 
 def _current_keys(model: type[Model], extractor: BaseExtractor[Any]) -> set[str]:
     """Return the source keys of ``model``'s instances ``extractor`` keeps now."""
-    hooked = _hooked_queryset(model._default_manager.all(), extractor, model)
-    return {model_source_key(model, pk) for pk in hooked.values_list("pk", flat=True)}
+    kept = _kept_queryset(model, extractor)
+    return {model_source_key(model, pk) for pk in kept.values_list("pk", flat=True)}
+
+
+def _kept_queryset(
+    model: type[Model], extractor: BaseExtractor[Any]
+) -> QuerySet[Model]:
+    """Return ``model``'s instances that ``extractor``'s get_queryset() keeps.
+
+    Raises:
+        TypeError: get_queryset() did not return a QuerySet of ``model``'s instances.
+    """
+    return _hooked_queryset(model._default_manager.all(), extractor, model)
 
 
 def _hooked_queryset(
@@ -53,9 +64,7 @@ def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
     Raises:
         TypeError: get_queryset() did not return a QuerySet of the model's instances.
     """
-    model = type(instance)
-    hooked = _hooked_queryset(model._default_manager.all(), extractor, model)
-    return hooked.filter(pk=instance.pk).exists()
+    return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
 
 
 def _checked_queryset(
