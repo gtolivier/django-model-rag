@@ -98,8 +98,10 @@ def _replace_group(registered_model: type[Model], pk: Any) -> None:
 def check_output_before_save(
     sender: type[Model], raw: bool = False, **kwargs: Any
 ) -> None:
-    """Fail before the INSERT or UPDATE if the output is misconfigured.
+    """Fail before the INSERT or UPDATE if the save would sync a misconfigured output.
 
+    A save syncs when ``sender`` feeds a registered model's group, or when a
+    registered model follows it: an unregistered followed model is checked too.
     In autocommit the row is committed as soon as it is written: after the
     save, a failing check would come too late to keep the row out.
     """
@@ -136,10 +138,13 @@ def remember_followers_before_save(
 def sync_saved_instance(
     sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
 ) -> None:
-    """Replace the group of a saved registered instance once its transaction commits.
+    """Replace, once the transaction commits, the groups a saved instance changes.
 
-    The output configuration was checked before the save, by
-    check_output_before_save.
+    Those are the instance's own group if ``sender`` feeds a registered model,
+    and the groups of its followers — the registered rows following it through
+    a reverse relation, before and after the save — whether or not ``sender``
+    is registered itself. The output configuration was checked before the
+    save, by check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
@@ -215,7 +220,11 @@ def _followed_reverse_relations(
 
 
 def _group_replacer(registered_model: type[Model], saved_pk: Any) -> Callable[[], None]:
-    """Return a commit callback replacing the group of a saved instance."""
+    """Return a commit callback replacing the group of ``registered_model``'s row.
+
+    ``saved_pk`` is the primary key of that row: a saved instance's own, or a
+    follower's of a saved or deleted instance.
+    """
 
     def replace_group_as_committed() -> None:
         _send_group(
