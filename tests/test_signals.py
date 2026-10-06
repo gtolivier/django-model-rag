@@ -70,6 +70,11 @@ def _package_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRe
     return [record for record in caplog.records if record.name == PACKAGE_LOGGER]
 
 
+def _statements(queries: CaptureQueriesContext) -> list[str]:
+    """The kind of each captured query (its first SQL keyword), in query order."""
+    return [query["sql"].split()[0] for query in queries.captured_queries]
+
+
 def _register_categories_by_name() -> None:
     """Register Category, each instance extracted to one document: its name."""
 
@@ -86,6 +91,11 @@ def _register_products_by_name() -> None:
     class ProductExtractor(BaseExtractor[Product]):
         def extract(self, instance: Product) -> NormalizedDocument:
             return self.build_document(instance, text=instance.name)
+
+
+def _register_pages_following_their_plugins() -> None:
+    """Register only Page, following its text plugins: TextPlugin itself is not."""
+    rag.register(Page, follow=["text_plugins"])
 
 
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
@@ -309,9 +319,7 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callback of the
     # Page's own save never runs, so only the plugin's save below is observed.
@@ -348,7 +356,7 @@ def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_o
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # TextPlugin is registered itself, and also followed by its Page.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
     rag.register(TextPlugin, fields=["body"])
 
     # Created outside the captured callbacks: the commit callback of the
@@ -390,16 +398,14 @@ def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_o
 
 
 @pytest.mark.django_db
-def test_moving_a_followed_instance_to_another_row_replaces_the_groups_of_both(
+def test_moving_a_followed_instance_to_another_follower_replaces_the_groups_of_both(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the plugin's move below is observed.
@@ -453,9 +459,7 @@ def test_updating_a_followed_instance_in_place_replaces_the_group_once(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the plugin's update below is observed.
@@ -496,9 +500,8 @@ def test_saving_or_deleting_through_a_proxy_of_a_followed_model_replaces_the_gro
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: neither
-    # TextPlugin nor its proxy is.
-    rag.register(Page, follow=["text_plugins"])
+    # Neither TextPlugin nor its proxy is registered.
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the saves and deletes below are observed.
@@ -681,7 +684,7 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
 
 
 @pytest.mark.django_db
-def test_saving_a_followed_instance_pointing_to_no_row_sends_nothing_and_logs_nothing(
+def test_saving_a_followed_instance_with_no_follower_sends_nothing_and_logs_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -1010,9 +1013,7 @@ def test_deleting_a_followed_related_instance_replaces_the_group_that_follows_it
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the plugin's delete below is observed.
@@ -1053,9 +1054,7 @@ def test_deleting_a_page_whose_followed_plugins_cascade_sends_only_its_empty_gro
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the Page's delete below is observed.
@@ -1132,9 +1131,7 @@ def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
     # the delete from deferring anything to the commit.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     page = Page.objects.create(title="About us", slug="about-us")
     plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
@@ -1230,14 +1227,15 @@ def test_a_save_in_autocommit_with_no_output_setting_fails_and_writes_no_row() -
 
 
 @pytest.mark.django_db(transaction=True)
-def test_a_followed_save_with_no_output_setting_fails_and_writes_no_row() -> None:
+def test_a_followed_instance_saved_with_no_output_setting_fails_and_writes_no_row() -> (
+    None
+):
     # Created before Page is registered: with no MODEL_RAG_OUTPUT, its own
     # save would fail otherwise.
     page = Page.objects.create(title="About us", slug="about-us")
 
-    # tests/settings.py defines no MODEL_RAG_OUTPUT. Only the Page is
-    # registered, following its text plugins: TextPlugin itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+    _register_pages_following_their_plugins()
 
     # No transaction around the save (transaction=True): in autocommit, each
     # query commits as soon as it runs, so the save must fail before its
@@ -1368,9 +1366,8 @@ def test_deleting_a_followed_instance_without_an_output_setting_fails_at_the_del
     page = Page.objects.create(title="About us", slug="about-us")
     plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
 
-    # tests/settings.py defines no MODEL_RAG_OUTPUT. Only the Page is
-    # registered, following its text plugins: TextPlugin itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+    _register_pages_following_their_plugins()
 
     # The commit callbacks are captured and never run: only an error raised by
     # the delete itself is caught, not one deferred to the commit.
@@ -1436,9 +1433,7 @@ def test_saving_and_deleting_a_followed_instance_with_signals_off_costs_nothing_
     # delete from deferring anything to the commit.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     page = Page.objects.create(title="About us", slug="about-us")
     plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
@@ -1457,7 +1452,7 @@ def test_saving_and_deleting_a_followed_instance_with_signals_off_costs_nothing_
     # Nothing is deferred to the commit, and the only queries are the save's
     # UPDATE and the delete's DELETE.
     assert callbacks == []
-    statements = [query["sql"].split()[0] for query in queries.captured_queries]
+    statements = _statements(queries)
     assert statements == ["UPDATE", "DELETE"]
 
 
@@ -1494,9 +1489,7 @@ def test_a_raw_save_of_a_followed_instance_defers_nothing_and_reads_nothing_firs
     # anything to the commit.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     page = Page.objects.create(title="About us", slug="about-us")
     plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
@@ -1527,7 +1520,7 @@ def test_a_raw_save_of_a_followed_instance_defers_nothing_and_reads_nothing_firs
     assert TextPlugin.objects.filter(page=page).count() == len(fixture) + 1
     assert callbacks == []
     assert built_outputs == []
-    statements = {query["sql"].split()[0] for query in queries.captured_queries}
+    statements = set(_statements(queries))
     assert statements <= {"UPDATE", "INSERT"}
 
 
@@ -1599,9 +1592,7 @@ def test_a_follower_failing_at_the_commit_of_a_followed_save_is_logged_without_r
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, following its text plugins: TextPlugin
-    # itself is not.
-    rag.register(Page, follow=["text_plugins"])
+    _register_pages_following_their_plugins()
 
     # Created outside the captured callbacks: the commit callback of the
     # Page's own save never runs, so only the plugin's save below is observed.
