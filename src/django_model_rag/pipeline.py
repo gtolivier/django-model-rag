@@ -338,7 +338,11 @@ class SyncPipeline:
         extractor = rag.new_extractor(queryset.model)
         # hooked before the first chunk, a broken get_queryset() fails even
         # when there is nothing to run
-        kept = _kept_queryset(queryset.model, extractor)
+        kept = _hooked_queryset(
+            queryset.model._default_manager.using(queryset.db),
+            extractor,
+            queryset.model,
+        )
         for pks in _chunks(_pks_in_document_order(queryset)):
             self._output.replace(_reloaded_groups(pks, kept, extractor))
 
