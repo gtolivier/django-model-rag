@@ -142,8 +142,11 @@ def remember_followers_before_save(
     if not _is_followed(sender):
         return
 
-    # Followers reaching the row through foreign keys name its primary key,
-    # which the save does not change: the row as committed is not needed.
+    # Followers reaching the row through foreign keys are looked up by its
+    # primary key, joined against the columns still in the database: pre_save
+    # runs before the UPDATE, so they are those naming the row as committed,
+    # even by columns the save changes, without loading it. The lookup at the
+    # commit finds only those naming the row as saved.
     setattr(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
