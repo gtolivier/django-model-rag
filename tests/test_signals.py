@@ -39,6 +39,7 @@ from tests.testapp.models import (
     FeaturedProduct,
     Lesson,
     Notice,
+    Offer,
     Page,
     PageIntro,
     Product,
@@ -576,6 +577,64 @@ def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_grou
                     source_pk=lamp.pk,
                     title="Lamps",
                     url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_read_two_foreign_keys_deep_replaces_the_group_reading_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, so the category reaches the offer
+    # only through the path.
+    rag.register(Offer, fields=["title", "product__category__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+    rake = Product.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+    )
+    spring = Offer.objects.create(title="Spring sale", product=lamp)
+    Offer.objects.create(title="Autumn sale", product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the offer of a product in the category saved, the
+    # last link of the path: its group, with the category's new name after the
+    # offer's own title. The offer of a product in another category is not
+    # sent.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.offer:{spring.pk}": [
+                NormalizedDocument(
+                    text="Spring sale\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="offer",
+                    source_pk=spring.pk,
+                    title="Spring sale",
                 ),
             ],
         }
