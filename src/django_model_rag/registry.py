@@ -183,12 +183,13 @@ def _require_related_text(
 
 def _require_relations(model: type[Model], names: FieldNames) -> None:
     """Fail unless each of ``names`` starts with a relation accessor of ``model``
-    that is neither a many-to-many nor generic.
+    that is neither a many-to-many nor generic, and crosses no reverse relation
+    past it.
 
     Raises:
         ImproperlyConfigured: a ``depends_on`` name is not a relation, is a
-            many-to-many (forward or reverse), or is a generic foreign key or
-            generic relation.
+            many-to-many (forward or reverse), is a generic foreign key or
+            generic relation, or crosses a reverse relation past its first link.
     """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported while they load
@@ -196,7 +197,8 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
 
     accessors = relations_by_accessor(model)
     for name in names:
-        relation = accessors.get(name.split(LOOKUP_SEP)[0])
+        first, *rest = name.split(LOOKUP_SEP)
+        relation = accessors.get(first)
         if relation is None:
             message = f"{model.__name__}: depends_on {name!r} is not a relation"
             raise ImproperlyConfigured(message)
@@ -206,18 +208,32 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
         if relation.related_model is None or isinstance(relation, GenericRelation):
             message = f"{model.__name__}: depends_on {name!r} is a generic relation"
             raise ImproperlyConfigured(message)
-        related = relation.related_model
-        for segment in name.split(LOOKUP_SEP)[1:]:
-            step = relations_by_accessor(related).get(segment)
-            if step is not None and step.auto_created:
-                message = (
-                    f"{model.__name__}: depends_on {name!r} crosses a reverse "
-                    f"relation, {segment!r}"
-                )
-                raise ImproperlyConfigured(message)
-            if step is None or step.related_model is None:
-                break
-            related = step.related_model
+        _require_no_later_reverse_relation(model, name, relation.related_model, rest)
+
+
+def _require_no_later_reverse_relation(
+    model: type[Model], name: str, related: type[Model], segments: list[str]
+) -> None:
+    """Fail if ``segments``, the rest of ``model``'s ``depends_on`` path ``name``
+    walked from ``related``, cross a reverse relation.
+
+    The walk stops at the first segment that is not a relation, or whose
+    related model is unknown.
+
+    Raises:
+        ImproperlyConfigured: a segment is a reverse relation.
+    """
+    for segment in segments:
+        step = relations_by_accessor(related).get(segment)
+        if step is not None and step.auto_created:
+            message = (
+                f"{model.__name__}: depends_on {name!r} crosses a reverse "
+                f"relation, {segment!r}"
+            )
+            raise ImproperlyConfigured(message)
+        if step is None or step.related_model is None:
+            return
+        related = step.related_model
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
