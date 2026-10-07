@@ -2826,6 +2826,43 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
 
 
 @pytest.mark.django_db
+def test_a_seminar_naming_no_venue_of_a_venue_following_by_multi_column_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, following its seminars by the reverse of
+    # the multi-column ForeignObject ``venue``: Seminar itself is not.
+    rag.register(Venue, fields=["name"], follow=["seminars"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the stray seminar's saves and delete below are
+    # observed. A venue of the same city, with a seminar of its own: the stray
+    # seminar's city column matches it, its name column does not.
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        # A ForeignObject has no database constraint: a seminar may name a
+        # (city, name) pair no Venue row has.
+        stray_seminar = Seminar.objects.create(
+            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+        )
+        stray_seminar.title = "Acoustics of large halls"
+        stray_seminar.save()
+        stray_seminar.delete()
+
+    # The stray seminar's two columns name no venue: its saves and its delete
+    # send nothing, not even for the venue of the same city.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_seminars(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
