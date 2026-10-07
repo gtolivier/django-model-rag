@@ -609,11 +609,12 @@ reference.
   - **One batch per model**: the followers of a saved or deleted instance
     are sent through `run_queryset`, one commit callback per follower
     model, so a category followed by many products makes one query for
-    them, not one each. A follower reached through two declarations is
-    sent once. A failing follower stops the rest of its model's batch,
-    whose failure is logged: the project reads the cause and fixes it,
-    then the command repairs the groups not sent. Other models' batches
-    still run.
+    them, not one each. The batch is cut into queries of 500 rows, under
+    the variable limit of the oldest SQLite builds. A follower reached
+    through two declarations is sent once. A failing follower stops the
+    rest of its batch of 500, whose failure is logged: the project reads
+    the cause and fixes it, then the command repairs the groups not sent.
+    The other batches still run.
   - **One log message**: a failure is logged as `Syncing <follower model>
     instances that follow <source key> failed`, naming the concrete model
     of a row saved or deleted through a proxy. 11a's message changed to
@@ -630,14 +631,19 @@ reference.
     deleted by the cascade gets only its empty group.
   - **Same rules as 11a** for `MODEL_RAG_SIGNALS`, raw saves, a missing
     `MODEL_RAG_OUTPUT` (raised at the save or the delete, writing no row),
-    proxies and multi-table children. A foreign key with a `to_field` is
-    matched on that column; a null target value matches no row.
+    proxies and multi-table children. A foreign key that names a proxy
+    (`ForeignKey(CategoryProxy)`) is followed like one that names its
+    concrete model, on saves and deletes. A foreign key with a `to_field`
+    is matched on that column; a null target value matches no row.
   - **Left for later**: a path is followed only through its leading
     foreign keys: past a reverse one-to-one
     (`supplier__supplier_profile__body`), saving or deleting the profile
     resyncs nothing; a `GenericRelation` in a path is not followed either.
     Changing the `to_field` value of a row whose followers' foreign key has
-    `db_constraint=False` is not tested. From the review, none changing
+    `db_constraint=False` is not tested. A row whose followers' foreign
+    key names a multi-table child, saved through its parent, resyncs
+    none of them: only the parent's `post_save` fires, as in 10's case of a
+    registered child. From the review, none changing
     what is sent: a bulk or cascade delete looks the followers up once per
     deleted row and schedules one callback per row, and a follower reached
     through several deleted rows of a chain is replaced once per row —
