@@ -27,8 +27,10 @@ from tests.testapp.models import (
     Album,
     Bin,
     BonusTrack,
+    Bookmark,
     Category,
     CategoryProxy,
+    Citation,
     ClearanceProduct,
     Course,
     Depot,
@@ -486,6 +488,47 @@ def test_saving_a_notice_read_as_language_through_a_lookup_path_replaces_the_gro
                     source_pk=excerpt.pk,
                     title="Bonjour",
                     language="en",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Citation is registered, reading its url from its bookmark
+    # through a lookup path, with no follow: Bookmark itself is not registered.
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the bookmark's save below is observed.
+    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
+    citation = Citation.objects.create(title="Linked", bookmark=bookmark)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        bookmark.link = "/docs/b/"
+        bookmark.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Citation: its group, with the bookmark's new
+    # link as its url.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.citation:{citation.pk}": [
+                NormalizedDocument(
+                    text="Linked",
+                    source_app_label="testapp",
+                    source_model="citation",
+                    source_pk=citation.pk,
+                    title="Linked",
+                    url="/docs/b/",
                 ),
             ],
         }
