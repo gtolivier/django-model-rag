@@ -704,11 +704,11 @@ class Registry:
             extractor_class: type[BaseExtractor[M]],
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
+            self._require_unregistered(model)
             _require_field_names(model, depends_on, "depends_on")
             if depends_on:
                 _require_models_ready(model, "resolve depends_on")
                 _require_relations(model, depends_on)
-            self._require_unregistered(model)
             self._add(model, extractor_class, _resolved_dependencies(model, depends_on))
             return extractor_class
 
