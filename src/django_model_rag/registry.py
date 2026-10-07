@@ -182,10 +182,12 @@ def _require_related_text(
 
 
 def _require_relations(model: type[Model], names: FieldNames) -> None:
-    """Fail unless each of ``names`` starts with a relation accessor of ``model``.
+    """Fail unless each of ``names`` starts with a relation accessor of ``model``
+    that is not a many-to-many.
 
     Raises:
-        ImproperlyConfigured: a ``depends_on`` name is not a relation.
+        ImproperlyConfigured: a ``depends_on`` name is not a relation, or is
+            a many-to-many (forward or reverse).
     """
     accessors = relations_by_accessor(model)
     for name in names:
