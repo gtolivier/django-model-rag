@@ -212,19 +212,20 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
 
 def _require_relation(
     model: type[Model],
-    name: str,
+    name: object,
     accessors: "dict[str, Field[Any, Any] | ForeignObjectRel]",
 ) -> None:
-    """Fail unless ``name`` starts with one of ``model``'s relation
-    ``accessors`` and every link of it is neither a many-to-many nor generic,
-    and it crosses no reverse relation: a reverse relation is allowed only as
-    a one-link path.
+    """Fail unless ``name`` is a string that starts with one of ``model``'s
+    relation ``accessors`` and every link of it is neither a many-to-many nor
+    generic, and it crosses no reverse relation: a reverse relation is allowed
+    only as a one-link path.
 
     Raises:
-        ImproperlyConfigured: a link of the ``depends_on`` name is not a
-            relation, is a many-to-many (forward or reverse), is a generic
-            foreign key or generic relation, or the name is a longer path that
-            crosses a reverse relation.
+        ImproperlyConfigured: the ``depends_on`` name is not a string (a
+            field object, say), a link of it is not a relation, is a
+            many-to-many (forward or reverse), is a generic foreign key or
+            generic relation, or the name is a longer path that crosses a
+            reverse relation.
     """
     if not isinstance(name, str):
         raise _not_a_relation(model, name)
@@ -281,7 +282,7 @@ def _require_forward_relations(
         related = _require_single_valued(model, name, step)
 
 
-def _not_a_relation(model: type[Model], name: str) -> ImproperlyConfigured:
+def _not_a_relation(model: type[Model], name: object) -> ImproperlyConfigured:
     """The error for a link of ``model``'s ``depends_on`` path ``name`` that
     is not a relation."""
     message = f"{model.__name__}: depends_on {name!r} is not a relation"
