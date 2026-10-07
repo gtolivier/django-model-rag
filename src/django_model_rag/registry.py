@@ -206,6 +206,18 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
         if relation.related_model is None or isinstance(relation, GenericRelation):
             message = f"{model.__name__}: depends_on {name!r} is a generic relation"
             raise ImproperlyConfigured(message)
+        related = relation.related_model
+        for segment in name.split(LOOKUP_SEP)[1:]:
+            step = relations_by_accessor(related).get(segment)
+            if step is not None and step.auto_created:
+                message = (
+                    f"{model.__name__}: depends_on {name!r} crosses a reverse "
+                    f"relation, {segment!r}"
+                )
+                raise ImproperlyConfigured(message)
+            if step is None or step.related_model is None:
+                break
+            related = step.related_model
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
