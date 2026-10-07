@@ -231,7 +231,7 @@ def _replace_followers_as_committed(
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
-        return
+        followers = followers_at_save
 
     for replace_groups in _follower_replacers(followers, followed_source_key):
         replace_groups()
