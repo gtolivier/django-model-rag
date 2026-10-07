@@ -578,7 +578,10 @@ class Registry:
         if not isinstance(extractor, DeclaredFieldsExtractor):
             return []
 
-        first_links = (next(path_links(model, path), None) for path in extractor.fields)
+        paths = list(extractor.fields)
+        if extractor.language_field is not None:
+            paths.append(extractor.language_field)
+        first_links = (next(path_links(model, path), None) for path in paths)
         return [
             link.relation
             for link in first_links
