@@ -520,13 +520,15 @@ class Registry:
         Raises:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: the decorated class does not derive from
-                ``BaseExtractor``, or does not implement ``extract``.
+                ``BaseExtractor``, or does not implement ``extract``, or
+                ``depends_on`` is not a list or a tuple.
         """
 
         def decorator(
             extractor_class: type[BaseExtractor[M]],
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
+            _require_field_names(model, depends_on, "depends_on")
             self._require_unregistered(model)
             self._add(model, extractor_class, tuple(depends_on))
             return extractor_class
