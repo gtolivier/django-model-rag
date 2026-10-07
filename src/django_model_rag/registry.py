@@ -617,16 +617,20 @@ class Registry:
     ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
 
-        ``depends_on`` names the foreign keys, reverse foreign keys, or lookup
-        paths through foreign keys, whose saves change the documents of
-        ``model``.
+        ``depends_on`` names the relations whose saves change the documents
+        of ``model``: a forward foreign key or one-to-one, a reverse relation
+        as a one-link path, or a lookup path through forward foreign keys or
+        one-to-ones.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
             ImproperlyConfigured: the decorated class does not derive from
-                ``BaseExtractor``, or does not implement ``extract``, or
+                ``BaseExtractor``, or does not implement ``extract``;
                 ``depends_on`` is not a list or a tuple, or is given while
-                models are loading.
+                models are loading; a name in ``depends_on`` is given twice;
+                a link of it is not a relation, is a many-to-many (forward
+                or reverse), a generic foreign key or a generic relation; or
+                a path of several links crosses a reverse relation.
         """
 
         def decorator(
