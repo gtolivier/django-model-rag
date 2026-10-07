@@ -8,7 +8,7 @@ from typing import Any, TypeAlias
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import ForeignObject, ForeignObjectRel, Model
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
@@ -304,15 +304,7 @@ def _follower_pks(
     ``instance`` points to them through the foreign key behind ``relation``.
     """
     foreign_key = relation.field
-    # The instance's columns, matched to those of the follower row they name.
-    follower_lookup = {
-        target.attname: getattr(instance, local.attname)
-        for local, target in zip(
-            foreign_key.local_related_fields,
-            foreign_key.foreign_related_fields,
-            strict=True,
-        )
-    }
+    follower_lookup = _follower_lookup(foreign_key, instance)
     if None in follower_lookup.values():
         # A null foreign key points to no follower.
         return []
@@ -326,6 +318,20 @@ def _follower_pks(
     # follower row knows.
     follower_rows = registered_model._base_manager.filter(**follower_lookup)
     return list(follower_rows.values_list("pk", flat=True))
+
+
+def _follower_lookup(
+    foreign_key: "ForeignObject[Any, Any]", instance: Model
+) -> dict[str, Any]:
+    """Return the follower row's columns, each with the value ``instance`` holds."""
+    return {
+        target.attname: getattr(instance, local.attname)
+        for local, target in zip(
+            foreign_key.local_related_fields,
+            foreign_key.foreign_related_fields,
+            strict=True,
+        )
+    }
 
 
 def _followed_reverse_relations(

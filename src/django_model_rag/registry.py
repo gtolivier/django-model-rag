@@ -7,12 +7,7 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import (
-    Field,
-    ForeignObject,
-    ForeignObjectRel,
-    Model,
-)
+from django.db.models import Field, ForeignObject, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete, pre_delete
 
