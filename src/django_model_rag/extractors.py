@@ -487,24 +487,24 @@ def _prefetch_match_columns(followed: _RelationsByAccessor) -> set[str]:
     return {
         column
         for relation in followed.values()
-        if (column := _prefetch_match_column(relation)) is not None
+        for column in _prefetch_match_column(relation)
     }
 
 
 def _prefetch_match_column(
     relation: "Field[Any, Any] | ForeignObjectRel",
-) -> str | None:
-    """Return the name of the parent's column a prefetch of ``relation`` matches by.
+) -> list[str]:
+    """Return the names of the parent's columns a prefetch of ``relation`` matches by.
 
-    None when ``relation`` is not a reverse foreign key or a many-to-many.
+    Empty when ``relation`` is not a reverse foreign key or a many-to-many.
     """
-    # the prefetch matches the related objects to their parent by the column
+    # the prefetch matches the related objects to their parent by the columns
     # the foreign key to the parent targets, which may not be the primary key:
     # the reverse foreign key itself, or the through model's for a many-to-many
     if _is_reverse_foreign_key(relation):
-        return relation.field.target_field.name
+        return [target.name for target in relation.field.foreign_related_fields]
     key = _through_key_to_parent(relation)
-    return key.target_field.name if isinstance(key, ForeignKey) else None
+    return [key.target_field.name] if isinstance(key, ForeignKey) else []
 
 
 def _through_key_to_parent(

@@ -304,20 +304,26 @@ def _follower_pks(
     ``instance`` points to them through the foreign key behind ``relation``.
     """
     foreign_key = relation.field
-    target_field = foreign_key.foreign_related_fields[0]
-    target_value = getattr(instance, foreign_key.attname)
-    if target_value is None:
+    # The instance's columns, matched to those of the follower row they name.
+    target_values = {
+        target.attname: getattr(instance, local.attname)
+        for local, target in zip(
+            foreign_key.local_related_fields,
+            foreign_key.foreign_related_fields,
+            strict=True,
+        )
+    }
+    if None in target_values.values():
         # A null foreign key points to no follower.
         return []
-    if target_field.primary_key:
+    target_field = foreign_key.foreign_related_fields[0]
+    if target_field.primary_key and len(target_values) == 1:
         # The common case costs the save no query: the value already is the key.
-        return [target_value]
+        return [target_values[target_field.attname]]
 
     # A foreign key with a to_field holds another unique column: the group is
     # named after the primary key, which only the follower row knows.
-    follower_rows = registered_model._base_manager.filter(
-        **{target_field.attname: target_value}
-    )
+    follower_rows = registered_model._base_manager.filter(**target_values)
     return list(follower_rows.values_list("pk", flat=True))
 
 
@@ -330,8 +336,6 @@ def _followed_reverse_relations(
         relation
         for relation in rag.followed_reverse_relations(registered_model)
         if relation.related_model in followed_models
-        # A multi-column relation is left out: no single value names a follower.
-        and len(relation.field.foreign_related_fields) == 1
     ]
 
 
