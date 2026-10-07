@@ -629,12 +629,18 @@ reference.
     `MODEL_RAG_OUTPUT` (raised at the save or the delete, writing no row),
     proxies and multi-table children. A foreign key with a `to_field` is
     matched on that column; a null target value matches no row.
-  - **Left for later**: a path through a reverse one-to-one
-    (`supplier__supplier_profile__body`) is resynced, but not when the
-    profile moves to another supplier, which needs a read in `pre_save`;
-    a `GenericRelation` in a path is not followed. Changing the `to_field`
-    value of a row whose followers' foreign key has `db_constraint=False`
-    is not tested.
+  - **Left for later**: a path is followed only through its leading
+    foreign keys: past a reverse one-to-one
+    (`supplier__supplier_profile__body`), saving or deleting the profile
+    resyncs nothing; a `GenericRelation` in a path is not followed either.
+    Changing the `to_field` value of a row whose followers' foreign key has
+    `db_constraint=False` is not tested. From the review, none changing
+    what is sent: a bulk or cascade delete looks the followers up once per
+    deleted row and schedules one callback per row, and a follower reached
+    through several deleted rows of a chain is replaced once per row —
+    batching per transaction belongs with 12b; each save now also walks
+    the lookup paths of every registered model, which the index of the
+    followed senders left open by 11a would avoid.
 - [ ] **11c. `depends_on` for custom extractors.** A custom extractor
   (`register_extractor`) has no `follow`: a `depends_on` declaration, as
   lookup paths from the registered model, would resync it as 11a and 11b
