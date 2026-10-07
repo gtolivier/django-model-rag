@@ -588,6 +588,19 @@ def test_registering_an_extractor_without_extract_fails() -> None:
         rag.register_extractor(Category)(UnfinishedCategoryExtractor)  # type: ignore[type-abstract]
 
 
+def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.body)
+
+    with pytest.raises(
+        ImproperlyConfigured, match=r"\bdepends_on\b.*\blist or a tuple\b"
+    ):
+        # A bare string is the slip under test: the type checker rightly
+        # rejects it.
+        rag.register_extractor(TextPlugin, depends_on="page")(TextPluginExtractor)  # type: ignore[arg-type]
+
+
 @pytest.mark.django_db
 def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> None:
     Category.objects.create(name="Tools")
