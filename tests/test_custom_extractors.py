@@ -628,6 +628,23 @@ def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
 
 
 @pytest.mark.parametrize(
+    "item",
+    [
+        pytest.param(None, id="none"),
+        # The field object of TextPlugin.page, where its name was meant.
+        pytest.param(TextPlugin.page.field, id="field-object"),
+    ],
+)
+def test_depending_on_an_item_that_is_not_a_name_fails_at_registration(
+    item: object,
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bdepends_on\b"):
+        # An item that is not a string is the slip under test: the type
+        # checker rightly rejects it.
+        rag.register_extractor(TextPlugin, depends_on=[item])(TextPluginBodyExtractor)  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
     "name",
     [
         # TextPlugin.body exists but holds content: its changes are the
