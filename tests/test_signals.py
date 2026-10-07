@@ -3101,6 +3101,52 @@ def test_adding_a_topic_to_a_course_following_its_topics_replaces_the_courses_gr
 
 
 @pytest.mark.django_db
+def test_adding_a_course_to_a_topic_replaces_the_group_of_the_course_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # A course already covering the topic: the add below does not change its
+    # group.
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+
+    # Added from the reverse side: Django sends m2m_changed with the topic as
+    # its instance, and the course among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Course's group as committed: its own title, then the topic's
+    # title and summary. No group of the course already covering the topic.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nWoodworking\n\nJoints and finishes.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
