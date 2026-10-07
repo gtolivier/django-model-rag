@@ -339,10 +339,17 @@ def _remember_cleared_pks(
     foreign_key_to = {
         field.related_model: field
         for field in through._meta.fields
-        if field.remote_field is not None
+        if isinstance(field, ForeignObject)
     }
+    # The foreign key may name the instance by a unique column other than its
+    # primary key.
+    instance_key = foreign_key_to[concrete_model_of(type(instance))]
     links = through._base_manager.filter(
-        **{foreign_key_to[concrete_model_of(type(instance))].name: instance.pk}
+        **{
+            instance_key.name: getattr(
+                instance, instance_key.foreign_related_fields[0].attname
+            )
+        }
     )
     setattr(
         instance,
