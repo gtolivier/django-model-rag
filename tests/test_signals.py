@@ -8,7 +8,7 @@ from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 from pytest_django import (
     DjangoAssertNumQueries,
@@ -34,6 +34,7 @@ from tests.testapp.models import (
     Depot,
     Exhibit,
     FeaturedProduct,
+    Lesson,
     Page,
     PageIntro,
     Product,
@@ -2038,6 +2039,30 @@ def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
     # the commit, and nothing more reaches the output.
     assert callbacks == []
     assert _replaced(built_outputs) == replaced_while_registered
+
+
+def test_a_forward_followed_topic_is_listened_to_only_while_followed() -> None:
+    # Two registered models follow Topic through their own foreign key;
+    # neither Topic nor its proxy is registered.
+    rag.register(Workshop, follow=["topic"])
+    rag.register(Lesson, follow=["topic"])
+
+    rag.unregister(Workshop)
+
+    # Lesson still follows Topic: its deletes, through Topic or its proxy,
+    # are still listened to.
+    for sender in (Topic, TopicProxy):
+        assert pre_delete.has_listeners(sender)
+        assert post_delete.has_listeners(sender)
+
+    rag.unregister(Lesson)
+
+    # Django's deletion Collector fast-deletes only a model with no pre_delete
+    # and no post_delete listener: once no registered model follows Topic,
+    # nothing is left listening to its deletes, through Topic or its proxy.
+    for sender in (Topic, TopicProxy):
+        assert not pre_delete.has_listeners(sender)
+        assert not post_delete.has_listeners(sender)
 
 
 @pytest.mark.django_db
