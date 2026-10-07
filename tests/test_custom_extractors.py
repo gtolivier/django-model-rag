@@ -697,6 +697,21 @@ def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
         rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
 
 
+def test_depending_on_a_longer_path_starting_with_a_reverse_relation_fails() -> None:
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.title)
+
+    # Page.text_plugins alone is allowed, but a reverse relation is a path's
+    # last link only: a longer path goes through foreign keys only.
+    name = "text_plugins__page"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(Page, depends_on=[name])(PageExtractor)
+
+
 def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
     class TextPluginExtractor(BaseExtractor[TextPlugin]):
         def extract(self, instance: TextPlugin) -> NormalizedDocument:
