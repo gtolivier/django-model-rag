@@ -1265,6 +1265,48 @@ def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replace
     }
 
 
+@pytest.mark.django_db
+def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_page(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, with a custom extractor reading its text
+    # plugins: depends_on names the reverse relation, whose saves change its
+    # documents. TextPlugin itself is not registered.
+    @rag.register_extractor(Page, depends_on=["text_plugins"])
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> NormalizedDocument:
+            bodies = [plugin.body for plugin in instance.text_plugins.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.title, *bodies])
+            )
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Page's group, with the plugin's text after its title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+            ),
+        ],
+    }
+
+
 @pytest.mark.django_db(transaction=True)
 def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row() -> (
     None
