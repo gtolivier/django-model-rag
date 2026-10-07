@@ -43,6 +43,20 @@ class CategoryExtractor(BaseExtractor[Category]):
         )
 
 
+class TextPluginBodyExtractor(BaseExtractor[TextPlugin]):
+    """Describe each text plugin by its body."""
+
+    def extract(self, instance: TextPlugin) -> NormalizedDocument:
+        return self.build_document(instance, text=instance.body)
+
+
+class AnyModelExtractor(BaseExtractor[Model]):
+    """Describe an instance of any model by its str()."""
+
+    def extract(self, instance: Model) -> NormalizedDocument:
+        return self.build_document(instance, text=str(instance))
+
+
 @pytest.mark.django_db
 def test_registered_extractor_builds_the_document_of_its_model() -> None:
     category = Category.objects.create(name="Tools")
@@ -605,16 +619,12 @@ def test_registering_an_extractor_without_extract_fails() -> None:
 
 
 def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.body)
-
     with pytest.raises(
         ImproperlyConfigured, match=r"\bdepends_on\b.*\blist or a tuple\b"
     ):
         # A bare string is the slip under test: the type checker rightly
         # rejects it.
-        rag.register_extractor(TextPlugin, depends_on="page")(TextPluginExtractor)  # type: ignore[arg-type]
+        rag.register_extractor(TextPlugin, depends_on="page")(TextPluginBodyExtractor)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -629,15 +639,11 @@ def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
 def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
     name: str,
 ) -> None:
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.body)
-
     with pytest.raises(
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
     ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
 
 
 @pytest.mark.parametrize(
@@ -650,10 +656,6 @@ def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
 def test_depending_on_a_many_to_many_fails_at_registration(
     model: type[Model], name: str
 ) -> None:
-    class AnyModelExtractor(BaseExtractor[Model]):
-        def extract(self, instance: Model) -> NormalizedDocument:
-            return self.build_document(instance, text=str(instance))
-
     with pytest.raises(
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
@@ -673,10 +675,6 @@ def test_depending_on_a_many_to_many_fails_at_registration(
 def test_depending_on_a_generic_relation_fails_at_registration(
     model: type[Model], name: str
 ) -> None:
-    class AnyModelExtractor(BaseExtractor[Model]):
-        def extract(self, instance: Model) -> NormalizedDocument:
-            return self.build_document(instance, text=str(instance))
-
     with pytest.raises(
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
@@ -685,10 +683,6 @@ def test_depending_on_a_generic_relation_fails_at_registration(
 
 
 def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.body)
-
     # TextPlugin.page is a foreign key, but Page.accordion_items is a reverse
     # one: past the first link, a path goes through foreign keys only.
     name = "page__accordion_items"
@@ -696,7 +690,7 @@ def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
     ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
 
 
 def test_depending_on_a_longer_path_starting_with_a_reverse_relation_fails() -> None:
@@ -715,10 +709,6 @@ def test_depending_on_a_longer_path_starting_with_a_reverse_relation_fails() -> 
 
 
 def test_depending_on_a_path_through_a_later_non_relation_fails() -> None:
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.body)
-
     # TextPlugin.page is a foreign key, but Page.title holds content: every
     # link of a path is a relation.
     name = "page__title"
@@ -726,21 +716,17 @@ def test_depending_on_a_path_through_a_later_non_relation_fails() -> None:
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
     ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
 
 
 def test_depending_on_a_path_through_a_later_unknown_name_fails_unregistered() -> None:
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.body)
-
     # TextPlugin.page is a foreign key, but Page has no field named nope.
     name = "page__nope"
     with pytest.raises(
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
     ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
 
     assert TextPlugin not in rag.registered_models()
 
@@ -760,10 +746,6 @@ def test_depending_on_a_path_through_a_later_unknown_name_fails_unregistered() -
 def test_depending_on_a_path_through_a_later_many_to_many_or_generic_relation_fails(
     model: type[Model], name: str
 ) -> None:
-    class AnyModelExtractor(BaseExtractor[Model]):
-        def extract(self, instance: Model) -> NormalizedDocument:
-            return self.build_document(instance, text=str(instance))
-
     with pytest.raises(
         ImproperlyConfigured,
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
@@ -772,16 +754,12 @@ def test_depending_on_a_path_through_a_later_many_to_many_or_generic_relation_fa
 
 
 def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.body)
-
     with pytest.raises(
         ImproperlyConfigured,
         match=r"\bpage\b.*\btwice\b|\btwice\b.*\bpage\b",
     ):
         rag.register_extractor(TextPlugin, depends_on=["page", "page"])(
-            TextPluginExtractor
+            TextPluginBodyExtractor
         )
 
 
