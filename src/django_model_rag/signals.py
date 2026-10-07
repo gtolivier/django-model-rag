@@ -7,7 +7,7 @@ from typing import Any, TypeAlias
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignKey, ForeignObjectRel, Model
+from django.db.models import ForeignObjectRel, Model
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
@@ -234,44 +234,30 @@ def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
 
     They reach it through one foreign key of their own, or a chain of them.
     """
-    return _foreign_key_followers(sender, instance) + _deep_lookup_followers(
-        sender, instance
-    )
-
-
-def _foreign_key_followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered rows following ``instance`` through their foreign key."""
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for foreign_key in _followed_foreign_keys(registered_model, sender)
-        for follower_pk in _pks_pointing_to(registered_model, foreign_key, instance)
-    ]
-
-
-def _deep_lookup_followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered rows reaching ``instance`` through a foreign key chain."""
-    return [
-        (registered_model, follower_pk)
-        for registered_model in rag.registered_models()
-        for lookup, reached_model in _followed_deep_lookups(registered_model, sender)
+        for lookup, reached_model in _followed_foreign_key_lookups(
+            registered_model, sender
+        )
         for follower_pk in _pks_reaching(
             registered_model, lookup, _group_pk(instance, reached_model)
         )
     ]
 
 
-def _followed_deep_lookups(
+def _followed_foreign_key_lookups(
     registered_model: type[Model], sender: type[Model]
 ) -> list[tuple[str, type[Model]]]:
-    """Return the foreign key chains to ``sender`` that ``registered_model`` reads.
+    """Return the lookups through which ``registered_model`` reads ``sender``.
 
-    Each comes with the model it reaches, one that ``sender``'s rows are rows of.
+    Each crosses one foreign key or a chain of them, and comes with the model it
+    reaches, one that ``sender``'s rows are rows of.
     """
     followed_models = _models_of_the_row(sender)
     return [
         (lookup, reached_model)
-        for lookup, reached_model in rag.deep_lookup_models(registered_model)
+        for lookup, reached_model in rag.foreign_key_lookups(registered_model)
         if reached_model in followed_models
     ]
 
@@ -289,44 +275,11 @@ def _pks_reaching(
     return list(reaching_rows.values_list("pk", flat=True))
 
 
-def _followed_foreign_keys(
-    registered_model: type[Model], sender: type[Model]
-) -> "list[ForeignKey[Any, Any]]":
-    """Return the foreign keys to ``sender`` that ``registered_model`` follows."""
-    followed_models = _models_of_the_row(sender)
-    return [
-        foreign_key
-        for foreign_key in rag.followed_forward_foreign_keys(registered_model)
-        if foreign_key.related_model in followed_models
-    ]
-
-
-def _pks_pointing_to(
-    registered_model: type[Model], foreign_key: "ForeignKey[Any, Any]", instance: Model
-) -> list[Any]:
-    """Return the primary keys of the ``registered_model`` rows ``instance`` has.
-
-    Those rows point to ``instance`` through ``foreign_key``.
-    """
-    # The foreign key holds the value of the column it targets, not always the
-    # primary key.
-    target_field = foreign_key.foreign_related_fields[0]
-    target_value = getattr(instance, target_field.attname)
-    if target_value is None:
-        # A null foreign key points to no row, not even to a null target value.
-        return []
-    pointing_rows = registered_model._base_manager.filter(
-        **{foreign_key.attname: target_value}
-    )
-    return list(pointing_rows.values_list("pk", flat=True))
-
-
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
     return any(
         _followed_reverse_relations(registered_model, sender)
-        or _followed_foreign_keys(registered_model, sender)
-        or _followed_deep_lookups(registered_model, sender)
+        or _followed_foreign_key_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 

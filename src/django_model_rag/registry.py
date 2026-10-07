@@ -543,21 +543,14 @@ class Registry:
     def _delete_senders(self, model: type[Model]) -> list[type[Model]]:
         """List the senders whose deletions change the group of ``model``.
 
-        They are ``model`` and its proxies, and the models of the reverse and
-        forward foreign keys ``model`` follows, the models its lookup paths reach
-        through two foreign keys or more, and their proxies.
+        They are ``model`` and its proxies, and the models of the reverse
+        foreign keys ``model`` follows, the models it reads through foreign
+        keys, one or a chain, and their proxies.
         """
-        followed_models = (
-            [
-                relation.related_model
-                for relation in self.followed_reverse_relations(model)
-            ]
-            + [
-                foreign_key.related_model
-                for foreign_key in self.followed_forward_foreign_keys(model)
-            ]
-            + [reached for _, reached in self.deep_lookup_models(model)]
-        )
+        followed_models = [
+            relation.related_model
+            for relation in self.followed_reverse_relations(model)
+        ] + [reached for _, reached in self.foreign_key_lookups(model)]
         return _model_and_proxies(model) + [
             sender
             for followed_model in followed_models
@@ -576,55 +569,28 @@ class Registry:
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
-    def followed_forward_foreign_keys(
-        self, model: type[Model]
-    ) -> list["ForeignKey[Any, Any]"]:
-        """List the foreign keys of ``model`` it follows.
+    def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+        """List the models ``model`` reads through foreign keys, one or a chain.
+
+        Those are the models of the foreign keys it follows, and the models
+        its lookup paths reach through their leading foreign keys. Each is
+        paired with the lookup, from ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        foreign_keys = [
-            relation
+        followed = [
+            (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
             if isinstance(relation, ForeignKey)
-        ] + self._lookup_path_foreign_keys(model)
-        return list(dict.fromkeys(foreign_keys))
-
-    def deep_lookup_models(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
-        """List the models ``model`` reads through two foreign keys or more.
-
-        Each is paired with the lookup, from ``model``, that reaches it.
-
-        Raises:
-            NotRegistered: ``model`` is not registered.
-        """
-        # Paths sharing a prefix reach the models along it more than once.
-        return list(
-            dict.fromkeys(
-                reached
-                for path in self._lookup_paths(model)
-                # The first model is reached through one foreign key only.
-                for reached in _models_reached_by_foreign_keys(model, path)[1:]
-            )
-        )
-
-    def _lookup_path_foreign_keys(
-        self, model: type[Model]
-    ) -> list["ForeignKey[Any, Any]"]:
-        """List the foreign keys of ``model`` its lookup path fields start with.
-
-        Raises:
-            NotRegistered: ``model`` is not registered.
-        """
-        first_links = (
-            next(path_links(model, path), None) for path in self._lookup_paths(model)
-        )
-        return [
-            link.relation
-            for link in first_links
-            if link is not None and isinstance(link.relation, ForeignKey)
         ]
+        read_through_paths = [
+            reached
+            for path in self._lookup_paths(model)
+            for reached in _models_reached_by_foreign_keys(model, path)
+        ]
+        # Paths sharing a prefix, or a followed foreign key, reach a model twice.
+        return list(dict.fromkeys(followed + read_through_paths))
 
     def _lookup_paths(self, model: type[Model]) -> list[str]:
         """List the lookup paths ``model`` declares in fields and single_fields.
