@@ -338,6 +338,10 @@ def _pks_reaching(
 
     Those rows reach, through ``lookup``, the row whose primary key is ``reached_pk``.
     """
+    if reached_pk is None:
+        # A deleted row has no primary key left: a null foreign key reaches none.
+        return []
+
     reaching_rows = registered_model._base_manager.filter(
         **{f"{lookup}__pk": reached_pk}
     )
