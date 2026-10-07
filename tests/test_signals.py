@@ -52,6 +52,7 @@ from tests.testapp.models import (
     Session,
     Shelf,
     Showroom,
+    Spotlight,
     Supplier,
     SupplierProfile,
     TextPlugin,
@@ -1505,6 +1506,67 @@ def test_saving_a_category_a_custom_extractor_depends_on_via_parent_link_replace
                 source_app_label="testapp",
                 source_model="featuredproduct",
                 source_pk=lamp.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_category_a_custom_extractor_depends_on_then_parent_link_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Spotlight is registered, with a custom extractor reading its
+    # featured product's category's name: depends_on names the path through
+    # its foreign key to FeaturedProduct, then the implicit parent link,
+    # product_ptr, a forward one-to-one to Product, then Product's foreign key
+    # to Category. Neither FeaturedProduct, Product nor Category is registered.
+    @rag.register_extractor(
+        Spotlight, depends_on=["featured_product__product_ptr__category"]
+    )
+    class SpotlightExtractor(BaseExtractor[Spotlight]):
+        def extract(self, instance: Spotlight) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=f"{instance.title}: {instance.featured_product.category.name}",
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_desk_lamp(lighting)
+    rake = FeaturedProduct.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+        tagline="Gather every leaf",
+    )
+    window = Spotlight.objects.create(title="Shop window", featured_product=lamp)
+    # A spotlight on a featured product in another category: the save below
+    # does not change its group.
+    Spotlight.objects.create(title="Front page", featured_product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the spotlight on a featured product in the
+    # saved category, with the category's new name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.spotlight:{window.pk}": [
+            NormalizedDocument(
+                text="Shop window: Lamps",
+                source_app_label="testapp",
+                source_model="spotlight",
+                source_pk=window.pk,
             ),
         ],
     }

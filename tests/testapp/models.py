@@ -339,6 +339,19 @@ class FeaturedProduct(Product):
     tagline = models.CharField(max_length=200)
 
 
+# --- A foreign key to a multi-table child -------------------------------
+# A Spotlight points to a FeaturedProduct, which reaches its Product row by
+# the implicit parent link ``product_ptr``: a lookup path from a Spotlight
+# crosses that link past its first one.
+
+
+class Spotlight(models.Model):
+    title = models.CharField(max_length=200)
+    featured_product = models.ForeignKey(
+        FeaturedProduct, related_name="spotlights", on_delete=models.CASCADE
+    )
+
+
 # --- Multi-table inheritance under a primary key of its own -------------
 # A ClearanceProduct is a Product whose child row has a primary key of its
 # own, a code such as "CLR-1", next to an explicit parent link, ``product``:
