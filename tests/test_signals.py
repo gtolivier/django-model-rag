@@ -1454,6 +1454,63 @@ def test_saving_a_category_a_custom_extractor_depends_on_two_links_deep_replaces
 
 
 @pytest.mark.django_db
+def test_saving_a_category_a_custom_extractor_depends_on_via_parent_link_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the FeaturedProduct is registered, with a custom extractor reading
+    # its category's name: depends_on names the path through the implicit
+    # parent link, product_ptr, a forward one-to-one to Product, then
+    # Product's foreign key to Category. Neither Product nor Category is
+    # registered.
+    @rag.register_extractor(FeaturedProduct, depends_on=["product_ptr__category"])
+    class FeaturedProductExtractor(BaseExtractor[FeaturedProduct]):
+        def extract(self, instance: FeaturedProduct) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=f"{instance.tagline}: {instance.category.name}",
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_desk_lamp(lighting)
+    # A featured product in another category: the save below does not change
+    # its group.
+    FeaturedProduct.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+        tagline="Gather every leaf",
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the featured product in the saved category,
+    # with the category's new name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.featuredproduct:{lamp.pk}": [
+            NormalizedDocument(
+                text="Light up your work: Lamps",
+                source_app_label="testapp",
+                source_model="featuredproduct",
+                source_pk=lamp.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
