@@ -610,7 +610,10 @@ reference.
     are sent through `run_queryset`, one commit callback per follower
     model, so a category followed by many products makes one query for
     them, not one each. A follower reached through two declarations is
-    sent once.
+    sent once. A failing follower stops the rest of its model's batch,
+    whose failure is logged: the project reads the cause and fixes it,
+    then the command repairs the groups not sent. Other models' batches
+    still run.
   - **One log message**: a failure is logged as `Syncing <follower model>
     instances that follow <source key> failed`, naming the concrete model
     of a row saved or deleted through a proxy. 11a's message changed to
