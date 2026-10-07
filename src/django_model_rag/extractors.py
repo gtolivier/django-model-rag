@@ -315,7 +315,8 @@ def _link_back_fields(
 ) -> list[str] | None:
     """Return the fields of the related model that link it back through ``relation``.
 
-    These are the foreign key of a reverse foreign key, the object_id and
+    These are the local columns of a reverse foreign key — the foreign key
+    itself, or each column of a multi-column ForeignObject — the object_id and
     content_type of a generic relation, and none for a many-to-many; None for
     any other relation.
     """
@@ -324,7 +325,7 @@ def _link_back_fields(
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
     if _is_reverse_foreign_key(relation):
-        return [relation.field.name]
+        return [field.name for field in relation.field.local_related_fields]
     if isinstance(relation, GenericRelation):
         return [relation.object_id_field_name, relation.content_type_field_name]
     if relation.many_to_many:

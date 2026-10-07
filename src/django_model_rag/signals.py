@@ -324,14 +324,13 @@ def _follower_lookup(
     foreign_key: "ForeignObject[Any, Any]", instance: Model
 ) -> dict[str, Any]:
     """Return the follower row's columns, each with the value ``instance`` holds."""
-    return {
-        target.attname: getattr(instance, local.attname)
-        for local, target in zip(
-            foreign_key.local_related_fields,
-            foreign_key.foreign_related_fields,
+    return dict(
+        zip(
+            (target.attname for target in foreign_key.foreign_related_fields),
+            foreign_key.get_local_related_value(instance),
             strict=True,
         )
-    }
+    )
 
 
 def _followed_reverse_relations(
