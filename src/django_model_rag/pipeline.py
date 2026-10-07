@@ -86,15 +86,6 @@ def _hooked_queryset(
     return _checked_queryset(extractor.get_queryset(queryset), extractor, model)
 
 
-def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
-    """Tell whether ``extractor``'s get_queryset() keeps ``instance``.
-
-    Raises:
-        TypeError: get_queryset() did not return a QuerySet of the model's instances.
-    """
-    return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
-
-
 def _reloaded_by_hook(pks: Iterable[Any], kept: QuerySet[Model]) -> dict[Any, Model]:
     """Reload the instances of ``pks`` from ``kept``, as get_queryset() hooked it.
 
@@ -195,23 +186,6 @@ def _own_documents(
         if document.source_key != source_key:
             raise _foreign_source(extractor, source_key)
         yield document
-
-
-def _kept_documents(
-    instance: Model, extractor: BaseExtractor[Any]
-) -> list[NormalizedDocument]:
-    """Return the documents of ``instance``, none if get_queryset() filters it out.
-
-    An instance filtered out is not extracted.
-
-    Raises:
-        TypeError: ``extractor``'s get_queryset() did not return a QuerySet of
-            the model's instances, or its extract() returned a document of
-            another source.
-    """
-    if not _is_kept_by_hook(instance, extractor):
-        return []
-    return list(_own_documents(instance, extractor))
 
 
 def _reloaded_documents(
@@ -371,11 +345,4 @@ class SyncPipeline:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
         kept = _kept_queryset(type(instance), extractor)
-        reloaded = _reloaded_by_hook([instance.pk], kept)
-        self._output.replace(
-            {
-                _source_key(instance): _reloaded_documents(
-                    reloaded.get(instance.pk), extractor
-                )
-            }
-        )
+        self._output.replace(_reloaded_groups([instance.pk], kept, extractor))
