@@ -693,6 +693,20 @@ def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
         rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
 
 
+def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.body)
+
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=r"\bpage\b.*\btwice\b|\btwice\b.*\bpage\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=["page", "page"])(
+            TextPluginExtractor
+        )
+
+
 @pytest.mark.django_db
 def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> None:
     Category.objects.create(name="Tools")
