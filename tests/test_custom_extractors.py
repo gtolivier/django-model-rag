@@ -1,8 +1,12 @@
+import subprocess
+import sys
+import textwrap
 from collections.abc import Iterator, Mapping
+from pathlib import Path
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from django.db.models import QuerySet
+from django.db.models import Model, QuerySet
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import (
@@ -12,7 +16,19 @@ from django_model_rag import (
     rag,
 )
 from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
-from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
+from tests.testapp.models import (
+    AccordionItem,
+    Category,
+    Course,
+    Membership,
+    Page,
+    Photo,
+    Pin,
+    Product,
+    Tag,
+    TextPlugin,
+    Topic,
+)
 
 
 class CategoryExtractor(BaseExtractor[Category]):
@@ -25,6 +41,20 @@ class CategoryExtractor(BaseExtractor[Category]):
             source_model="category",
             source_pk=instance.pk,
         )
+
+
+class TextPluginBodyExtractor(BaseExtractor[TextPlugin]):
+    """Describe each text plugin by its body."""
+
+    def extract(self, instance: TextPlugin) -> NormalizedDocument:
+        return self.build_document(instance, text=instance.body)
+
+
+class AnyModelExtractor(BaseExtractor[Model]):
+    """Describe an instance of any model by its str()."""
+
+    def extract(self, instance: Model) -> NormalizedDocument:
+        return self.build_document(instance, text=str(instance))
 
 
 @pytest.mark.django_db
@@ -588,6 +618,279 @@ def test_registering_an_extractor_without_extract_fails() -> None:
         rag.register_extractor(Category)(UnfinishedCategoryExtractor)  # type: ignore[type-abstract]
 
 
+def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
+    with pytest.raises(
+        ImproperlyConfigured, match=r"\bdepends_on\b.*\blist or a tuple\b"
+    ):
+        # A bare string is the slip under test: the type checker rightly
+        # rejects it.
+        rag.register_extractor(TextPlugin, depends_on="page")(TextPluginBodyExtractor)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        pytest.param(None, id="none"),
+        # The field object of TextPlugin.page, where its name was meant.
+        pytest.param(TextPlugin.page.field, id="field-object"),
+    ],
+)
+def test_depending_on_an_item_that_is_not_a_name_fails_at_registration(
+    item: object,
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=r"\bdepends_on\b"):
+        # An item that is not a string is the slip under test: the type
+        # checker rightly rejects it.
+        rag.register_extractor(TextPlugin, depends_on=[item])(TextPluginBodyExtractor)  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # TextPlugin.body exists but holds content: its changes are the
+        # model's own, not a relation's.
+        pytest.param("body", id="content-field"),
+        pytest.param("pgae", id="unknown-name"),
+    ],
+)
+def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
+    name: str,
+) -> None:
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        pytest.param(Course, "topics", id="forward"),
+        pytest.param(Topic, "courses", id="reverse"),
+    ],
+)
+def test_depending_on_a_many_to_many_fails_at_registration(
+    model: type[Model], name: str
+) -> None:
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        # Tag.content_object may point to an instance of any model: there is
+        # no single model whose changes to listen to.
+        pytest.param(Tag, "content_object", id="generic-foreign-key"),
+        pytest.param(Photo, "tags", id="generic-relation"),
+    ],
+)
+def test_depending_on_a_generic_relation_fails_at_registration(
+    model: type[Model], name: str
+) -> None:
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
+
+
+def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
+    # TextPlugin.page is a foreign key, but Page.accordion_items is a reverse
+    # one: past the first link, a path goes through foreign keys only.
+    name = "page__accordion_items"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
+
+
+def test_depending_on_a_longer_path_starting_with_a_reverse_relation_fails() -> None:
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.title)
+
+    # Page.text_plugins alone is allowed, but a reverse relation is a path's
+    # last link only: a longer path goes through foreign keys only.
+    name = "text_plugins__page"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(Page, depends_on=[name])(PageExtractor)
+
+
+def test_depending_on_a_path_through_a_later_non_relation_fails() -> None:
+    # TextPlugin.page is a foreign key, but Page.title holds content: every
+    # link of a path is a relation.
+    name = "page__title"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
+
+
+def test_depending_on_a_path_through_a_later_unknown_name_fails_unregistered() -> None:
+    # TextPlugin.page is a foreign key, but Page has no field named nope.
+    name = "page__nope"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
+
+    assert TextPlugin not in rag.registered_models()
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        # Membership.guild is a foreign key, but Guild.members a many-to-many.
+        pytest.param(Membership, "guild__members", id="many-to-many"),
+        # Pin.tag is a foreign key, but Tag.content_object may point to an
+        # instance of any model.
+        pytest.param(Pin, "tag__content_object", id="generic-foreign-key"),
+        # Pin.photo is a foreign key, but Photo.tags a generic relation.
+        pytest.param(Pin, "photo__tags", id="generic-relation"),
+    ],
+)
+def test_depending_on_a_path_through_a_later_many_to_many_or_generic_relation_fails(
+    model: type[Model], name: str
+) -> None:
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
+
+
+def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=r"\bpage\b.*\btwice\b|\btwice\b.*\bpage\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=["page", "page"])(
+            TextPluginBodyExtractor
+        )
+
+
+THROWAWAY_APP_SETTINGS = """\
+import django
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
+
+settings.configure(
+    INSTALLED_APPS=["noticeboard"],
+    DEFAULT_AUTO_FIELD="django.db.models.AutoField",
+)
+"""
+"""The start of a script that configures the throwaway ``noticeboard`` app."""
+
+
+def run_with_throwaway_app(
+    tmp_path: Path, models_source: str, script_source: str
+) -> subprocess.CompletedProcess[str]:
+    """Run ``script_source`` in a fresh interpreter, next to a throwaway app.
+
+    The app, ``noticeboard``, has ``models_source`` as its models.py. This
+    process's apps are long loaded: only a fresh interpreter runs a models.py
+    while models are loading.
+    """
+    app = tmp_path / "noticeboard"
+    app.mkdir()
+    (app / "__init__.py").write_text("")
+    (app / "models.py").write_text(textwrap.dedent(models_source))
+    script = tmp_path / "load_apps.py"
+    script.write_text(THROWAWAY_APP_SETTINGS + textwrap.dedent(script_source))
+    return subprocess.run(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_depending_on_a_relation_from_a_models_module_fails_and_points_to_ready(
+    tmp_path: Path,
+) -> None:
+    # Resolving depends_on needs every model loaded, which is not the case
+    # while a models.py runs.
+    result = run_with_throwaway_app(
+        tmp_path,
+        """\
+        from django.db import models
+
+        from django_model_rag import BaseExtractor, rag
+
+
+        class Board(models.Model):
+            name = models.CharField(max_length=100)
+
+
+        class Memo(models.Model):
+            body = models.TextField()
+            board = models.ForeignKey(Board, on_delete=models.CASCADE)
+
+
+        @rag.register_extractor(Memo, depends_on=["board"])
+        class MemoExtractor(BaseExtractor[Memo]):
+            def extract(self, instance):
+                return self.build_document(instance, text=instance.body)
+        """,
+        """\
+        try:
+            django.setup()
+        except ImproperlyConfigured as error:
+            print(error)
+        """,
+    )
+
+    assert result.stdout, f"no ImproperlyConfigured raised; stderr:\n{result.stderr}"
+    assert "rag.py" in result.stdout, result.stdout
+    assert "AppConfig.ready()" in result.stdout, result.stdout
+
+
+def test_registering_an_extractor_from_a_models_module_without_depends_on_works(
+    tmp_path: Path,
+) -> None:
+    result = run_with_throwaway_app(
+        tmp_path,
+        """\
+        from django.db import models
+
+        from django_model_rag import BaseExtractor, rag
+
+
+        class Memo(models.Model):
+            body = models.TextField()
+
+
+        @rag.register_extractor(Memo)
+        class MemoExtractor(BaseExtractor[Memo]):
+            def extract(self, instance):
+                return self.build_document(instance, text=instance.body)
+        """,
+        """\
+        django.setup()
+
+        from django_model_rag import rag
+        from noticeboard.models import Memo
+
+        print(rag.is_registered(Memo))
+        """,
+    )
+
+    assert result.returncode == 0, f"setup failed; stderr:\n{result.stderr}"
+    assert result.stdout == "True\n", result.stdout
+
+
 @pytest.mark.django_db
 def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> None:
     Category.objects.create(name="Tools")
@@ -631,6 +934,15 @@ def test_second_extractor_for_a_model_fails_and_keeps_the_first() -> None:
 
     [document] = run_documents()
     assert document.text == "Everything filed under Tools."
+
+
+def test_extractor_for_a_registered_model_fails_registered_before_depends_on() -> None:
+    rag.register_extractor(Category)(CategoryExtractor)
+
+    with pytest.raises(AlreadyRegistered):
+        rag.register_extractor(Category, depends_on=["no_such_field"])(
+            CategoryExtractor
+        )
 
 
 @pytest.mark.django_db

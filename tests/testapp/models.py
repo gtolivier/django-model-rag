@@ -339,6 +339,19 @@ class FeaturedProduct(Product):
     tagline = models.CharField(max_length=200)
 
 
+# --- A foreign key to a multi-table child -------------------------------
+# A Spotlight points to a FeaturedProduct, which reaches its Product row by
+# the implicit parent link ``product_ptr``: a lookup path from a Spotlight
+# crosses that link past its first one.
+
+
+class Spotlight(models.Model):
+    title = models.CharField(max_length=200)
+    featured_product = models.ForeignKey(
+        FeaturedProduct, related_name="spotlights", on_delete=models.CASCADE
+    )
+
+
 # --- Multi-table inheritance under a primary key of its own -------------
 # A ClearanceProduct is a Product whose child row has a primary key of its
 # own, a code such as "CLR-1", next to an explicit parent link, ``product``:
@@ -396,6 +409,19 @@ class Tag(models.Model):
 class Photo(models.Model):
     title = models.CharField(max_length=200)
     tags = GenericRelation(Tag)
+
+
+# --- Foreign keys to the models of a generic relation -------------------
+# A Pin points to a Photo, which reaches its Tags by the generic relation
+# ``tags``, and to a Tag, which reaches its object by the generic foreign key
+# ``content_object``: a lookup path from a Pin crosses either past its first
+# link.
+
+
+class Pin(models.Model):
+    note = models.CharField(max_length=200)
+    photo = models.ForeignKey(Photo, related_name="pins", on_delete=models.CASCADE)
+    tag = models.ForeignKey(Tag, related_name="pins", on_delete=models.CASCADE)
 
 
 # --- A language held under a name of its own ----------------------------

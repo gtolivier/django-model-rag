@@ -459,6 +459,44 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   UUID) pays that read on each insert. A model nothing follows
   costs its saves no query, only a check, in Python, of what each
   registered model follows.
+- **A followed parent or a lookup path.** Saving or deleting an instance
+  that a registered model reaches through a forward foreign key or
+  one-to-one — in `follow` (`Product` with `follow=["category"]`), or as a
+  link of a lookup path in `fields`, `title_field`, `language_field` or
+  `url_field` (`"product__category__name"`, however many foreign keys
+  deep) — replaces the groups of the registered instances that reach it.
+  They are read in batches of 500, one query per batch and per registered
+  model; creating an instance costs no query, since nothing points to it
+  yet. A delete looks them up in `pre_delete`, before an `on_delete=SET_NULL`
+  clears their foreign keys. A path is followed through its leading foreign
+  keys only: past a reverse one-to-one, or through a `GenericRelation`,
+  nothing is resynced.
+- **A custom extractor's dependencies.** A custom extractor reads what it
+  likes, so it declares the relations its documents depend on:
+
+  ```python
+  @rag.register_extractor(TextPlugin, depends_on=["page"])
+  class TextPluginExtractor(BaseExtractor[TextPlugin]):
+      def extract(self, instance):
+          return self.build_document(
+              instance, text=f"{instance.page.title}\n\n{instance.body}"
+          )
+  ```
+
+  Each name is a relation path from the registered model: a forward
+  foreign key or one-to-one (`"page"`), a reverse foreign key or
+  one-to-one by its accessor, on its own (`depends_on=["text_plugins"]` on
+  `Page`), or a path through forward foreign keys (`"product__category"`).
+  Saving or deleting an instance at the end of the path replaces the groups
+  of the registered instances that reach it, as for `follow` and lookup
+  paths above; one that the extractor's `get_queryset()` filters out gets
+  an empty group. Errors are raised at registration, with
+  `ImproperlyConfigured`: `depends_on` that is not a list or a tuple, an item
+  that is not a string, a link that is not a relation, a many-to-many (forward or reverse), a generic
+  foreign key or `GenericRelation`, a path of several links that crosses a
+  reverse relation, a path given twice, and `depends_on` while models are
+  still loading. Registering a model that is already registered raises
+  `AlreadyRegistered` first, whatever `depends_on` holds.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
@@ -493,20 +531,22 @@ model is registered gets no delete listener, so deleting through it empties
 nothing: register from `model_rag.py`, once every model is loaded. A proxy
 registered instead of its concrete model is not updated by the signals.
 
-**What is not sent.** Unregistered models that no registered model follows
-through a reverse relation: they keep Django's fast delete, since the
-package listens to `post_delete` only for registered models, the models
-they follow that way, and their proxies. Raw saves, such as `loaddata`
+**What is not sent.** Unregistered models that no registered model follows,
+reads through a lookup path or depends on: they keep Django's fast delete,
+since the package listens to `pre_delete` and `post_delete` only for
+registered models, the models they reach that way, and their proxies — and
+only while a registered model reaches them. Raw saves, such as `loaddata`
 loading a fixture. Changes the ORM signals do not see:
 `QuerySet.update()`, `bulk_create()`, `bulk_update()`, raw SQL. A change to
 a related object whose text a registered model reads by any other way than
-a followed reverse foreign key or one-to-one leaves that model's documents
-stale until they are saved again: a forward foreign key or a many-to-many
-in `follow` (including a reverse one), the reverse of a multi-column
-`ForeignObject`, a lookup path in `fields`, a
-`GenericRelation` (a photo's tags, say), or whatever a custom extractor
-reads — it has no `follow` to declare it. These are listed in the
-[roadmap](ROADMAP.md) as feature 11b. For all of these, run `sync_model_rag`, or sync the
+those above leaves that model's documents stale until they are saved again:
+a many-to-many in `follow` or in a lookup path (forward or reverse), the
+reverse of a multi-column `ForeignObject` — and, in `depends_on`, such a
+`ForeignObject` either way, which registration accepts though nothing
+resyncs through it — a path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say), or whatever a custom
+extractor reads without declaring it in `depends_on`. Many-to-many
+relations are listed in the [roadmap](ROADMAP.md) as feature 11d. For all
+of these, run `sync_model_rag`, or sync the
 instances concerned from a receiver of your own: in a
 `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset

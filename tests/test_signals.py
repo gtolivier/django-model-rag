@@ -40,16 +40,19 @@ from tests.testapp.models import (
     FeaturedProduct,
     Lesson,
     Meetup,
+    Note,
     Notice,
     Offer,
     Page,
     PageIntro,
     Product,
+    Remark,
     Review,
     Seminar,
     Session,
     Shelf,
     Showroom,
+    Spotlight,
     Supplier,
     SupplierProfile,
     TextPlugin,
@@ -1160,6 +1163,462 @@ def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_it
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_plugins(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the TextPlugin is registered, with a custom extractor reading its
+    # page's title: depends_on names the page, whose saves change its
+    # documents. Page itself is not registered.
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the page's save below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    tables = TextPlugin.objects.create(page=about, body="And tables too.")
+    # A plugin of another page: the save below does not change its group.
+    contact = Page.objects.create(title="Contact", slug="contact")
+    TextPlugin.objects.create(page=contact, body="Write to us.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of the saved page's plugins, with the page's
+    # new title, and no group of the other page's plugin.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+        f"testapp.textplugin:{tables.pk}": [
+            NormalizedDocument(
+                text="Our workshop: And tables too.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=tables.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, with a custom extractor reading its
+    # topic's title when it has one: depends_on names the topic, its own
+    # foreign key, SET_NULL on delete. Topic itself is not registered.
+    @rag.register_extractor(Workshop, depends_on=["topic"])
+    class WorkshopExtractor(BaseExtractor[Workshop]):
+        def extract(self, instance: Workshop) -> NormalizedDocument:
+            if instance.topic is None:
+                return self.build_document(instance, text=instance.title)
+            return self.build_document(
+                instance, text=f"{instance.topic.title}: {instance.title}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # The delete sets the workshop's foreign key to null before the topic's
+    # row goes: by post_delete, the workshop no longer points to the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Workshop's group as committed: the topic's text is
+    # gone, only the Workshop's own title is left.
+    assert _received_groups(built_outputs) == {
+        f"testapp.workshop:{pottery.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=pottery.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_page(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Page is registered, with a custom extractor reading its text
+    # plugins: depends_on names the reverse relation, whose saves change its
+    # documents. TextPlugin itself is not registered.
+    @rag.register_extractor(Page, depends_on=["text_plugins"])
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> NormalizedDocument:
+            bodies = [plugin.body for plugin in instance.text_plugins.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.title, *bodies])
+            )
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Page's own save never runs, so only the plugin's save below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Page's group, with the plugin's text after its title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_remark_a_custom_extractor_depends_on_without_related_name_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Note is registered, with a custom extractor reading its
+    # remarks: depends_on names the reverse relation by its default accessor,
+    # "remark_set", while the relation's query name is "remark". Remark itself
+    # is not registered.
+    @rag.register_extractor(Note, depends_on=["remark_set"])
+    class NoteExtractor(BaseExtractor[Note]):
+        def extract(self, instance: Note) -> NormalizedDocument:
+            bodies = [remark.body for remark in instance.remark_set.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.title, *bodies])
+            )
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Note's own save never runs, so only the remark's save below is observed.
+    note = Note.objects.create(title="Workshop rules", body="Wear goggles.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Remark.objects.create(note=note, body="Gloves too.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Note's group, with the remark's text after its title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.note:{note.pk}": [
+            NormalizedDocument(
+                text="Workshop rules\n\nGloves too.",
+                source_app_label="testapp",
+                source_model="note",
+                source_pk=note.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Supplier is registered, with a custom extractor reading its
+    # profile: depends_on names the reverse one-to-one by its accessor,
+    # "profile", while the relation's query name is "supplier_profile".
+    # SupplierProfile itself is not registered.
+    @rag.register_extractor(Supplier, depends_on=["profile"])
+    class SupplierExtractor(BaseExtractor[Supplier]):
+        def extract(self, instance: Supplier) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.name}\n\n{instance.profile.body}"
+            )
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Supplier's own save never runs, so only the profile's save below is
+    # observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Supplier's group, with the profile's text after its
+    # name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.supplier:{birch.pk}": [
+            NormalizedDocument(
+                text="Birch Mill\n\nKiln-dried boards.",
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=birch.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_category_a_custom_extractor_depends_on_two_links_deep_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, with a custom extractor reading its
+    # product's category's name: depends_on names the path through two foreign
+    # keys, whose last link's saves change its documents. Neither Product nor
+    # Category is registered.
+    @rag.register_extractor(Offer, depends_on=["product__category"])
+    class OfferExtractor(BaseExtractor[Offer]):
+        def extract(self, instance: Offer) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=f"{instance.title}: {instance.product.category.name}",
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    rake = Product.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+    )
+    spring = Offer.objects.create(title="Spring sale", product=lamp)
+    # An offer of a product in another category: the save below does not
+    # change its group.
+    Offer.objects.create(title="Autumn sale", product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the offer of a product in the saved category,
+    # with the category's new name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{spring.pk}": [
+            NormalizedDocument(
+                text="Spring sale: Lamps",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=spring.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_category_a_custom_extractor_depends_on_via_parent_link_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the FeaturedProduct is registered, with a custom extractor reading
+    # its category's name: depends_on names the path through the implicit
+    # parent link, product_ptr, a forward one-to-one to Product, then
+    # Product's foreign key to Category. Neither Product nor Category is
+    # registered.
+    @rag.register_extractor(FeaturedProduct, depends_on=["product_ptr__category"])
+    class FeaturedProductExtractor(BaseExtractor[FeaturedProduct]):
+        def extract(self, instance: FeaturedProduct) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=f"{instance.tagline}: {instance.category.name}",
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_desk_lamp(lighting)
+    # A featured product in another category: the save below does not change
+    # its group.
+    FeaturedProduct.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+        tagline="Gather every leaf",
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the featured product in the saved category,
+    # with the category's new name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.featuredproduct:{lamp.pk}": [
+            NormalizedDocument(
+                text="Light up your work: Lamps",
+                source_app_label="testapp",
+                source_model="featuredproduct",
+                source_pk=lamp.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_category_a_custom_extractor_depends_on_then_parent_link_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Spotlight is registered, with a custom extractor reading its
+    # featured product's category's name: depends_on names the path through
+    # its foreign key to FeaturedProduct, then the implicit parent link,
+    # product_ptr, a forward one-to-one to Product, then Product's foreign key
+    # to Category. Neither FeaturedProduct, Product nor Category is registered.
+    @rag.register_extractor(
+        Spotlight, depends_on=["featured_product__product_ptr__category"]
+    )
+    class SpotlightExtractor(BaseExtractor[Spotlight]):
+        def extract(self, instance: Spotlight) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=f"{instance.title}: {instance.featured_product.category.name}",
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_desk_lamp(lighting)
+    rake = FeaturedProduct.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+        tagline="Gather every leaf",
+    )
+    window = Spotlight.objects.create(title="Shop window", featured_product=lamp)
+    # A spotlight on a featured product in another category: the save below
+    # does not change its group.
+    Spotlight.objects.create(title="Front page", featured_product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the spotlight on a featured product in the
+    # saved category, with the category's new name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.spotlight:{window.pk}": [
+            NormalizedDocument(
+                text="Shop window: Lamps",
+                source_app_label="testapp",
+                source_model="spotlight",
+                source_pk=window.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the TextPlugin is registered, with a custom extractor reading its
+    # page's title and depending on the page, whose get_queryset() leaves out
+    # the plugins with an empty body. Page itself is not registered.
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def get_queryset(self, queryset: QuerySet[TextPlugin]) -> QuerySet[TextPlugin]:
+            return queryset.exclude(body="")
+
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the page's save below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    blank = TextPlugin.objects.create(page=about, body="")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The kept plugin's group, with the page's new title, and
+    # the left-out plugin's group empty, so the output drops what it held.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+        f"testapp.textplugin:{blank.pk}": [],
+    }
 
 
 @pytest.mark.django_db(transaction=True)
@@ -2686,6 +3145,37 @@ def test_a_forward_followed_topic_is_listened_to_only_while_followed() -> None:
 
     # Django's deletion Collector fast-deletes only a model with no pre_delete
     # and no post_delete listener: once no registered model follows Topic,
+    # nothing is left listening to its deletes, through Topic or its proxy.
+    for sender in (Topic, TopicProxy):
+        assert not pre_delete.has_listeners(sender)
+        assert not post_delete.has_listeners(sender)
+
+
+def test_a_topic_custom_extractors_depend_on_is_listened_to_only_while_needed() -> None:
+    # Two registered models have a custom extractor depending on Topic through
+    # their own foreign key; neither Topic nor its proxy is registered.
+    @rag.register_extractor(Workshop, depends_on=["topic"])
+    class WorkshopExtractor(BaseExtractor[Workshop]):
+        def extract(self, instance: Workshop) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.title)
+
+    @rag.register_extractor(Lesson, depends_on=["topic"])
+    class LessonExtractor(BaseExtractor[Lesson]):
+        def extract(self, instance: Lesson) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.title)
+
+    rag.unregister(Workshop)
+
+    # Lesson still depends on Topic: its deletes, through Topic or its proxy,
+    # are still listened to.
+    for sender in (Topic, TopicProxy):
+        assert pre_delete.has_listeners(sender)
+        assert post_delete.has_listeners(sender)
+
+    rag.unregister(Lesson)
+
+    # Django's deletion Collector fast-deletes only a model with no pre_delete
+    # and no post_delete listener: once no registered model depends on Topic,
     # nothing is left listening to its deletes, through Topic or its proxy.
     for sender in (Topic, TopicProxy):
         assert not pre_delete.has_listeners(sender)

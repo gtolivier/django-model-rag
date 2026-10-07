@@ -1,7 +1,8 @@
 """The registry of models whose content feeds the pipeline."""
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from django.apps import apps
@@ -18,6 +19,7 @@ from django_model_rag.extractors import (
     PathLink,
     guessed_language_field,
     path_links,
+    query_name,
     relations_by_accessor,
     text_fields,
 )
@@ -137,6 +139,22 @@ def _require_models_ready(model: type[Model], action: str) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _each_once(names: FieldNames, twice_message: Callable[[str], str]) -> Iterator[str]:
+    """Yield each of ``names``, failing on the first one given a second time.
+
+    ``twice_message`` words the error for that name.
+
+    Raises:
+        ImproperlyConfigured: a name is given twice.
+    """
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            raise ImproperlyConfigured(twice_message(name))
+        seen.add(name)
+        yield name
+
+
 def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
     """Fail unless ``names`` names, once each, relations of ``model`` with text.
 
@@ -146,15 +164,12 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             key) or has no text field.
     """
     accessors = relations_by_accessor(model)
-    seen: set[str] = set()
-    for name in names:
+    for name in _each_once(
+        names, lambda twice: f"{model.__name__}: relation {twice!r} is followed twice"
+    ):
         if name not in accessors:
             message = f"{model.__name__}: cannot follow {name!r}, not a relation"
             raise ImproperlyConfigured(message)
-        if name in seen:
-            message = f"{model.__name__}: relation {name!r} is followed twice"
-            raise ImproperlyConfigured(message)
-        seen.add(name)
         _require_related_text(model, name, accessors[name].related_model)
 
 
@@ -179,6 +194,110 @@ def _require_related_text(
             f"{related.__name__} has no text field"
         )
         raise ImproperlyConfigured(message)
+
+
+def _require_relations(model: type[Model], names: FieldNames) -> None:
+    """Fail unless ``names`` names, once each, ``depends_on`` paths of ``model``.
+
+    Raises:
+        ImproperlyConfigured: a name is given twice, or is not a path
+            :func:`_require_relation` accepts.
+    """
+    accessors = relations_by_accessor(model)
+    for name in _each_once(
+        names, lambda twice: f"{model.__name__}: depends_on {twice!r} is given twice"
+    ):
+        _require_relation(model, name, accessors)
+
+
+def _require_relation(
+    model: type[Model],
+    name: object,
+    accessors: "dict[str, Field[Any, Any] | ForeignObjectRel]",
+) -> None:
+    """Fail unless ``name`` is a string that starts with one of ``model``'s
+    relation ``accessors`` and every link of it is neither a many-to-many nor
+    generic, and it crosses no reverse relation: a reverse relation is allowed
+    only as a one-link path.
+
+    Raises:
+        ImproperlyConfigured: the ``depends_on`` name is not a string (a
+            field object, say), a link of it is not a relation, is a
+            many-to-many (forward or reverse), is a generic foreign key or
+            generic relation, or the name is a longer path that crosses a
+            reverse relation.
+    """
+    if not isinstance(name, str):
+        raise _not_a_relation(model, name)
+    first, *rest = name.split(LOOKUP_SEP)
+    relation = accessors.get(first)
+    if relation is None:
+        raise _not_a_relation(model, name)
+    related = _require_single_valued(model, name, relation)
+    if rest and isinstance(relation, ForeignObjectRel):
+        raise _reverse_relation_crossed(model, name, first)
+    _require_forward_relations(model, name, related, rest)
+
+
+def _require_single_valued(
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> type[Model]:
+    """Return the model ``relation``, a link of ``model``'s ``depends_on``
+    path ``name``, points to.
+
+    Raises:
+        ImproperlyConfigured: the link is a many-to-many, a generic foreign
+            key or a generic relation.
+    """
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported while they load
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
+    if relation.many_to_many:
+        message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
+        raise ImproperlyConfigured(message)
+    related = relation.related_model
+    if related is None or isinstance(relation, GenericRelation):
+        message = f"{model.__name__}: depends_on {name!r} is a generic relation"
+        raise ImproperlyConfigured(message)
+    return related
+
+
+def _require_forward_relations(
+    model: type[Model], name: str, related: type[Model], segments: list[str]
+) -> None:
+    """Fail unless ``segments``, the rest of ``model``'s ``depends_on`` path
+    ``name`` walked from ``related``, are single-valued forward relations.
+
+    Raises:
+        ImproperlyConfigured: a segment is not a relation, is a reverse
+            relation, or is a link :func:`_require_single_valued` rejects.
+    """
+    for segment in segments:
+        step = relations_by_accessor(related).get(segment)
+        if step is None:
+            raise _not_a_relation(model, name)
+        if isinstance(step, ForeignObjectRel):
+            raise _reverse_relation_crossed(model, name, segment)
+        related = _require_single_valued(model, name, step)
+
+
+def _not_a_relation(model: type[Model], name: object) -> ImproperlyConfigured:
+    """The error for a link of ``model``'s ``depends_on`` path ``name`` that
+    is not a relation."""
+    message = f"{model.__name__}: depends_on {name!r} is not a relation"
+    return ImproperlyConfigured(message)
+
+
+def _reverse_relation_crossed(
+    model: type[Model], name: str, segment: str
+) -> ImproperlyConfigured:
+    """The error for ``model``'s ``depends_on`` path ``name`` crossing the
+    reverse relation ``segment``."""
+    message = (
+        f"{model.__name__}: depends_on {name!r} crosses a reverse relation, {segment!r}"
+    )
+    return ImproperlyConfigured(message)
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
@@ -221,12 +340,9 @@ def _require_distinct_content_fields(
         ImproperlyConfigured: a name is not one of ``model``'s fields or is a
             relation, or it is given twice.
     """
-    seen: set[str] = set()
-    for name in names:
-        if name in seen:
-            message = f"{model.__name__}: field {name!r} is {verb} twice"
-            raise ImproperlyConfigured(message)
-        seen.add(name)
+    for name in _each_once(
+        names, lambda twice: f"{model.__name__}: field {twice!r} is {verb} twice"
+    ):
         _require_content_field(model, name)
 
 
@@ -370,6 +486,64 @@ def _models_reached_by_foreign_keys(
     return reached
 
 
+def _dependency_lookup_path(
+    dependency: str, relations: "dict[str, Field[Any, Any] | ForeignObjectRel]"
+) -> str:
+    """Turn ``dependency``, a ``depends_on`` path, into a lookup path.
+
+    ``relations`` are its model's relations, by accessor.
+    """
+    # A dependency names its first relation by accessor, a lookup path by query
+    # name; and it ends on a relation, so a field after it makes it a lookup path.
+    first, *rest = dependency.split(LOOKUP_SEP)
+    return LOOKUP_SEP.join([query_name(relations[first]), *rest, "pk"])
+
+
+@dataclass(frozen=True)
+class _Dependencies:
+    """What a custom extractor's ``depends_on`` resolves to on its model."""
+
+    # quoted: Django's Field is generic for the type checker only
+    relations: "tuple[Field[Any, Any] | ForeignObjectRel, ...]" = ()
+    """The relations, forward or reverse, named as one-link dependencies."""
+    foreign_key_lookups: tuple[tuple[str, type[Model]], ...] = ()
+    """The models the dependencies reach through their leading foreign keys.
+
+    Each is paired with the lookup, from the model, that reaches it.
+    """
+
+
+_NO_DEPENDENCIES = _Dependencies()
+
+
+def _resolved_dependencies(model: type[Model], depends_on: FieldNames) -> _Dependencies:
+    """Resolve ``depends_on``, the dependencies ``model`` declares, once for all.
+
+    Its paths are walked when it is registered rather than on every save: a
+    model's dependencies never change while it is registered.
+    """
+    # Relations are only read when something is depended on: models may still
+    # be loading otherwise.
+    if not depends_on:
+        return _NO_DEPENDENCIES
+
+    relations = relations_by_accessor(model)
+    return _Dependencies(
+        relations=tuple(
+            relations[dependency]
+            for dependency in depends_on
+            if dependency in relations
+        ),
+        foreign_key_lookups=tuple(
+            reached
+            for dependency in depends_on
+            for reached in _models_reached_by_foreign_keys(
+                model, _dependency_lookup_path(dependency, relations)
+            )
+        ),
+    )
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -387,6 +561,8 @@ class Registry:
         # registration order across both kinds. It holds factories, not
         # extractors, so that no state an extractor keeps leaks between runs.
         self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
+        # The relations a custom extractor reads through, declared by its model.
+        self._dependencies: dict[type[Model], _Dependencies] = {}
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -507,14 +683,26 @@ class Registry:
         self._add(model, build_extractor)
 
     def register_extractor(
-        self, model: type[M]
+        self, model: type[M], *, depends_on: FieldNames = ()
     ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
 
+        ``depends_on`` names the relations whose saves change the documents
+        of ``model``: a forward foreign key or one-to-one, a reverse relation
+        as a one-link path, or a lookup path through forward foreign keys or
+        one-to-ones.
+
         Raises:
-            AlreadyRegistered: ``model`` is already registered.
+            AlreadyRegistered: ``model`` is already registered, checked
+                before ``depends_on``.
             ImproperlyConfigured: the decorated class does not derive from
-                ``BaseExtractor``, or does not implement ``extract``.
+                ``BaseExtractor``, or does not implement ``extract``;
+                ``depends_on`` is not a list or a tuple, or is given while
+                models are loading; an item of ``depends_on`` is not a string,
+                or a name in it is given twice; a link of it is not a
+                relation, is a many-to-many (forward or reverse), a generic
+                foreign key or a generic relation; or a path of several links
+                crosses a reverse relation.
         """
 
         def decorator(
@@ -522,7 +710,11 @@ class Registry:
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
-            self._add(model, extractor_class)
+            _require_field_names(model, depends_on, "depends_on")
+            if depends_on:
+                _require_models_ready(model, "resolve depends_on")
+                _require_relations(model, depends_on)
+            self._add(model, extractor_class, _resolved_dependencies(model, depends_on))
             return extractor_class
 
         return decorator
@@ -536,6 +728,7 @@ class Registry:
         self._require_registered(model)
         senders = self._delete_senders(model)
         del self._registrations[model]
+        del self._dependencies[model]
         # A sender another registered model still listens to keeps its listener.
         kept = {
             sender
@@ -567,14 +760,17 @@ class Registry:
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
-        """List the reverse foreign keys ``model`` follows.
+        """List the reverse foreign keys ``model`` follows or depends on.
 
         Raises:
             NotRegistered: ``model`` is not registered.
         """
         return [
             relation
-            for relation in self._followed_relations(model)
+            for relation in [
+                *self._followed_relations(model),
+                *self._dependencies[model].relations,
+            ]
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
@@ -582,8 +778,8 @@ class Registry:
         """List the models ``model`` reads through foreign keys, one or a chain.
 
         Those are the models of the foreign keys it follows, and the models
-        its lookup paths reach through their leading foreign keys. Each is
-        paired with the lookup, from ``model``, that reaches it.
+        its lookup paths and dependencies reach through their leading foreign
+        keys. Each is paired with the lookup, from ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -598,8 +794,9 @@ class Registry:
             for path in self._lookup_paths(model)
             for reached in _models_reached_by_foreign_keys(model, path)
         ]
+        depended_on = list(self._dependencies[model].foreign_key_lookups)
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
-        return list(dict.fromkeys(followed + read_through_paths))
+        return list(dict.fromkeys(followed + read_through_paths + depended_on))
 
     def _lookup_paths(self, model: type[Model]) -> list[str]:
         """List the lookup paths ``model`` declares in fields and single_fields.
@@ -630,7 +827,10 @@ class Registry:
         return [relations[accessor] for accessor in extractor.follow]
 
     def _add(
-        self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
+        self,
+        model: type[Model],
+        factory: Callable[[], BaseExtractor[Any]],
+        dependencies: _Dependencies = _NO_DEPENDENCIES,
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
@@ -639,6 +839,7 @@ class Registry:
         )
 
         self._registrations[model] = factory
+        self._dependencies[model] = dependencies
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):
