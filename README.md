@@ -19,6 +19,48 @@ Pre-alpha, not usable yet. The package is being written test-first, using
 an earlier prototype as its behavioral specification. See the
 [roadmap](ROADMAP.md) for what is done and the order of the features.
 
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph project["Your project"]
+        modelrag["model_rag.py<br/>rag.register(...)<br/>rag.register_extractor(...)"]
+        models[("Your models")]
+        code["Your code, your tests"]
+        setting["MODEL_RAG_OUTPUT"]
+    end
+
+    subgraph package["django-model-rag"]
+        registry["rag<br/>one extractor per model"]
+        command["sync_model_rag"]
+        signals["Signals<br/>look up and check at the save or delete,<br/>send at the commit"]
+        pipeline["SyncPipeline<br/>reads the instances<br/>run() · run_queryset() · run_instance()"]
+    end
+
+    output["Your output<br/>replace(groups) · prune(model_label, kept_keys)<br/>django-minimal-rag, for instance"]
+
+    modelrag --> registry
+    models -->|"save, delete"| signals
+    code --> pipeline
+    command --> pipeline
+    signals --> pipeline
+    registry -->|"get_queryset(), extract()"| pipeline
+    pipeline -->|"NormalizedDocuments,<br/>one group per source_key"| output
+    signals -.->|"a delete: an empty group"| output
+    setting -.->|"configured_output()"| output
+```
+
+You register your models once, each with the extractor that turns an
+instance into documents — built from `fields`, `follow`… or written by you.
+Three things then run the pipeline: the `sync_model_rag` command, over whole
+models; the signals, once a transaction commits, for each instance saved and
+for the instances that read a saved or deleted one; and your own code. A
+deleted instance needs no pipeline: the signals send its empty group straight
+to the output. The pipeline hands the documents to
+an output that you supply, grouped by the instance they come from: each
+group replaces what the output held for that instance. The package stores
+nothing itself.
+
 ## Registering a model
 
 ```python
@@ -292,6 +334,27 @@ class MyOutput:
         """Delete the documents of model_label whose source key is not kept."""
 ```
 
+What `run()` calls, model by model:
+
+```mermaid
+sequenceDiagram
+    participant P as SyncPipeline.run()
+    participant E as Extractor
+    participant DB as Database
+    participant O as Output
+    loop each model given, or each registered one in registration order
+        P->>E: get_queryset(queryset)
+        loop each chunk of 1000 instances, in primary key order
+            DB-->>P: instances
+            P->>E: extract(instance), for each instance
+            P->>O: replace(groups), an empty one for an instance without documents
+        end
+        P->>E: get_queryset(queryset), again
+        DB-->>P: the primary keys it keeps
+        P->>O: prune(model_label, kept_keys)
+    end
+```
+
 - **By source.** A group is the complete set of documents of one instance,
   keyed by its `source_key`: it replaces everything the output holds for
   that instance. An empty group removes it.
@@ -528,6 +591,69 @@ database router: one that sends reads to a lagging replica can miss an
 instance just created. Both are listed in the
 [roadmap](ROADMAP.md) as feature 10c, postponed until a project needs
 several databases.
+
+A save, step by step. The followers are the registered instances whose
+documents read the saved one (a page following its text plugins, a product
+its category):
+
+```mermaid
+sequenceDiagram
+    participant App as Your code
+    participant S as Signal receivers
+    participant DB as Database
+    participant P as SyncPipeline
+    participant O as Output
+    App->>S: pre_save
+    S->>DB: followers before the save (a row of a followed model with a primary key)
+    Note right of S: checks MODEL_RAG_OUTPUT: a bad setting raises before any write
+    App->>DB: INSERT or UPDATE
+    App->>S: post_save
+    S->>S: on_commit: the instance's group, its followers' groups
+    alt the transaction commits
+        App->>DB: COMMIT
+        loop each registered model the row belongs to (its own, a parent's)
+            S->>DB: does the row still exist?
+            S->>P: run_instance(instance), unless deleted since the save
+            P->>DB: reload it through get_queryset()
+            P->>O: replace(the instance's group)
+        end
+        S->>DB: followers reaching the row now (after an update)
+        S->>P: run_queryset(followers), in batches of 500 per follower model
+        P->>O: replace(the followers' groups)
+    else it rolls back
+        App->>DB: ROLLBACK
+        Note over S,O: nothing is sent
+    end
+```
+
+A delete. The deleted row is gone, so its empty group goes straight to the
+output:
+
+```mermaid
+sequenceDiagram
+    participant App as Your code
+    participant S as Signal receivers
+    participant DB as Database
+    participant P as SyncPipeline
+    participant O as Output
+    App->>S: pre_delete
+    S->>DB: followers reaching the row, before a SET_NULL clears their foreign key
+    App->>DB: DELETE
+    App->>S: post_delete
+    Note right of S: checks MODEL_RAG_OUTPUT, if there is a group or a follower to send
+    S->>S: on_commit: an empty group, the followers' groups
+    alt the transaction commits
+        App->>DB: COMMIT
+        opt the row, or a parent of it, is registered: the nearest one only
+            S->>O: replace(an empty group), without the extractor
+        end
+        S->>P: run_queryset(followers), in batches of 500 per follower model
+        P->>O: replace(the followers' groups)
+    else it rolls back
+        App->>DB: ROLLBACK
+        Note over S,O: nothing is sent
+    end
+```
 
 **Proxies and multi-table inheritance.** Saving or deleting through a proxy
 of a registered model updates the registered model's group, under its own
