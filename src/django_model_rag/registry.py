@@ -581,6 +581,8 @@ class Registry:
         paths = list(extractor.fields)
         if extractor.language_field is not None:
             paths.append(extractor.language_field)
+        if extractor.url_field is not None:
+            paths.append(extractor.url_field)
         first_links = (next(path_links(model, path), None) for path in paths)
         return [
             link.relation
