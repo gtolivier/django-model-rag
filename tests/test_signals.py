@@ -3016,6 +3016,47 @@ def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
 
 
 @pytest.mark.django_db
+def test_saving_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's save below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.title = "Joinery"
+        woodworking.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group, with the topic's new title and its summary after the
+    # Course's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nJoinery\n\nJoints and finishes.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_tag_of_a_photo_following_its_generic_relation_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
