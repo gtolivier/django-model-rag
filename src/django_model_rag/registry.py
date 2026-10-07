@@ -222,16 +222,16 @@ def _require_relation(
     accessors: "dict[str, Field[Any, Any] | ForeignObjectRel]",
 ) -> None:
     """Fail unless ``name`` is a string that starts with one of ``model``'s
-    relation ``accessors`` and every link of it is neither a many-to-many nor
-    generic, and it crosses no reverse relation: a reverse relation is allowed
-    only as a one-link path.
+    relation ``accessors``, no link of it is generic, and it crosses no
+    reverse relation: a reverse relation, or a forward many-to-many, is
+    allowed only as a one-link path.
 
     Raises:
         ImproperlyConfigured: the ``depends_on`` name is not a string (a
-            field object, say), a link of it is not a relation, is a
-            many-to-many (forward or reverse), is a generic foreign key or
-            generic relation, or the name is a longer path that crosses a
-            reverse relation.
+            field object, say), a link of it is not a relation, is a reverse
+            many-to-many, a forward many-to-many in a longer path, a generic
+            foreign key or generic relation, or the name is a longer path that
+            crosses a reverse relation.
     """
     if not isinstance(name, str):
         raise _not_a_relation(model, name)
@@ -240,23 +240,16 @@ def _require_relation(
     if relation is None:
         raise _not_a_relation(model, name)
     # a forward many-to-many is a dependency only as a one-link path
-    related = _require_single_valued(
-        model,
-        name,
-        relation,
-        many_to_many_allowed=not rest and not isinstance(relation, ForeignObjectRel),
-    )
+    if rest or isinstance(relation, ForeignObjectRel):
+        _require_not_many_to_many(model, name, relation)
+    related = _require_related_model(model, name, relation)
     if rest and isinstance(relation, ForeignObjectRel):
         raise _reverse_relation_crossed(model, name, first)
     _require_forward_relations(model, name, related, rest)
 
 
 def _require_single_valued(
-    model: type[Model],
-    name: str,
-    relation: "Field[Any, Any] | ForeignObjectRel",
-    *,
-    many_to_many_allowed: bool = False,
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
 ) -> type[Model]:
     """Return the model ``relation``, a link of ``model``'s ``depends_on``
     path ``name``, points to.
@@ -265,13 +258,38 @@ def _require_single_valued(
         ImproperlyConfigured: the link is a many-to-many, a generic foreign
             key or a generic relation.
     """
+    _require_not_many_to_many(model, name, relation)
+    return _require_related_model(model, name, relation)
+
+
+def _require_not_many_to_many(
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> None:
+    """Fail if ``relation``, a link of ``model``'s ``depends_on`` path
+    ``name``, is a many-to-many.
+
+    Raises:
+        ImproperlyConfigured: the link is a many-to-many, forward or reverse.
+    """
+    if relation.many_to_many:
+        message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
+        raise ImproperlyConfigured(message)
+
+
+def _require_related_model(
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> type[Model]:
+    """Return the model ``relation``, a link of ``model``'s ``depends_on``
+    path ``name``, points to.
+
+    Raises:
+        ImproperlyConfigured: the link is a generic foreign key or a generic
+            relation.
+    """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported while they load
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
-    if relation.many_to_many and not many_to_many_allowed:
-        message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
-        raise ImproperlyConfigured(message)
     related = relation.related_model
     if related is None or isinstance(relation, GenericRelation):
         message = f"{model.__name__}: depends_on {name!r} is a generic relation"
@@ -829,8 +847,9 @@ class Registry:
         """List the models ``model`` reads through relations, one or a chain.
 
         Those are the models of the foreign keys and many-to-many relations,
-        forward or reverse, it follows, and the models its lookup paths and
-        dependencies reach through their leading foreign keys. Each is paired
+        forward or reverse, it follows, the models its lookup paths and
+        dependencies reach through their leading foreign keys, and the models
+        of the forward many-to-many relations it depends on. Each is paired
         with the lookup, from ``model``, that reaches it.
 
         Raises:
