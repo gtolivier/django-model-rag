@@ -142,16 +142,17 @@ def remember_followers_before_save(
     if not _is_followed(sender):
         return
 
-    committed_instance = _committed_instance(sender, instance.pk)
-    if committed_instance is not None:
-        # The columns the followers name the row by may change with the save:
-        # those that named it before are found from the row as committed.
-        setattr(
-            instance,
-            _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-            _reverse_followers(sender, committed_instance)
-            + _forward_followers(sender, committed_instance),
-        )
+    # Followers reaching the row through foreign keys name its primary key,
+    # which the save does not change: the row as committed is not needed.
+    followers = _forward_followers(sender, instance)
+    if _is_followed_through_reverse_relations(sender):
+        committed_instance = _committed_instance(sender, instance.pk)
+        if committed_instance is not None:
+            # The columns the followers name the row by may change with the
+            # save: those that named it before are found from the row as
+            # committed.
+            followers = _reverse_followers(sender, committed_instance) + followers
+    setattr(instance, _PREVIOUS_FOLLOWERS_ATTRIBUTE, followers)
 
 
 def sync_saved_instance(
@@ -322,7 +323,14 @@ def _pks_reaching(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
-    return _is_followed_through_foreign_keys(sender) or any(
+    return _is_followed_through_foreign_keys(
+        sender
+    ) or _is_followed_through_reverse_relations(sender)
+
+
+def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
+    """Return whether a registered model follows ``sender``'s rows in reverse."""
+    return any(
         _followed_reverse_relations(registered_model, sender)
         for registered_model in rag.registered_models()
     )
