@@ -32,9 +32,11 @@ from tests.testapp.models import (
     ClearanceProduct,
     Course,
     Depot,
+    Excerpt,
     Exhibit,
     FeaturedProduct,
     Lesson,
+    Notice,
     Page,
     PageIntro,
     Product,
@@ -443,6 +445,47 @@ def test_saving_a_category_read_through_a_lookup_path_replaces_the_group_reading
                     source_pk=lamp.pk,
                     title="Desk lamp",
                     url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_notice_read_as_language_through_a_lookup_path_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Excerpt is registered, reading its language from its notice
+    # through a lookup path, with no follow: Notice itself is not registered.
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the notice's save below is observed.
+    notice = Notice.objects.create(title="Avis", language="fr")
+    excerpt = Excerpt.objects.create(title="Bonjour", notice=notice)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        notice.language = "en"
+        notice.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Excerpt: its group, with the notice's new
+    # language.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.excerpt:{excerpt.pk}": [
+                NormalizedDocument(
+                    text="Bonjour",
+                    source_app_label="testapp",
+                    source_model="excerpt",
+                    source_pk=excerpt.pk,
+                    title="Bonjour",
+                    language="en",
                 ),
             ],
         }
