@@ -220,7 +220,7 @@ def _require_relation(
     if relation is None:
         raise _not_a_relation(model, name)
     related = _require_single_valued(model, name, relation)
-    if rest and relation.auto_created:
+    if rest and isinstance(relation, ForeignObjectRel):
         raise _reverse_relation_crossed(model, name, first)
     _require_forward_relations(model, name, related, rest)
 
@@ -263,7 +263,7 @@ def _require_forward_relations(
         step = relations_by_accessor(related).get(segment)
         if step is None:
             raise _not_a_relation(model, name)
-        if step.auto_created:
+        if isinstance(step, ForeignObjectRel):
             raise _reverse_relation_crossed(model, name, segment)
         related = _require_single_valued(model, name, step)
 
