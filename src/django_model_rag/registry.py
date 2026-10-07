@@ -7,7 +7,13 @@ from typing import Any, TypeAlias, TypeGuard
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Field, ForeignObject, ForeignObjectRel, Model
+from django.db.models import (
+    Field,
+    ForeignObject,
+    ForeignObjectRel,
+    ManyToManyField,
+    Model,
+)
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete, pre_delete
 
@@ -801,6 +807,7 @@ class Registry:
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
             if _is_followed_like_a_foreign_key(relation)
+            or isinstance(relation, ManyToManyField)
         ]
         read_through_paths = [
             reached
