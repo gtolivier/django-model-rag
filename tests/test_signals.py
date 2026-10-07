@@ -2136,6 +2136,49 @@ def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group
 
 
 @pytest.mark.django_db
+def test_a_topic_saved_then_deleted_replaces_no_group_of_the_workshops_with_no_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's save and delete below are observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    # Its nullable foreign key is null: it never followed the topic.
+    Workshop.objects.create(title="Ceramics", topic=None)
+
+    # The delete clears the topic's primary key before the commit, where the
+    # save looks its followers up.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.title = "Joinery"
+        woodworking.save()
+        woodworking.delete()
+
+    # Only the group of the workshop that pointed to the topic, as committed,
+    # merged across replace calls: whether the save and the delete send it once
+    # or twice is not what this test is about. The workshop with no topic is
+    # not sent.
+    assert _received_groups(built_outputs) == {
+        f"testapp.workshop:{pottery.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=pottery.pk,
+                title="Pottery",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_read_two_links_deep_through_set_null_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
