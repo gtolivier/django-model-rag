@@ -179,10 +179,11 @@ def sync_saved_instance(
     """Replace, once the transaction commits, the groups a saved instance changes.
 
     Those are the instance's own group if ``sender`` feeds a registered model,
-    and the groups of its followers — the registered rows following it through
-    a reverse relation, before and after the save — whether or not ``sender``
-    is registered itself. The output configuration was checked before the
-    save, by check_output_before_save.
+    and the groups of its followers — the registered rows following it, before
+    the save and after it — whether or not ``sender`` is registered itself.
+    Those reaching it through foreign keys are looked up at the commit. The
+    output configuration was checked before the save, by
+    check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
