@@ -253,6 +253,13 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
+What is left, in the order planned: 11d first, the largest gap left in
+`follow` — a many-to-many is common, where a path past a reverse
+one-to-one or a `GenericRelation` is not, and neither is planned. Then
+12a, which rewires every receiver, the `m2m_changed` one of 11d included.
+Then 12b, which needs the `MODEL_RAG_SYNC` setting of 12a. 10c stays
+postponed, and 11c-quater is not planned.
+
 - [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
   over every registered model, in registration order, or over the models it
   is given as `app_label.model_name`, into the output built from
@@ -747,22 +754,30 @@ reference.
     looks up no follower — a null foreign key does not reach it.
   - **Left out**: rows attached by a write that sends no signal to a row
     created in the same transaction are not resynced — see 11c-quater.
-- [ ] **11c-quater. Followers looked up at the commit after a creation.**
-  11c-ter keeps the lookup at the save for a creation, so a row attached
-  by `bulk_create()` or `QuerySet.update()` to a row created in the same
-  transaction is not resynced. Looking them up at the commit after a
-  creation too would cost one query per insert of a model followed through
-  foreign keys, where a creation costs none today: the test
+- [ ] **11c-quater. Followers looked up at the commit after a creation** —
+  not planned unless a project runs into it. 11c-ter keeps the lookup at
+  the save for a creation, so a row attached by `bulk_create()` or
+  `QuerySet.update()` to a row created in the same transaction is not
+  resynced. Looking them up at the commit after a creation too would cost
+  one query per insert of a model followed through foreign keys, where a
+  creation costs none today: the test
   `test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing`
-  and the README's promise on the cost of a creation change with it.
+  and the README's promise on the cost of a creation change with it —
+  except for a primary key with a default (a UUID), whose `pre_save`
+  already pays that query on each insert. Not worth it: the case is an
+  import that creates a row and then `bulk_create()`s rows following it,
+  in one transaction. Rows made by `bulk_create()` get no documents of
+  their own either, as the README says, so such an import ends with
+  `sync_model_rag` anyway — after `rag.signals_paused()` once 12a lands.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
-  — the `post_delete` listeners included, so every model keeps Django's fast
-  delete, which `MODEL_RAG_SIGNALS = False` does not give back today. The
-  wiring is decided at startup and redone on `setting_changed` (tests).
+  — the `m2m_changed` receiver of 11d and the `post_delete` listeners
+  included, so every model keeps Django's fast delete, which
+  `MODEL_RAG_SIGNALS = False` does not give back today. The wiring is
+  decided at startup and redone on `setting_changed` (tests).
   Adds `rag.signals_paused()`, a context manager for a bulk import followed
   by a sync. A mode per model is not needed yet.
 - [ ] **12b. Notify mode.** The package sends a signal of its own at the
