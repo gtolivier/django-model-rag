@@ -226,6 +226,8 @@ def _require_relation(
             foreign key or generic relation, or the name is a longer path that
             crosses a reverse relation.
     """
+    if not isinstance(name, str):
+        raise _not_a_relation(model, name)
     first, *rest = name.split(LOOKUP_SEP)
     relation = accessors.get(first)
     if relation is None:
