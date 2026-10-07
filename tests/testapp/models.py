@@ -398,6 +398,19 @@ class Photo(models.Model):
     tags = GenericRelation(Tag)
 
 
+# --- Foreign keys to the models of a generic relation -------------------
+# A Pin points to a Photo, which reaches its Tags by the generic relation
+# ``tags``, and to a Tag, which reaches its object by the generic foreign key
+# ``content_object``: a lookup path from a Pin crosses either past its first
+# link.
+
+
+class Pin(models.Model):
+    note = models.CharField(max_length=200)
+    photo = models.ForeignKey(Photo, related_name="pins", on_delete=models.CASCADE)
+    tag = models.ForeignKey(Tag, related_name="pins", on_delete=models.CASCADE)
+
+
 # --- A language held under a name of its own ----------------------------
 # A Bulletin keeps its language code, such as "fr", in a field named
 # ``locale``: not one of the names a language field would be guessed by.

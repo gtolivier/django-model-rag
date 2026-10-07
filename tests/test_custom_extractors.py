@@ -20,8 +20,10 @@ from tests.testapp.models import (
     AccordionItem,
     Category,
     Course,
+    Membership,
     Page,
     Photo,
+    Pin,
     Product,
     Tag,
     TextPlugin,
@@ -741,6 +743,32 @@ def test_depending_on_a_path_through_a_later_unknown_name_fails_unregistered() -
         rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
 
     assert TextPlugin not in rag.registered_models()
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        # Membership.guild is a foreign key, but Guild.members a many-to-many.
+        pytest.param(Membership, "guild__members", id="many-to-many"),
+        # Pin.tag is a foreign key, but Tag.content_object may point to an
+        # instance of any model.
+        pytest.param(Pin, "tag__content_object", id="generic-foreign-key"),
+        # Pin.photo is a foreign key, but Photo.tags a generic relation.
+        pytest.param(Pin, "photo__tags", id="generic-relation"),
+    ],
+)
+def test_depending_on_a_path_through_a_later_many_to_many_or_generic_relation_fails(
+    model: type[Model], name: str
+) -> None:
+    class AnyModelExtractor(BaseExtractor[Model]):
+        def extract(self, instance: Model) -> NormalizedDocument:
+            return self.build_document(instance, text=str(instance))
+
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
 
 
 def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
