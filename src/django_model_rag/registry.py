@@ -809,6 +809,7 @@ class Registry:
             for relation in self._followed_relations(model)
             if _is_followed_like_a_foreign_key(relation)
             or isinstance(relation, ManyToManyField)
+            or (isinstance(relation, ForeignObjectRel) and relation.many_to_many)
         ]
         read_through_paths = [
             reached
