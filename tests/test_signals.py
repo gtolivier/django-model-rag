@@ -2863,6 +2863,60 @@ def test_a_seminar_naming_no_venue_of_a_venue_following_by_multi_column_sends_no
 
 
 @pytest.mark.django_db
+def test_saving_a_seminar_a_custom_extractor_depends_on_by_multi_column_replaces_venue(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, with a custom extractor reading its
+    # seminars: depends_on names the reverse of the multi-column ForeignObject
+    # ``venue``, whose saves change its documents. Seminar itself is not
+    # registered.
+    @rag.register_extractor(Venue, depends_on=["seminars"])
+    class VenueExtractor(BaseExtractor[Venue]):
+        def extract(self, instance: Venue) -> NormalizedDocument:
+            titles = [seminar.title for seminar in instance.seminars.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.name, *titles])
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Another venue of the same city, with a seminar of its own: only both
+    # columns together name a venue, so a seminar at the hall is not one of
+    # its seminars.
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Seminar.objects.create(
+            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+        )
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the venue the seminar's two columns name,
+    # with the seminar's title after the venue's name; no group of the other
+    # venue of the same city.
+    assert _received_groups(built_outputs) == {
+        f"testapp.venue:{hall.pk}": [
+            NormalizedDocument(
+                text="Halle Tony Garnier\n\nAcoustics",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=hall.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_seminars(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
