@@ -242,15 +242,28 @@ def _foreign_key_followers(sender: type[Model], instance: Model) -> list[_Follow
 
 def _deep_lookup_followers(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered rows reaching ``instance`` through a foreign key chain."""
-    followed_models = _models_of_the_row(sender)
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for lookup, reached_model in rag.deep_lookup_models(registered_model)
-        if reached_model in followed_models
+        for lookup, reached_model in _followed_deep_lookups(registered_model, sender)
         for follower_pk in _pks_reaching(
             registered_model, lookup, _group_pk(instance, reached_model)
         )
+    ]
+
+
+def _followed_deep_lookups(
+    registered_model: type[Model], sender: type[Model]
+) -> list[tuple[str, type[Model]]]:
+    """Return the foreign key chains to ``sender`` that ``registered_model`` reads.
+
+    Each comes with the model it reaches, one that ``sender``'s rows are rows of.
+    """
+    followed_models = _models_of_the_row(sender)
+    return [
+        (lookup, reached_model)
+        for lookup, reached_model in rag.deep_lookup_models(registered_model)
+        if reached_model in followed_models
     ]
 
 
@@ -306,11 +319,9 @@ def _is_followed(sender: type[Model]) -> bool:
 
 def _is_followed_through_deep_lookups(sender: type[Model]) -> bool:
     """Return whether a registered model reads ``sender`` by a foreign key chain."""
-    followed_models = _models_of_the_row(sender)
     return any(
-        reached_model in followed_models
+        _followed_deep_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
-        for _lookup, reached_model in rag.deep_lookup_models(registered_model)
     )
 
 
