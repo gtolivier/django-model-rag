@@ -189,8 +189,12 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
     """
     accessors = relations_by_accessor(model)
     for name in names:
-        if name.split(LOOKUP_SEP)[0] not in accessors:
+        relation = accessors.get(name.split(LOOKUP_SEP)[0])
+        if relation is None:
             message = f"{model.__name__}: depends_on {name!r} is not a relation"
+            raise ImproperlyConfigured(message)
+        if relation.many_to_many:
+            message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
             raise ImproperlyConfigured(message)
 
 
