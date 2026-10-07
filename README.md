@@ -467,7 +467,15 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   deep) — replaces the groups of the registered instances that reach it.
   They are read in batches of 500, one query per batch and per registered
   model; creating an instance costs no query, since nothing points to it
-  yet. A delete looks them up in `pre_delete`, before an `on_delete=SET_NULL`
+  yet — unless its primary key gets a default (a UUID), which makes
+  `pre_save` look them up on each insert too. A save of an existing row
+  looks them up twice: in `pre_save`, those that reach the row before it
+  changes the columns they name it by (a `to_field`, or the columns of a
+  multi-column `ForeignObject`), and at the commit, those that reach it
+  then — rows attached later in the transaction by a write that sends no
+  signal (`bulk_create()`, `QuerySet.update()`) included. Rows attached
+  that way to a row created in the same transaction are not resynced. A
+  delete looks them up in `pre_delete`, before an `on_delete=SET_NULL`
   clears their foreign keys. A path is followed through its leading foreign
   keys only: past a reverse one-to-one, or through a `GenericRelation`,
   nothing is resynced.
@@ -543,10 +551,7 @@ those above leaves that model's documents stale until they are saved again:
 a many-to-many in `follow` or in a lookup path (forward or reverse), a
 path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say),
 or whatever a custom extractor reads without declaring it in
-`depends_on`. A row whose followers point to it by another column than its
-primary key (a `to_field`, or the columns of a multi-column `ForeignObject`)
-and that changes that column leaves them stale too: they no longer point to
-it once it is saved. Many-to-many relations are listed in the
+`depends_on`. Many-to-many relations are listed in the
 [roadmap](ROADMAP.md) as feature 11d. For all of these, run
 `sync_model_rag`, or sync the instances concerned from a receiver of your
 own: in a `transaction.on_commit` callback, call
@@ -564,7 +569,9 @@ instance that raises at the commit is logged with `logger.exception` on the
 `django_model_rag` logger, naming the instance's source key, and the commit
 goes on: the instance keeps its previous documents until its next save or
 the next `sync_model_rag`, and the other instances of the transaction are
-still sent. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
+still sent. A database error looking up, at the commit, the followers
+reaching a saved row is logged the same way; the followers found at the
+save are still replaced. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
 its `BACKEND` class does not accept, when Python can read the class's
 signature — is not logged: it raises
 `ImproperlyConfigured` at the save or the delete, so that a forgotten

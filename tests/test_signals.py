@@ -123,10 +123,32 @@ def _register_pages_following_their_plugins() -> None:
     rag.register(Page, follow=["text_plugins"])
 
 
+def _register_plugins_by_their_page_title() -> None:
+    """Register only TextPlugin, with a custom extractor reading its page's title
+    before its body: depends_on names the page, whose saves change its
+    documents. Page itself is not registered."""
+
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+
 def _register_venues_following_their_seminars() -> None:
     """Register only Venue, by its name, following its seminars by the reverse of
     the multi-column ForeignObject ``venue``: Seminar itself is not."""
     rag.register(Venue, fields=["name"], follow=["seminars"])
+
+
+def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
+    """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    return hall, acoustics
 
 
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
@@ -164,6 +186,16 @@ def _create_a_bulb(category: Category) -> Product:
         name="Bulb",
         description="A bulb for the lamp.",
         price="5.00",
+        category=category,
+    )
+
+
+def _create_a_hammer(category: Category) -> Product:
+    """Create a Hammer, a plain Product: a single row."""
+    return Product.objects.create(
+        name="Hammer",
+        description="A hammer for nails.",
+        price="15.00",
         category=category,
     )
 
@@ -940,6 +972,39 @@ def test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_not
 
 
 @pytest.mark.django_db
+def test_saving_a_category_followed_by_foreign_key_looks_its_followers_up_once(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    lighting = Category.objects.create(name="Lighting")
+    _create_a_plain_desk_lamp(lighting)
+
+    # The commit callbacks are not run: only the save itself is counted.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        django_assert_num_queries(2) as queries,
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+
+    # The save's UPDATE and one lookup of the products following the
+    # category: the lookup before the save takes the place of the one after
+    # it, and the category's row as committed is not loaded for a link to its
+    # primary key.
+    statements = _statements(queries)
+    assert sorted(statements) == ["SELECT", "UPDATE"]
+    lookup = queries.captured_queries[statements.index("SELECT")]["sql"]
+    assert 'FROM "testapp_product"' in lookup
+
+
+@pytest.mark.django_db
 def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -1115,6 +1180,58 @@ def test_saving_a_warehouse_followed_by_a_foreign_key_to_its_code_replaces_its_s
 
 
 @pytest.mark.django_db
+def test_changing_the_code_of_a_warehouse_followed_by_it_replaces_the_shelves_naming_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Shelf is registered, following its warehouse through its own
+    # foreign key, which holds the Warehouse's code, not its primary key:
+    # Warehouse itself is not.
+    rag.register(Shelf, follow=["warehouse"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the warehouse's code change below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(warehouse=north, label="Timber")
+    # Another warehouse and its shelf, untouched by the code change.
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(warehouse=south, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The code is the column the shelves point to the warehouse by: at the
+        # save, the North depot's shelf still holds the old code, so only the
+        # warehouse as it was before the save tells which shelves named it.
+        north.code = "north-hall"
+        north.save()
+        # The shelves are then moved to the new code, in the same transaction,
+        # by an update that sends no signal: the foreign key constraint is
+        # checked at the commit, and the shelf's own save is not observed.
+        Shelf.objects.filter(warehouse_id="north").update(warehouse_id="north-hall")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the shelf that named the North depot, as committed, with
+    # the warehouse's name after the shelf's own label; no group of the other
+    # warehouse's shelf.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.shelf:{timber.pk}": [
+                NormalizedDocument(
+                    text="Timber\n\nNorth depot",
+                    source_app_label="testapp",
+                    source_model="shelf",
+                    source_pk=timber.pk,
+                    title="Timber",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_depot(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -1190,15 +1307,7 @@ def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the TextPlugin is registered, with a custom extractor reading its
-    # page's title: depends_on names the page, whose saves change its
-    # documents. Page itself is not registered.
-    @rag.register_extractor(TextPlugin, depends_on=["page"])
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(
-                instance, text=f"{instance.page.title}: {instance.body}"
-            )
+    _register_plugins_by_their_page_title()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the page's save below is observed.
@@ -1233,6 +1342,121 @@ def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_
                 source_app_label="testapp",
                 source_model="textplugin",
                 source_pk=tables.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_plugins_by_their_page_title()
+
+    # Created outside the captured callbacks: its commit callbacks never run,
+    # and it has no plugin yet.
+    about = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Attached after the page's save, in the same transaction, by a write
+        # that sends no signal: only the page's save is observed.
+        (chairs,) = TextPlugin.objects.bulk_create(
+            [TextPlugin(page=about, body="We build chairs by hand.")]
+        )
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The plugin attached after the save is a follower of the
+    # page at the commit, so its group is replaced, with the page's new title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_plugin_moved_by_update_after_its_page_save_is_replaced_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_plugins_by_their_page_title()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The plugin starts on another page; the page it moves to has none.
+    news = Page.objects.create(title="News", slug="news")
+    chairs = TextPlugin.objects.create(page=news, body="We build chairs by hand.")
+    about = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Moved to the page after the page's save, in the same transaction, by
+        # a write that sends no signal: only the page's save is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=about)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The plugin moved after the save is a follower of the page
+    # at the commit, so its group is replaced, with the page's new title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_plugins_by_their_page_title()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The plugin starts on the saved page; the page it moves to has none.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    news = Page.objects.create(title="News", slug="news")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Moved away from the page after the page's save, in the same
+        # transaction, by a write that sends no signal: only the page's save
+        # is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=news)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The plugin followed the page at its save, so its group is
+    # replaced at the commit, as committed: on the page it moved to.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="News: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
             ),
         ],
     }
@@ -1740,12 +1964,7 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
     lamp = _create_a_plain_desk_lamp(lighting)
     _create_a_bulb(lighting)
     tools = Category.objects.create(name="Tools")
-    hammer = Product.objects.create(
-        name="Hammer",
-        description="A hammer for nails.",
-        price="15.00",
-        category=tools,
-    )
+    hammer = _create_a_hammer(tools)
 
     settings.MODEL_RAG_OUTPUT = {
         "BACKEND": FAILING_ON_KEY_BACKEND,
@@ -1914,6 +2133,49 @@ def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_a_topic_saved_then_deleted_replaces_no_group_of_the_workshops_with_no_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's save and delete below are observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    # Its nullable foreign key is null: it never followed the topic.
+    Workshop.objects.create(title="Ceramics", topic=None)
+
+    # The delete clears the topic's primary key before the commit, where the
+    # save looks its followers up.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.title = "Joinery"
+        woodworking.save()
+        woodworking.delete()
+
+    # Only the group of the workshop that pointed to the topic, as committed,
+    # merged across replace calls: whether the save and the delete send it once
+    # or twice is not what this test is about. The workshop with no topic is
+    # not sent.
+    assert _received_groups(built_outputs) == {
+        f"testapp.workshop:{pottery.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=pottery.pk,
+                title="Pottery",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
@@ -2300,6 +2562,73 @@ def test_moving_a_followed_instance_built_with_an_existing_pk_replaces_both_grou
                 source_pk=workshop.pk,
                 title="Our workshop",
                 url="/pages/our-workshop/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_change_left_unsaved_after_a_move_does_not_change_the_groups_replaced(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # A Product is followed by its Category, through the reverse relation
+    # ``products``, and by its reviews, through their own foreign key: the
+    # latter makes its followers be looked up at the commit. Product itself is
+    # not registered.
+    rag.register(Category, follow=["products"])
+    rag.register(Review, follow=["product"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the product's move below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    review = Review.objects.create(title="Sturdy", product=lamp)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.category = tools
+        lamp.save()
+        # Changed in memory after the save, and never saved: the row the
+        # commit sees still belongs to the Tools category.
+        lamp.category = garden
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of the categories the product was saved out of
+    # and into, and of its review, all as committed; no group of the category
+    # it was only given in memory.
+    assert _received_groups(built_outputs) == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+        f"testapp.category:{tools.pk}": [
+            NormalizedDocument(
+                text="Tools\n\nDesk lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=tools.pk,
+                title="Tools",
+            ),
+        ],
+        f"testapp.review:{review.pk}": [
+            NormalizedDocument(
+                text="Sturdy\n\nDesk lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="review",
+                source_pk=review.pk,
+                title="Sturdy",
             ),
         ],
     }
@@ -2959,10 +3288,7 @@ def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_sem
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not read the hall.
     _create_the_transbordeur_and_its_seminar()
@@ -3011,10 +3337,7 @@ def test_saving_a_venue_a_custom_extractor_depends_on_by_multi_column_replaces_s
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not depend on the hall.
     _create_the_transbordeur_and_its_seminar()
@@ -3055,10 +3378,7 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not follow the hall.
     _create_the_transbordeur_and_its_seminar()
@@ -3088,6 +3408,157 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
 
 
 @pytest.mark.django_db
+def test_saving_a_venue_unchanged_replaces_each_of_its_following_seminars_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, following its venue through the
+    # multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title"], follow=["venue"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+    rigging = Seminar.objects.create(
+        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The save changes neither column the seminars name the venue by: the
+        # seminars that named it before the save are those that name it after.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding each seminar's group once, not one batch for the
+    # seminars found before the save and another for those found after it.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics\n\nHalle Tony Garnier\n\nLyon",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+            f"testapp.seminar:{rigging.pk}": [
+                NormalizedDocument(
+                    text="Rigging\n\nHalle Tony Garnier\n\nLyon",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=rigging.pk,
+                    title="Rigging",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_renaming_a_venue_followed_by_multi_column_replaces_the_seminars_naming_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, following its venue through the
+    # multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title"], follow=["venue"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's rename below is observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+    # Another venue of the same city: the rename changes only the name column,
+    # so the city column alone cannot tell its seminar from the hall's.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The name is one of the columns the seminars name the venue by: after
+        # the save, the hall's seminar still carries the old name, so only the
+        # venue as it was before the save tells which seminars named it.
+        hall.name = "Grande Halle"
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the seminar that named the hall, as committed: its two
+    # columns now name no venue, so only the Seminar's own title is left, not
+    # the stale venue text; no group of the other venue's seminar.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_renaming_a_venue_a_custom_extractor_depends_on_replaces_the_seminars_naming_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, with a custom extractor reading its
+    # venue's name when its two columns name one: depends_on names the
+    # multi-column ForeignObject ``venue``, whose saves change its documents.
+    # Venue itself is not registered.
+    @rag.register_extractor(Seminar, depends_on=["venue"])
+    class SeminarExtractor(BaseExtractor[Seminar]):
+        def extract(self, instance: Seminar) -> NormalizedDocument:
+            try:
+                venue = instance.venue
+            except Venue.DoesNotExist:
+                return self.build_document(instance, text=instance.title)
+            return self.build_document(instance, text=f"{venue.name}: {instance.title}")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's rename below is observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+    # Another venue of the same city: the rename changes only the name column,
+    # so the city column alone cannot tell its seminar from the hall's.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The name is one of the columns the seminars name the venue by: after
+        # the save, the hall's seminar still carries the old name, so only the
+        # venue as it was before the save tells which seminars named it.
+        hall.name = "Grande Halle"
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the seminar that named the hall, as
+    # committed: its two columns now name no venue, so only its title is
+    # left, not the stale venue name; no group of the other venue's seminar.
+    assert _received_groups(built_outputs) == {
+        f"testapp.seminar:{acoustics.pk}": [
+            NormalizedDocument(
+                text="Acoustics",
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=acoustics.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -3102,10 +3573,7 @@ def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_t
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
     # Another venue of the same city: only both columns together name a venue,
     # so the talk of its seminar does not read the hall.
@@ -3127,6 +3595,56 @@ def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_t
             f"testapp.talk:{keynote.pk}": [
                 NormalizedDocument(
                     text="Keynote\n\nHalle Tony Garnier",
+                    source_app_label="testapp",
+                    source_model="talk",
+                    source_pk=keynote.pk,
+                    title="Keynote",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_renaming_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Talk is registered, reading its seminar's venue's name through a
+    # lookup path whose later link is the multi-column ForeignObject ``venue``:
+    # neither Seminar nor Venue is.
+    rag.register(Talk, fields=["title", "seminar__venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's rename below is observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+    keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
+    # Another venue of the same city: the rename changes only the name column,
+    # so the city column alone cannot tell the talk of its seminar from the
+    # talk of the hall's.
+    lighting = _create_the_transbordeur_and_its_seminar()
+    Talk.objects.create(title="Spotlights", seminar=lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The name is one of the columns the seminars name the venue by: after
+        # the save, the hall's seminar still carries the old name, so only the
+        # venue as it was before the save tells which talks read it.
+        hall.name = "Grande Halle"
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the talk of the seminar that named the hall, as committed:
+    # its seminar's two columns now name no venue, so only the Talk's own title
+    # is left, not the stale venue name; no group of the other venue's talk.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.talk:{keynote.pk}": [
+                NormalizedDocument(
+                    text="Keynote",
                     source_app_label="testapp",
                     source_model="talk",
                     source_pk=keynote.pk,
@@ -4204,21 +4722,26 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     assert _replaced(built_outputs) == [{f"testapp.category:{tools_pk}": []}]
 
 
+def _selects_by(sql: str, params: Any, lookup: str, value: Any) -> bool:
+    """Whether ``sql`` is a SELECT whose ``lookup`` compares a column with ``value``.
+
+    The parameter compared is the lookup's own, found by counting the
+    placeholders before it: a query's other parameters (such as the constant
+    exists() selects) may hold the same value without being the lookup's.
+    """
+    if not sql.startswith("SELECT") or lookup not in sql:
+        return False
+    lookup_param_index = sql[: sql.index(lookup)].count("%s")
+    return bool(params[lookup_param_index] == value)
+
+
 # How a query on Category compares a row's primary key with a parameter.
 CATEGORY_PK_LOOKUP = '"testapp_category"."id" = %s'
 
 
 def _reads_category_row(sql: str, params: Any, pk: Any) -> bool:
-    """Whether ``sql`` is a SELECT looking up the Category row of primary key ``pk``.
-
-    The parameter compared is the lookup's own, found by counting the
-    placeholders before it: a query's other parameters (such as the constant
-    exists() selects) may hold the same value without reading that row.
-    """
-    if not sql.startswith("SELECT") or CATEGORY_PK_LOOKUP not in sql:
-        return False
-    lookup_param_index = sql[: sql.index(CATEGORY_PK_LOOKUP)].count("%s")
-    return bool(params[lookup_param_index] == pk)
+    """Whether ``sql`` is a SELECT looking up the Category row of primary key ``pk``."""
+    return _selects_by(sql, params, CATEGORY_PK_LOOKUP, pk)
 
 
 @pytest.mark.django_db
@@ -4285,4 +4808,104 @@ def test_a_database_error_reloading_a_saved_instance_is_logged_without_raising(
                 ),
             ],
         }
+    ]
+
+
+# How a query on Product compares a row's category with a parameter.
+PRODUCT_CATEGORY_LOOKUP = '"testapp_product"."category_id" = %s'
+
+
+def _looks_up_products_of_category(sql: str, params: Any, category_pk: Any) -> bool:
+    """Whether ``sql`` is a SELECT looking up the Products of the Category of
+    primary key ``category_pk``."""
+    return _selects_by(sql, params, PRODUCT_CATEGORY_LOOKUP, category_pk)
+
+
+@pytest.mark.django_db
+def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logged(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the categories' saves below are observed.
+    lighting = Category.objects.create(name="Lighting")
+    desk_lamp = _create_a_plain_desk_lamp(lighting)
+    tools = Category.objects.create(name="Tools")
+    hammer = _create_a_hammer(tools)
+
+    # The saves themselves go through: their callbacks are captured here, and
+    # run below as the commit would run them, once the database fails. The
+    # followers each category had before its save are found by then.
+    with django_capture_on_commit_callbacks() as callbacks:
+        lighting.name = "Lamps"
+        lighting.save()
+        tools.name = "Hardware"
+        tools.save()
+
+    lookup_error = DatabaseError("the database is unreachable")
+
+    def fail_looking_up_lighting_followers(
+        execute: Callable[[str, Any, bool, dict[str, Any]], Any],
+        sql: str,
+        params: Any,
+        many: bool,
+        context: dict[str, Any],
+    ) -> Any:
+        # Only looking up the Products of Lighting fails: every query on the
+        # Products of Tools goes through.
+        if _looks_up_products_of_category(sql, params, lighting.pk):
+            raise lookup_error
+        return execute(sql, params, many, context)
+
+    # The callbacks run in order, the failing category's first, so that its
+    # failure comes before the other category's followers are sent. An error
+    # escaping a callback would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        connection.execute_wrapper(fail_looking_up_lighting_followers),
+    ):
+        for callback in callbacks:
+            callback()
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the category saved, and carries the error itself.
+    assert f"testapp.category:{lighting.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert record.exc_info[1] is lookup_error
+    # The follower the failing category had before its save, found then, still
+    # reaches an output, and so does the other category's follower.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{desk_lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=desk_lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{desk_lamp.pk}/",
+                ),
+            ],
+        },
+        {
+            f"testapp.product:{hammer.pk}": [
+                NormalizedDocument(
+                    text="Hammer\n\nHardware",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=hammer.pk,
+                    title="Hammer",
+                    url=f"/products/{hammer.pk}/",
+                ),
+            ],
+        },
     ]

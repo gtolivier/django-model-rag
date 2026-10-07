@@ -129,26 +129,47 @@ def remember_followers_before_save(
 ) -> None:
     """Keep the followers the row had before the save, for the commit to replace.
 
-    A save may move the row to other followers: the old ones change too. Only
-    the followers the row points to can move; those pointing to the row through
-    their own foreign key still do after the save, and are found then.
+    A save may move the row to other followers: the old ones change too. It
+    may point the row to other followers, or change the columns other
+    followers name it by.
     """
     # An instance built with an existing primary key is "adding" yet saved as an
     # UPDATE: only a missing primary key means there is no row before the save.
     if raw or instance.pk is None or not _signals_enabled():
         return
 
-    # A model followed only through foreign keys to it costs the save no query.
-    if not _is_followed_through_reverse_relations(sender):
+    # A model followed by nothing costs the save no query.
+    if not _is_followed(sender):
         return
 
-    committed_instance = _committed_instance(sender, instance.pk)
-    if committed_instance is not None:
-        setattr(
-            instance,
-            _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-            _reverse_followers(sender, committed_instance),
-        )
+    # Followers reaching the row through foreign keys are looked up by its
+    # primary key, joined against the columns still in the database: pre_save
+    # runs before the UPDATE, so they are those naming the row as committed,
+    # even by columns the save changes, without loading it. The lookup at the
+    # commit finds only those naming the row as saved.
+    setattr(
+        instance,
+        _PREVIOUS_FOLLOWERS_ATTRIBUTE,
+        _committed_reverse_followers(sender, instance.pk)
+        + _forward_followers(sender, instance),
+    )
+
+
+def _committed_reverse_followers(sender: type[Model], pk: Any) -> list[_Follower]:
+    """Return the rows following, through a reverse relation, the committed row.
+
+    The save may change the foreign keys the row points to them by: those it
+    pointed to before are found from the row as committed.
+    """
+    # A model followed only through foreign keys costs the save no row loading.
+    if not _is_followed_through_reverse_relations(sender):
+        return []
+
+    committed_instance = _committed_instance(sender, pk)
+    if committed_instance is None:
+        return []
+
+    return _reverse_followers(sender, committed_instance)
 
 
 def sync_saved_instance(
@@ -161,24 +182,62 @@ def sync_saved_instance(
     """Replace, once the transaction commits, the groups a saved instance changes.
 
     Those are the instance's own group if ``sender`` feeds a registered model,
-    and the groups of its followers — the registered rows following it through
-    a reverse relation, before and after the save — whether or not ``sender``
-    is registered itself. The output configuration was checked before the
-    save, by check_output_before_save.
+    and the groups of its followers — the registered rows following it, before
+    the save and after it — whether or not ``sender`` is registered itself.
+    Those reaching a row saved before through foreign keys are looked up again
+    at the commit. The output configuration was checked before the save, by
+    check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
-    followers = _reverse_followers(sender, instance)
-    # A row just created has no follower pointing to it yet.
-    if not created:
-        followers += _forward_followers(sender, instance)
-    _schedule_follower_replacements(
-        followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, []),
-        _followed_source_key(sender, instance),
+    # At post_save the instance is the row as saved: a change left unsaved in
+    # memory afterwards is not followed.
+    followers_at_save = _reverse_followers(sender, instance) + instance.__dict__.pop(
+        _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
     )
+    # A row just created has no follower pointing to it at its save.
+    if not created and _is_followed_through_foreign_keys(sender):
+        # Rows may be attached to it before the commit, by a write that sends
+        # no signal: its followers are looked up then.
+        transaction.on_commit(
+            partial(
+                _replace_followers_as_committed,
+                sender,
+                instance,
+                followers_at_save,
+            )
+        )
+        return
+
+    _schedule_follower_replacements(
+        followers_at_save, _followed_source_key(sender, instance)
+    )
+
+
+def _replace_followers_as_committed(
+    sender: type[Model],
+    instance: Model,
+    followers_at_save: list[_Follower],
+) -> None:
+    """Replace the groups of ``followers_at_save`` and of the rows reaching it now.
+
+    Those reach the row through foreign keys at the commit: rows attached after
+    the save, in the same transaction, follow it too. If looking them up fails,
+    ``followers_at_save`` are still replaced.
+    """
+    followed_source_key = _followed_source_key(sender, instance)
+    try:
+        followers = _forward_followers(sender, instance) + followers_at_save
+    except Exception:
+        # An error escaping a commit callback would break the commit.
+        logger.exception("Looking up the followers of %s failed", followed_source_key)
+        followers = followers_at_save
+
+    for replace_groups in _follower_replacers(followers, followed_source_key):
+        replace_groups()
 
 
 def _schedule_follower_replacements(
@@ -188,14 +247,22 @@ def _schedule_follower_replacements(
 
     A failure is logged with the ``followed_source_key`` of the row they follow.
     """
+    for replace_groups in _follower_replacers(followers, followed_source_key):
+        transaction.on_commit(replace_groups)
+
+
+def _follower_replacers(
+    followers: list[_Follower], followed_source_key: str
+) -> list[Callable[[], None]]:
+    """Return one callback per model replacing the groups of its ``followers``."""
     pks_by_model: dict[type[Model], list[Any]] = {}
     # dict.fromkeys drops the duplicates and keeps the order.
     for follower_model, follower_pk in dict.fromkeys(followers):
         pks_by_model.setdefault(follower_model, []).append(follower_pk)
-    for follower_model, follower_pks in pks_by_model.items():
-        transaction.on_commit(
-            _batch_replacer(follower_model, follower_pks, followed_source_key)
-        )
+    return [
+        _batch_replacer(follower_model, follower_pks, followed_source_key)
+        for follower_model, follower_pks in pks_by_model.items()
+    ]
 
 
 def _batch_replacer(
@@ -273,6 +340,11 @@ def _pks_reaching(
 
     Those rows reach, through ``lookup``, the row whose primary key is ``reached_pk``.
     """
+    if reached_pk is None:
+        # A row deleted since its save has lost its primary key: filtering on
+        # None would match the rows whose foreign key is null.
+        return []
+
     reaching_rows = registered_model._base_manager.filter(
         **{f"{lookup}__pk": reached_pk}
     )
@@ -281,17 +353,23 @@ def _pks_reaching(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
+    return _is_followed_through_foreign_keys(
+        sender
+    ) or _is_followed_through_reverse_relations(sender)
+
+
+def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
+    """Return whether a registered model follows ``sender``'s rows in reverse."""
     return any(
         _followed_reverse_relations(registered_model, sender)
-        or _followed_foreign_key_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
 
-def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
-    """Return whether a registered model follows ``sender`` by a reverse relation."""
+def _is_followed_through_foreign_keys(sender: type[Model]) -> bool:
+    """Return whether a registered model reads ``sender``'s rows by foreign keys."""
     return any(
-        _followed_reverse_relations(registered_model, sender)
+        _followed_foreign_key_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 

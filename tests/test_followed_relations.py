@@ -14,6 +14,7 @@ from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_docume
 from tests.testapp.models import (
     AccordionItem,
     Band,
+    Booking,
     Category,
     Course,
     Craftsman,
@@ -31,6 +32,7 @@ from tests.testapp.models import (
     Recipe,
     Remark,
     Review,
+    Room,
     Shelf,
     Showroom,
     Step,
@@ -545,6 +547,27 @@ def test_followed_reverse_foreign_key_whose_manager_joins_another_foreign_key(
     assert [document.text for document in documents] == [
         "North hall\n\nHammer\n\nSaw",
         "South hall\n\nRake\n\nSpade",
+    ]
+
+
+@pytest.mark.django_db
+def test_followed_reverse_multi_column_relation_over_integers_reads_in_one_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # A room with three bookings, matched to it by two integer columns: one
+    # query per booking, or per column of the relation, would show as more
+    # queries than for a room with one booking.
+    Room.objects.create(building=1, number=101, name="Library")
+    Booking.objects.create(purpose="Reading club", room_building=1, room_number=101)
+    Booking.objects.create(purpose="Chess evening", room_building=1, room_number=101)
+    Booking.objects.create(purpose="Poetry night", room_building=1, room_number=101)
+    rag.register(Room, fields=["name"], follow=["bookings"])
+
+    with django_assert_num_queries(2 + PRUNE_KEYS_QUERY):
+        documents = run_documents()
+
+    assert [document.text for document in documents] == [
+        "Library\n\nReading club\n\nChess evening\n\nPoetry night"
     ]
 
 

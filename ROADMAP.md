@@ -695,10 +695,49 @@ reference.
   - **Left out**: deleting a venue that seminars follow is not tested
     (the test bench's relation cascades); a partly null set of columns
     is not tested; a `CompositePrimaryKey` is not covered. Renaming a
-    venue (changing a column its seminars name it by) resyncs none of
-    them: they are looked up after the save, by the new values, and no
-    longer match — the same holds for a `to_field` without a database
-    constraint. The query count of the prefetch is not pinned by a test.
+    venue (changing a column its seminars name it by) and the query count
+    of the prefetch were left out too, then done in 11c-ter.
+- [x] **11c-ter. Followers looked up before the save and at the commit.**
+  Changing the columns that followers name a row by — a `to_field`, or the
+  columns of a multi-column `ForeignObject` (renaming a venue) — resynced
+  none of them: they were looked up after the save, by the new values. And
+  forward followers were looked up at `post_save`, so rows attached later
+  in the same transaction by a write that sends no signal (`bulk_create`,
+  `QuerySet.update()`) were missed ([#26](https://github.com/gtolivier/django-model-rag/issues/26)).
+  Decided in this feature, after the review of 11c-bis:
+  - **Before the save**: `pre_save` looks up the followers reaching the row
+    through foreign keys, by its primary key — the database still holds
+    the old columns, so the row as committed is not loaded for them.
+  - **At the commit**: a commit callback looks up the followers reaching
+    the row through foreign keys then, and replaces their groups along with
+    those of the followers found before the save and of those the row
+    points to as saved — taken at `post_save`, so that a change left unsaved
+    in memory afterwards is not followed. A row attached to it
+    after the save by a write that sends no signal is resynced; so is one
+    detached from it that way, through the list found before the save. A
+    creation keeps the lookup at the save: nothing reaches the row through
+    a foreign key yet.
+  - **Same query count at the save**; the commit adds one lookup. A lookup
+    failing at the commit is logged on the package logger with the saved
+    row's key, does not escape the callback, and the other commit
+    callbacks still run; the followers found before the save and at
+    `post_save` are still replaced.
+  - **Pinned**: syncing rows that follow a reverse multi-column relation
+    runs as many queries for three children as for one — over two integer
+    columns, with the new test-bench pair `Room` / `Booking`.
+  - **A row deleted before the commit**: saved, then deleted in the same
+    transaction, it has lost its primary key by the commit, which then
+    looks up no follower — a null foreign key does not reach it.
+  - **Left out**: rows attached by a write that sends no signal to a row
+    created in the same transaction are not resynced — see 11c-quater.
+- [ ] **11c-quater. Followers looked up at the commit after a creation.**
+  11c-ter keeps the lookup at the save for a creation, so a row attached
+  by `bulk_create()` or `QuerySet.update()` to a row created in the same
+  transaction is not resynced. Looking them up at the commit after a
+  creation too would cost one query per insert of a model followed through
+  foreign keys, where a creation costs none today: the test
+  `test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing`
+  and the README's promise on the cost of a creation change with it.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.
