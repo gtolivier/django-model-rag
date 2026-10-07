@@ -1115,6 +1115,58 @@ def test_saving_a_warehouse_followed_by_a_foreign_key_to_its_code_replaces_its_s
 
 
 @pytest.mark.django_db
+def test_changing_the_code_of_a_warehouse_followed_by_it_replaces_the_shelves_naming_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Shelf is registered, following its warehouse through its own
+    # foreign key, which holds the Warehouse's code, not its primary key:
+    # Warehouse itself is not.
+    rag.register(Shelf, follow=["warehouse"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the warehouse's code change below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(warehouse=north, label="Timber")
+    # Another warehouse and its shelf, untouched by the code change.
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(warehouse=south, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The code is the column the shelves point to the warehouse by: at the
+        # save, the North depot's shelf still holds the old code, so only the
+        # warehouse as it was before the save tells which shelves named it.
+        north.code = "north-hall"
+        north.save()
+        # The shelves are then moved to the new code, in the same transaction,
+        # by an update that sends no signal: the foreign key constraint is
+        # checked at the commit, and the shelf's own save is not observed.
+        Shelf.objects.filter(warehouse_id="north").update(warehouse_id="north-hall")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the shelf that named the North depot, as committed, with
+    # the warehouse's name after the shelf's own label; no group of the other
+    # warehouse's shelf.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.shelf:{timber.pk}": [
+                NormalizedDocument(
+                    text="Timber\n\nNorth depot",
+                    source_app_label="testapp",
+                    source_model="shelf",
+                    source_pk=timber.pk,
+                    title="Timber",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_depot(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
