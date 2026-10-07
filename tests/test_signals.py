@@ -768,6 +768,87 @@ def test_a_category_followed_by_foreign_key_saved_unsynced_costs_nothing_more(
 
 
 @pytest.mark.django_db
+def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_saved(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the categories' saves below are observed.
+    lighting = Category.objects.create(name="Lighting")
+    # Two followers, so that the message cannot name the one follower there is.
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+    Product.objects.create(
+        name="Bulb",
+        description="A bulb for the lamp.",
+        price="5.00",
+        category=lighting,
+    )
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer",
+        description="A hammer for nails.",
+        price="15.00",
+        category=tools,
+    )
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.product:{lamp.pk}"},
+    }
+
+    # The failing category is saved first, so that its failure comes before the
+    # other category's followers are sent. An error escaping the commit
+    # callbacks would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+        tools.name = "Hardware"
+        tools.save()
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the followers' model and the category saved, however
+    # many followers it has, and carries the error itself.
+    assert record.getMessage() == (
+        f"Syncing testapp.product instances that follow "
+        f"testapp.category:{lighting.pk} failed"
+    )
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+    # The other category's follower still reaches an output.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{hammer.pk}": [
+                NormalizedDocument(
+                    text="Hammer\n\nHardware",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=hammer.pk,
+                    title="Hammer",
+                    url=f"/products/{hammer.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -2216,12 +2297,16 @@ def test_a_follower_failing_at_the_commit_of_a_followed_save_is_logged_without_r
         caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
         django_capture_on_commit_callbacks(execute=True),
     ):
-        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
 
     [record] = _package_log_records(caplog)
     assert record.levelno == logging.ERROR
-    # The record names the Page's group, not the plugin, and carries the error.
-    assert f"testapp.page:{page.pk}" in record.getMessage()
+    # The record names the followers' model and the plugin saved, and carries
+    # the error.
+    assert record.getMessage() == (
+        f"Syncing testapp.page instances that follow testapp.textplugin:{plugin.pk} "
+        "failed"
+    )
     assert record.exc_info is not None
     assert isinstance(record.exc_info[1], _ExtractionError)
     # Not even an empty group: what the output held for the Page is kept.
