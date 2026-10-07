@@ -39,12 +39,16 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
+def _concrete_model(sender: type[Model]) -> type[Model]:
+    """Return the model whose table holds the rows of ``sender``."""
+    # A proxy sends signals under its own sender: it is its concrete model. The
+    # fallback only satisfies the stubs: Django sets it on every model class.
+    return sender._meta.concrete_model or sender
+
+
 def _models_of_the_row(sender: type[Model]) -> tuple[type[Model], ...]:
     """Return the models a row of ``sender`` is a row of, nearest first."""
-    # A proxy sends signals under its own sender: it is its concrete model.
-    concrete_model = sender._meta.concrete_model
-    if concrete_model is None:
-        return ()
+    concrete_model = _concrete_model(sender)
     # A multi-table child is a row of each of its parents too.
     return (concrete_model, *concrete_model._meta.get_parent_list())
 
@@ -172,7 +176,7 @@ def sync_saved_instance(
         followers += _forward_followers(sender, instance)
     _schedule_follower_replacements(
         followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, []),
-        model_source_key(sender._meta.concrete_model or sender, instance.pk),
+        model_source_key(_concrete_model(sender), instance.pk),
     )
 
 
