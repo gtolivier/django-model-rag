@@ -144,15 +144,29 @@ def remember_followers_before_save(
 
     # Followers reaching the row through foreign keys name its primary key,
     # which the save does not change: the row as committed is not needed.
-    followers = _forward_followers(sender, instance)
-    if _is_followed_through_reverse_relations(sender):
-        committed_instance = _committed_instance(sender, instance.pk)
-        if committed_instance is not None:
-            # The columns the followers name the row by may change with the
-            # save: those that named it before are found from the row as
-            # committed.
-            followers = _reverse_followers(sender, committed_instance) + followers
-    setattr(instance, _PREVIOUS_FOLLOWERS_ATTRIBUTE, followers)
+    setattr(
+        instance,
+        _PREVIOUS_FOLLOWERS_ATTRIBUTE,
+        _committed_reverse_followers(sender, instance.pk)
+        + _forward_followers(sender, instance),
+    )
+
+
+def _committed_reverse_followers(sender: type[Model], pk: Any) -> list[_Follower]:
+    """Return the rows following, through a reverse relation, the committed row.
+
+    The columns the followers name the row by may change with the save: those
+    that named it before are found from the row as committed.
+    """
+    # A model followed only through foreign keys costs the save no row loading.
+    if not _is_followed_through_reverse_relations(sender):
+        return []
+
+    committed_instance = _committed_instance(sender, pk)
+    if committed_instance is None:
+        return []
+
+    return _reverse_followers(sender, committed_instance)
 
 
 def sync_saved_instance(
