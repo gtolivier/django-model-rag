@@ -725,6 +725,19 @@ reference.
   - **Pinned**: syncing rows that follow a reverse multi-column relation
     runs as many queries for three children as for one — over two integer
     columns, with the new test-bench pair `Room` / `Booking`.
+  - **A row deleted before the commit**: saved, then deleted in the same
+    transaction, it has lost its primary key by the commit, which then
+    looks up no follower — a null foreign key does not reach it.
+  - **Left out**: rows attached by a write that sends no signal to a row
+    created in the same transaction are not resynced — see 11c-quater.
+- [ ] **11c-quater. Followers looked up at the commit after a creation.**
+  11c-ter keeps the lookup at the save for a creation, so a row attached
+  by `bulk_create()` or `QuerySet.update()` to a row created in the same
+  transaction is not resynced. Looking them up at the commit after a
+  creation too would cost one query per insert of a model followed through
+  foreign keys, where a creation costs none today: the test
+  `test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing`
+  and the README's promise on the cost of a creation change with it.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.

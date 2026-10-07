@@ -569,7 +569,9 @@ instance that raises at the commit is logged with `logger.exception` on the
 `django_model_rag` logger, naming the instance's source key, and the commit
 goes on: the instance keeps its previous documents until its next save or
 the next `sync_model_rag`, and the other instances of the transaction are
-still sent. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
+still sent. A database error looking up, at the commit, the followers
+reaching a saved row is logged the same way; the followers found at the
+save are still replaced. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
 its `BACKEND` class does not accept, when Python can read the class's
 signature — is not logged: it raises
 `ImproperlyConfigured` at the save or the delete, so that a forgotten
