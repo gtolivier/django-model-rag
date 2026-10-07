@@ -213,23 +213,38 @@ def _require_relation(
             generic relation, or is a longer path that crosses a reverse
             relation.
     """
-    # imported here: contenttypes' models cannot load before the apps are ready,
-    # and this module is imported while they load
-    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
-
     first, *rest = name.split(LOOKUP_SEP)
     relation = accessors.get(first)
     if relation is None:
         raise _not_a_relation(model, name)
+    related = _require_single_valued(model, name, relation)
+    if rest and relation.auto_created:
+        raise _reverse_relation_crossed(model, name, first)
+    _require_forward_relations(model, name, related, rest)
+
+
+def _require_single_valued(
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> type[Model]:
+    """Return the model ``relation``, a link of ``model``'s ``depends_on``
+    path ``name``, points to.
+
+    Raises:
+        ImproperlyConfigured: the link is a many-to-many, a generic foreign
+            key or a generic relation.
+    """
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported while they load
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
     if relation.many_to_many:
         message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
         raise ImproperlyConfigured(message)
-    if relation.related_model is None or isinstance(relation, GenericRelation):
+    related = relation.related_model
+    if related is None or isinstance(relation, GenericRelation):
         message = f"{model.__name__}: depends_on {name!r} is a generic relation"
         raise ImproperlyConfigured(message)
-    if rest and relation.auto_created:
-        raise _reverse_relation_crossed(model, name, first)
-    _require_forward_relations(model, name, relation.related_model, rest)
+    return related
 
 
 def _require_forward_relations(
@@ -250,9 +265,7 @@ def _require_forward_relations(
             raise _not_a_relation(model, name)
         if step.auto_created:
             raise _reverse_relation_crossed(model, name, segment)
-        if step.related_model is None:
-            return
-        related = step.related_model
+        related = _require_single_valued(model, name, step)
 
 
 def _not_a_relation(model: type[Model], name: str) -> ImproperlyConfigured:
