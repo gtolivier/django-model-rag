@@ -240,34 +240,39 @@ def sync_changed_relation(
     if not _signals_enabled():
         return
 
+    through = kwargs["sender"]
     if action == _BEFORE_CLEAR:
-        _remember_cleared_pks(kwargs["sender"], instance, model)
+        _remember_cleared_pks(through, instance, model)
         return
 
     if action not in _CHANGING_ACTIONS:
         return
 
     _schedule_commit_callbacks(
-        [
-            registered_model
-            for registered_model in _registered_models(type(instance))
-            if rag.follows_many_to_many(registered_model, kwargs["sender"])
-        ],
+        _registered_models_following(type(instance), through),
         instance,
         _group_replacer,
     )
-    if _reaches_registered_rows(model, kwargs["sender"]):
+    if _reaches_registered_rows(model, through):
         # Only a clear leaves keys behind, found before it: pk_set is None then.
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
         )
         _schedule_follower_replacements(
-            [
-                (model, pk)
-                for pk in _primary_keys_named(kwargs["sender"], model, pk_set)
-            ],
+            [(model, pk) for pk in _primary_keys_named(through, model, pk_set)],
             _followed_source_key(type(instance), instance),
         )
+
+
+def _registered_models_following(
+    sender: type[Model], through: type[Model]
+) -> list[type[Model]]:
+    """Return the registered models of ``sender`` following the links of ``through``."""
+    return [
+        registered_model
+        for registered_model in _registered_models(sender)
+        if rag.follows_many_to_many(registered_model, through)
+    ]
 
 
 def _primary_keys_named(
