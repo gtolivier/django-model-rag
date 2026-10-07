@@ -587,6 +587,43 @@ def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() 
 
 
 @pytest.mark.django_db
+def test_run_instance_extracts_the_instance_as_its_get_queryset_loads_it() -> None:
+    # run() extracts the instances get_queryset() loads: an extractor relying
+    # on what the hook adds to them, here a count of products, must read it
+    # from run_instance() too, though the instance handed over lacks it.
+    lighting = _create_lighting_with_two_lamps()
+
+    @rag.register_extractor(Category)
+    class CountingCategoryExtractor(BaseExtractor[Category]):
+        def get_queryset(self, queryset: QuerySet[Category]) -> QuerySet[Category]:
+            return queryset.annotate(product_count=Count("products"))
+
+        def extract(self, instance: Category) -> NormalizedDocument:
+            # The annotation is unknown to the type checker. Without it, the
+            # count reads None: the failure shows in the document's text.
+            product_count = getattr(instance, "product_count", None)
+            return self.build_document(
+                instance, text=f"{instance.name}: {product_count} products"
+            )
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting: 2 products",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_pipeline_hands_once_the_documents_of_an_instance_a_join_repeats() -> None:
     # Filtering across the reverse foreign key without distinct() yields
     # lighting once per matching product: a pipeline extracting every row
