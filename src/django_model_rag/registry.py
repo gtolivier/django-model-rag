@@ -228,10 +228,10 @@ def _require_relation(
 
     Raises:
         ImproperlyConfigured: the ``depends_on`` name is not a string (a
-            field object, say), a link of it is not a relation, is a reverse
-            many-to-many, a forward many-to-many in a longer path, a generic
-            foreign key or generic relation, or the name is a longer path that
-            crosses a reverse relation.
+            field object, say), a link of it is not a relation, is a
+            many-to-many in a longer path, a generic foreign key or generic
+            relation, or the name is a longer path that crosses a reverse
+            relation.
     """
     if not isinstance(name, str):
         raise _not_a_relation(model, name)
@@ -240,7 +240,7 @@ def _require_relation(
     if relation is None:
         raise _not_a_relation(model, name)
     # a forward many-to-many is a dependency only as a one-link path
-    if rest or isinstance(relation, ForeignObjectRel):
+    if rest:
         _require_not_many_to_many(model, name, relation)
     related = _require_related_model(model, name, relation)
     if rest and isinstance(relation, ForeignObjectRel):
