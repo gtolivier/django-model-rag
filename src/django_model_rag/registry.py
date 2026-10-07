@@ -181,6 +181,19 @@ def _require_related_text(
         raise ImproperlyConfigured(message)
 
 
+def _require_relations(model: type[Model], names: FieldNames) -> None:
+    """Fail unless each of ``names`` starts with a relation accessor of ``model``.
+
+    Raises:
+        ImproperlyConfigured: a ``depends_on`` name is not a relation.
+    """
+    accessors = relations_by_accessor(model)
+    for name in names:
+        if name.split(LOOKUP_SEP)[0] not in accessors:
+            message = f"{model.__name__}: depends_on {name!r} is not a relation"
+            raise ImproperlyConfigured(message)
+
+
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
     """Fail unless ``names``, given as ``argument``, is a list or a tuple.
 
@@ -529,6 +542,7 @@ class Registry:
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
             _require_field_names(model, depends_on, "depends_on")
+            _require_relations(model, depends_on)
             self._require_unregistered(model)
             self._add(model, extractor_class, tuple(depends_on))
             return extractor_class
