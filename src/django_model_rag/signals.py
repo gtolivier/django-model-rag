@@ -169,22 +169,30 @@ def sync_saved_instance(
     if not created:
         followers += _forward_followers(sender, instance)
     _schedule_follower_replacements(
-        followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+        followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, []),
+        model_source_key(sender, instance.pk),
     )
 
 
-def _schedule_follower_replacements(followers: list[_Follower]) -> None:
-    """Replace, at the commit, the groups of ``followers``, one batch per model."""
+def _schedule_follower_replacements(
+    followers: list[_Follower], followed_source_key: str
+) -> None:
+    """Replace, at the commit, the groups of ``followers``, one batch per model.
+
+    A failure is logged with the ``followed_source_key`` of the row they follow.
+    """
     pks_by_model: dict[type[Model], list[Any]] = {}
     # dict.fromkeys drops the duplicates and keeps the order.
     for follower_model, follower_pk in dict.fromkeys(followers):
         pks_by_model.setdefault(follower_model, []).append(follower_pk)
     for follower_model, follower_pks in pks_by_model.items():
-        transaction.on_commit(_batch_replacer(follower_model, follower_pks))
+        transaction.on_commit(
+            _batch_replacer(follower_model, follower_pks, followed_source_key)
+        )
 
 
 def _batch_replacer(
-    registered_model: type[Model], pks: list[Any]
+    registered_model: type[Model], pks: list[Any], followed_source_key: str
 ) -> Callable[[], None]:
     """Return a commit callback replacing the groups of ``registered_model``'s rows."""
 
@@ -193,7 +201,8 @@ def _batch_replacer(
             lambda: SyncPipeline(configured_output()).run_queryset(
                 registered_model._base_manager.filter(pk__in=pks)
             ),
-            ", ".join(model_source_key(registered_model, pk) for pk in pks),
+            f"{registered_model._meta.label_lower} instances that follow "
+            f"{followed_source_key}",
         )
 
     return replace_groups_as_committed
@@ -351,7 +360,7 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
     _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
-    _schedule_follower_replacements(followers)
+    _schedule_follower_replacements(followers, model_source_key(sender, instance.pk))
 
 
 def _group_emptier(
