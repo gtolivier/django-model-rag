@@ -347,6 +347,9 @@ class SyncPipeline:
         is empty when get_queryset() filters ``instance`` out: it is then not
         extracted.
 
+        It is reloaded from the database ``instance`` was loaded from, or the
+        one Django's routers pick by default when it was not loaded from one.
+
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
             ValueError: ``instance`` has no primary key yet.
