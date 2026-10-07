@@ -3137,6 +3137,62 @@ def test_renaming_a_venue_followed_by_multi_column_replaces_the_seminars_naming_
 
 
 @pytest.mark.django_db
+def test_renaming_a_venue_a_custom_extractor_depends_on_replaces_the_seminars_naming_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, with a custom extractor reading its
+    # venue's name when its two columns name one: depends_on names the
+    # multi-column ForeignObject ``venue``, whose saves change its documents.
+    # Venue itself is not registered.
+    @rag.register_extractor(Seminar, depends_on=["venue"])
+    class SeminarExtractor(BaseExtractor[Seminar]):
+        def extract(self, instance: Seminar) -> NormalizedDocument:
+            try:
+                venue = instance.venue
+            except Venue.DoesNotExist:
+                return self.build_document(instance, text=instance.title)
+            return self.build_document(instance, text=f"{venue.name}: {instance.title}")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's rename below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    # Another venue of the same city: the rename changes only the name column,
+    # so the city column alone cannot tell its seminar from the hall's.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The name is one of the columns the seminars name the venue by: after
+        # the save, the hall's seminar still carries the old name, so only the
+        # venue as it was before the save tells which seminars named it.
+        hall.name = "Grande Halle"
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the seminar that named the hall, as
+    # committed: its two columns now name no venue, so only its title is
+    # left, not the stale venue name; no group of the other venue's seminar.
+    assert _received_groups(built_outputs) == {
+        f"testapp.seminar:{acoustics.pk}": [
+            NormalizedDocument(
+                text="Acoustics",
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=acoustics.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
