@@ -3858,6 +3858,31 @@ def test_a_following_course_added_to_a_topic_with_no_output_writes_no_link() -> 
     assert not basics.topics.exists()
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_topic_removed_from_a_course_following_it_with_no_output_keeps_the_link() -> (
+    None
+):
+    # Created and linked before Course is registered: with no MODEL_RAG_OUTPUT,
+    # their own saves and the add would fail otherwise.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # No transaction around the remove (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the remove must fail before its
+    # DELETE of the join row does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        basics.topics.remove(woodworking)
+
+    assert list(basics.topics.all()) == [woodworking]
+
+
 @pytest.mark.django_db
 def test_an_output_failing_on_a_course_added_to_a_topic_logs_the_course_and_the_topic(
     settings: Settings,
