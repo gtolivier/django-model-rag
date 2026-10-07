@@ -343,7 +343,13 @@ def _remember_cleared_pks(
     }
     # The foreign key may name the instance by a unique column other than its
     # primary key.
-    instance_key = foreign_key_to[concrete_model_of(type(instance))]
+    # A multi-table child names the row of the parent holding the links.
+    instance_model = concrete_model_of(type(instance))
+    instance_key = next(
+        foreign_key_to[candidate]
+        for candidate in (instance_model, *instance_model._meta.get_parent_list())
+        if candidate in foreign_key_to
+    )
     links = through._base_manager.filter(
         **{
             instance_key.name: getattr(
