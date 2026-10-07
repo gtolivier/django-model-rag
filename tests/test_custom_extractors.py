@@ -678,6 +678,21 @@ def test_depending_on_a_generic_relation_fails_at_registration(
         rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
 
 
+def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.body)
+
+    # TextPlugin.page is a foreign key, but Page.accordion_items is a reverse
+    # one: past the first link, a path goes through foreign keys only.
+    name = "page__accordion_items"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+
+
 @pytest.mark.django_db
 def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> None:
     Category.objects.create(name="Tools")
