@@ -340,11 +340,12 @@ reference.
   - text that comes from another model — through `follow`, a lookup path,
     or a parent that a custom extractor reads — goes stale when that model
     changes, unless the dependent instances are found and re-extracted.
-    Reverse foreign keys and one-to-ones in `follow` are done (11a); the
-    rest needs `m2m_changed` too, and a category followed by thousands of
-    products means thousands of extractions (11b). Until then, a project
-    connects its own receiver that runs `run_queryset` on the dependent
-    instances, and the command repairs the rest;
+    Reverse relations in `follow` are done (11a), forward foreign keys and
+    one-to-ones in `follow` and in lookup paths too (11b); a custom
+    extractor's dependencies (11c) and many-to-many relations (11d) are
+    not. Until then, a project connects its own receiver that runs
+    `run_queryset` on the dependent instances, and the command repairs the
+    rest;
   - background tasks: a slow output delays the response that saves the
     instance. A task — Django's `django.tasks` (6.0+; a separate package
     on 5.2), or a queue on Redis or RabbitMQ — would receive the model
@@ -564,7 +565,7 @@ reference.
   - **Fan-out 1**: the changed row points to its single parent through the
     foreign key, so finding it costs no query when the key targets the
     parent's primary key — one query for a `to_field`. A forward foreign key
-    or a many-to-many reaches many instances: that is 11b.
+    or a many-to-many reaches many instances: that is 11b and 11d.
   - **Same path as a save**: at the commit, the parent is reloaded,
     extracted and its group replaced; `MODEL_RAG_SIGNALS`, raw saves and a
     missing `MODEL_RAG_OUTPUT` (raised at the save or the delete) behave as
@@ -586,7 +587,7 @@ reference.
   - **Fast delete**: `post_delete` is connected to the followed model only
     while a registered model follows it; unregistering the last one gives
     its fast delete back. A reverse many-to-many in `follow` connects
-    nothing and sends nothing (11b); nor does the reverse of a multi-column
+    nothing and sends nothing (11d); nor does the reverse of a multi-column
     `ForeignObject`, where no single value names the parent.
   - **Several children of one parent** saved in one transaction replace its
     group once each: batching waits for 12b.
@@ -597,15 +598,67 @@ reference.
     cascade schedules one callback per deleted child; a group reached both
     as a registered model and as a follower is replaced twice. None changes
     what is sent; the duplicates belong with the batching of 12b.
-- [ ] **11b. Resync through lookup paths.** Generalize 11a to every
-  dependency a registered model declares, written as a lookup path from it
-  (`Registered.objects.filter(<path>=instance)`): forward foreign keys and
-  one-to-ones in `follow`, many-to-many (with `m2m_changed`), the lookup
-  paths of `fields`, and a `depends_on` declaration for custom extractors
-  (`register_extractor`), which have no `follow` today. A change can then
-  reach many instances; deletes are resolved in `pre_delete`, while the
-  path still leads somewhere. 11a keeps its shortcut through the foreign
-  key's column, which costs no query.
+- [x] **11b. Resync through forward foreign keys and lookup paths.**
+  Saving or deleting an instance that a registered model reaches through a
+  forward foreign key or one-to-one — in `follow` (`Product` with
+  `follow=["category"]`), or as a link of a lookup path in `fields`,
+  `title_field`, `language_field` or `url_field`
+  (`"product__category__name"`, however many foreign keys deep) — replaces
+  the groups of the registered instances that reach it, at the commit.
+  Decided in this feature:
+  - **One batch per model**: the followers of a saved or deleted instance
+    are sent through `run_queryset`, one commit callback per follower
+    model, so a category followed by many products makes one query for
+    them, not one each. The batch is cut into queries of 500 rows, under
+    the variable limit of the oldest SQLite builds. A follower reached
+    through two declarations is sent once. A failing follower stops the
+    rest of its batch of 500, whose failure is logged: the project reads
+    the cause and fixes it, then the command repairs the groups not sent.
+    The other batches still run.
+  - **One log message**: a failure is logged as `Syncing <follower model>
+    instances that follow <source key> failed`, naming the concrete model
+    of a row saved or deleted through a proxy. 11a's message changed to
+    match.
+  - **Creating costs nothing**: a row just created has no follower
+    pointing to it yet, so it looks none up. `pre_save` reads the row as
+    committed only for the reverse relations of 11a: a row cannot move
+    away from those pointing to it.
+  - **Deletes are resolved in `pre_delete`**, while the path still leads
+    somewhere: a `SET_NULL` clears the foreign keys before `post_delete`.
+    `pre_delete` and `post_delete` are connected together, to the
+    followed models (those a deep path reaches included) and their
+    proxies, only while a registered model follows them. A follower
+    deleted by the cascade gets only its empty group.
+  - **Same rules as 11a** for `MODEL_RAG_SIGNALS`, raw saves, a missing
+    `MODEL_RAG_OUTPUT` (raised at the save or the delete, writing no row),
+    proxies and multi-table children. A foreign key that names a proxy
+    (`ForeignKey(CategoryProxy)`) is followed like one that names its
+    concrete model, on saves and deletes. A foreign key with a `to_field`
+    is matched on that column; a null target value matches no row.
+  - **Left for later**: a path is followed only through its leading
+    foreign keys: past a reverse one-to-one
+    (`supplier__supplier_profile__body`), saving or deleting the profile
+    resyncs nothing; a `GenericRelation` in a path is not followed either.
+    Changing the `to_field` value of a row whose followers' foreign key has
+    `db_constraint=False` is not tested. A row whose followers' foreign
+    key names a multi-table child, saved through its parent, resyncs
+    none of them: only the parent's `post_save` fires, as in 10's case of a
+    registered child. From the review, none changing
+    what is sent: a bulk or cascade delete looks the followers up once per
+    deleted row and schedules one callback per row, and a follower reached
+    through several deleted rows of a chain is replaced once per row —
+    batching per transaction belongs with 12b; each save now also walks
+    the lookup paths of every registered model, which the index of the
+    followed senders left open by 11a would avoid.
+- [ ] **11c. `depends_on` for custom extractors.** A custom extractor
+  (`register_extractor`) has no `follow`: a `depends_on` declaration, as
+  lookup paths from the registered model, would resync it as 11a and 11b
+  do. Followers that the model's `get_queryset()` filters out are then
+  sent with an empty group — a case only a custom extractor can reach
+  through the public API.
+- [ ] **11d. Resync through many-to-many relations.** A many-to-many in
+  `follow` or in a lookup path, forward or reverse, with `m2m_changed`
+  (add, remove, clear) on top of the saves and deletes of both ends.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `post_delete` listeners included, so every model keeps Django's fast

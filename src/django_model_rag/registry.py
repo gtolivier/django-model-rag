@@ -6,9 +6,9 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import Field, ForeignKey, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 
 from django_model_rag.apps import DISCOVERED_MODULE
 from django_model_rag.extractors import (
@@ -333,6 +333,13 @@ def _delete_uid(model: type[Model]) -> str:
     return f"django_model_rag.sync_delete.{model._meta.label}"
 
 
+def concrete_model_of(model: type[Model]) -> type[Model]:
+    """Return the model whose table holds the rows of ``model``."""
+    # A proxy sends signals under its own sender: it is its concrete model. The
+    # fallback only satisfies the stubs: Django sets it on every model class.
+    return model._meta.concrete_model or model
+
+
 def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
     """Return ``model`` and its proxies, which Django deletes under their own."""
     # Not apps.get_models(): a model is registered while the apps still load.
@@ -341,6 +348,26 @@ def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
         if subclass._meta.proxy:
             found.extend(_model_and_proxies(subclass))
     return found
+
+
+def _models_reached_by_foreign_keys(
+    model: type[Model], path: str
+) -> list[tuple[str, type[Model]]]:
+    """List the models the leading foreign keys of ``path`` reach from ``model``.
+
+    Each is paired with the lookup, from ``model``, that reaches it.
+    """
+    names: list[str] = []
+    reached: list[tuple[str, type[Model]]] = []
+    for link in path_links(model, path):
+        related_model = link.relation.related_model
+        if not isinstance(link.relation, ForeignKey) or not isinstance(
+            related_model, type
+        ):
+            break
+        names.append(link.name)
+        reached.append((LOOKUP_SEP.join(names), related_model))
+    return reached
 
 
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
@@ -518,21 +545,77 @@ class Registry:
         for sender in senders:
             if sender not in kept:
                 post_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
+                pre_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
 
     def _delete_senders(self, model: type[Model]) -> list[type[Model]]:
         """List the senders whose deletions change the group of ``model``.
 
         They are ``model`` and its proxies, and the models of the reverse
-        foreign keys ``model`` follows and their proxies.
+        foreign keys ``model`` follows, the models it reads through foreign
+        keys, one or a chain, and their proxies.
         """
+        followed_models = [
+            relation.related_model
+            for relation in self.followed_reverse_relations(model)
+        ] + [reached for _, reached in self.foreign_key_lookups(model)]
         return _model_and_proxies(model) + [
             sender
-            for relation in self.followed_reverse_relations(model)
-            for sender in _model_and_proxies(relation.related_model)
+            for followed_model in followed_models
+            # A foreign key may name a proxy: Django deletes the concrete model's
+            # rows under the concrete model, or under any of its proxies.
+            for sender in _model_and_proxies(concrete_model_of(followed_model))
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
         """List the reverse foreign keys ``model`` follows.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        return [
+            relation
+            for relation in self._followed_relations(model)
+            if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
+        ]
+
+    def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+        """List the models ``model`` reads through foreign keys, one or a chain.
+
+        Those are the models of the foreign keys it follows, and the models
+        its lookup paths reach through their leading foreign keys. Each is
+        paired with the lookup, from ``model``, that reaches it.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        followed = [
+            (relation.name, relation.related_model)
+            for relation in self._followed_relations(model)
+            if isinstance(relation, ForeignKey)
+        ]
+        read_through_paths = [
+            reached
+            for path in self._lookup_paths(model)
+            for reached in _models_reached_by_foreign_keys(model, path)
+        ]
+        # Paths sharing a prefix, or a followed foreign key, reach a model twice.
+        return list(dict.fromkeys(followed + read_through_paths))
+
+    def _lookup_paths(self, model: type[Model]) -> list[str]:
+        """List the lookup paths ``model`` declares in fields and single_fields.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
+        if not isinstance(extractor, DeclaredFieldsExtractor):
+            return []
+        return [*extractor.fields, *extractor.single_fields]
+
+    def _followed_relations(
+        self, model: type[Model]
+    ) -> "list[Field[Any, Any] | ForeignObjectRel]":
+        """List the relations, forward or reverse, ``model`` follows.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -544,18 +627,14 @@ class Registry:
             return []
 
         relations = relations_by_accessor(model)
-        followed = [relations[accessor] for accessor in extractor.follow]
-        return [
-            relation
-            for relation in followed
-            if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
-        ]
+        return [relations[accessor] for accessor in extractor.follow]
 
     def _add(
         self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
+            remember_followers_before_delete,
             sync_deleted_instance,
         )
 
@@ -563,6 +642,11 @@ class Registry:
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):
+            pre_delete.connect(
+                remember_followers_before_delete,
+                sender=sender,
+                dispatch_uid=_delete_uid(sender),
+            )
             post_delete.connect(
                 sync_deleted_instance, sender=sender, dispatch_uid=_delete_uid(sender)
             )

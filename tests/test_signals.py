@@ -8,7 +8,7 @@ from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 from pytest_django import (
     DjangoAssertNumQueries,
@@ -25,25 +25,38 @@ from tests.recording import (
 )
 from tests.testapp.models import (
     Album,
+    Banner,
     Bin,
     BonusTrack,
+    Bookmark,
     Category,
     CategoryProxy,
+    Citation,
     ClearanceProduct,
     Course,
     Depot,
+    Excerpt,
     Exhibit,
     FeaturedProduct,
+    Lesson,
+    Meetup,
+    Notice,
+    Offer,
     Page,
+    PageIntro,
     Product,
+    Review,
     Seminar,
+    Session,
     Shelf,
     Showroom,
     Supplier,
     SupplierProfile,
     TextPlugin,
     TextPluginProxy,
+    Theme,
     Topic,
+    TopicProxy,
     Venue,
     Warehouse,
     Workshop,
@@ -112,6 +125,33 @@ def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
         price="25.00",
         category=category,
         tagline="Light up your work",
+    )
+
+
+def _create_a_plain_desk_lamp(category: Category) -> Product:
+    """Create a Desk lamp, a plain Product: a single row."""
+    return Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=category,
+    )
+
+
+def _create_a_bulb(category: Category) -> Product:
+    """Create a Bulb, a plain Product: a single row."""
+    return Product.objects.create(
+        name="Bulb",
+        description="A bulb for the lamp.",
+        price="5.00",
+        category=category,
+    )
+
+
+def _create_the_woodworking_topic() -> Topic:
+    """Create the Woodworking topic."""
+    return Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
     )
 
 
@@ -351,6 +391,1278 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_followed_by_foreign_key_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Product's group, with the category's new name after the Product's
+    # own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_read_through_a_lookup_path_replaces_the_group_reading_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its category's name through a
+    # lookup path, with no follow: Category itself is not registered.
+    rag.register(Product, fields=["name", "category__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Product, as follow=["category"] does: its
+    # group, with the category's new name after the Product's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_notice_read_as_language_through_a_lookup_path_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Excerpt is registered, reading its language from its notice
+    # through a lookup path, with no follow: Notice itself is not registered.
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the notice's save below is observed.
+    notice = Notice.objects.create(title="Avis", language="fr")
+    excerpt = Excerpt.objects.create(title="Bonjour", notice=notice)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        notice.language = "en"
+        notice.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Excerpt: its group, with the notice's new
+    # language.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.excerpt:{excerpt.pk}": [
+                NormalizedDocument(
+                    text="Bonjour",
+                    source_app_label="testapp",
+                    source_model="excerpt",
+                    source_pk=excerpt.pk,
+                    title="Bonjour",
+                    language="en",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Citation is registered, reading its url from its bookmark
+    # through a lookup path, with no follow: Bookmark itself is not registered.
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the bookmark's save below is observed.
+    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
+    citation = Citation.objects.create(title="Linked", bookmark=bookmark)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        bookmark.link = "/docs/b/"
+        bookmark.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Citation: its group, with the bookmark's new
+    # link as its url.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.citation:{citation.pk}": [
+                NormalizedDocument(
+                    text="Linked",
+                    source_app_label="testapp",
+                    source_model="citation",
+                    source_pk=citation.pk,
+                    title="Linked",
+                    url="/docs/b/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its title from its category
+    # through a lookup path, with no follow and no other path through the
+    # category: Category itself is not registered.
+    rag.register(Product, fields=["name"], title_field="category__name")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Product: its group, with the category's new
+    # name as its title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Lamps",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_read_two_foreign_keys_deep_replaces_the_group_reading_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, so the category reaches the offer
+    # only through the path.
+    rag.register(Offer, fields=["title", "product__category__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    rake = Product.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+    )
+    spring = Offer.objects.create(title="Spring sale", product=lamp)
+    Offer.objects.create(title="Autumn sale", product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the offer of a product in the category saved, the
+    # last link of the path: its group, with the category's new name after the
+    # offer's own title. The offer of a product in another category is not
+    # sent.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.offer:{spring.pk}": [
+                NormalizedDocument(
+                    text="Spring sale\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="offer",
+                    source_pk=spring.pk,
+                    title="Spring sale",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_product_in_the_middle_of_a_lookup_path_replaces_the_group_reading_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, so the product reaches the offer
+    # only through the path.
+    rag.register(Offer, fields=["title", "product__category__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the product's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    rake = Product.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+    )
+    spring = Offer.objects.create(title="Spring sale", product=lamp)
+    Offer.objects.create(title="Autumn sale", product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.category = garden
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the offer of the product saved, the middle link
+    # of the path: its group, with the name of the product's new category
+    # after the offer's own title. The offer of another product is not sent.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.offer:{spring.pk}": [
+                NormalizedDocument(
+                    text="Spring sale\n\nGarden",
+                    source_app_label="testapp",
+                    source_model="offer",
+                    source_pk=spring.pk,
+                    title="Spring sale",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_both_followed_and_read_by_a_path_replaces_each_group_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reaching its category twice: through
+    # follow=["category"] and through the lookup path "category__name".
+    # Category itself is not registered.
+    rag.register(Product, fields=["name", "category__name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    bulb = _create_a_bulb(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The two declarations reaching the same category resync each product once:
+    # one replace call holding each product's group, not one call per
+    # declaration. Each text holds the category's new name twice, once read
+    # through the path and once through the followed relation.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+            f"testapp.product:{bulb.pk}": [
+                NormalizedDocument(
+                    text="Bulb\n\nLamps\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=bulb.pk,
+                    title="Bulb",
+                    url=f"/products/{bulb.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_category_read_two_links_deep_saved_with_no_output_writes_no_row() -> None:
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, so the category reaches the offer
+    # only through the path.
+    rag.register(Offer, fields=["title", "product__category__name"])
+
+    # No transaction around the save (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the save must fail before its
+    # INSERT does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        Category.objects.create(name="Lighting")
+
+    assert not Category.objects.exists()
+
+
+@pytest.mark.django_db
+def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    bulb = _create_a_bulb(lighting)
+    # A product of another category: the save below does not change its group.
+    seating = Category.objects.create(name="Seating")
+    Product.objects.create(
+        name="Chair",
+        description="A chair to sit on.",
+        price="80.00",
+        category=seating,
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both followers, as one batch of
+    # SyncPipeline.run_queryset() does, and no group of the other category's
+    # product.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+            f"testapp.product:{bulb.pk}": [
+                NormalizedDocument(
+                    text="Bulb\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=bulb.pk,
+                    title="Bulb",
+                    url=f"/products/{bulb.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_followed_by_more_rows_than_sqlite_variables_replaces_all(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    sqlite_variable_limit_lowered: int,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # More followers than SQLite accepts variables in one query. Created
+    # outside the captured callbacks: bulk_create sends no signal anyway, so
+    # only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamps = Product.objects.bulk_create(
+        Product(
+            name=f"Lamp {number}",
+            description="A lamp.",
+            price="25.00",
+            category=lighting,
+        )
+        for number in range(sqlite_variable_limit_lowered + 100)
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+
+    # Every follower's group, with the category's new name after the
+    # Product's own name: none is left out for the size of the query.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text=f"{lamp.name}\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title=lamp.name,
+                url=f"/products/{lamp.pk}/",
+            ),
+        ]
+        for lamp in lamps
+    }
+
+
+@pytest.mark.django_db
+def test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # A working output, so that only the new row can keep the save from
+    # sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: neither the save nor the commit may read.
+    with (
+        django_assert_num_queries(1) as queries,
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+    ):
+        # A row just created: no Product can point to it yet.
+        Category.objects.create(name="Lighting")
+
+    # The only query is the save's INSERT: no lookup of followers. Nothing is
+    # deferred to the commit, and no output is built.
+    statements = _statements(queries)
+    assert statements == ["INSERT"]
+    assert callbacks == []
+    assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: neither Category nor its proxy is.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    # Django sends post_save with the proxy as its sender, not Category.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamps = CategoryProxy.objects.get(pk=lighting.pk)
+        lamps.name = "Lamps"
+        lamps.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Product's group, with the category's new name after the Product's
+    # own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_followed_by_a_foreign_key_to_its_proxy_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Banner is registered, following its category through its own
+    # foreign key, whose model is the proxy CategoryProxy: neither Category nor
+    # its proxy is.
+    rag.register(Banner, fields=["title"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    banner = Banner.objects.create(title="Spring sale", category_id=lighting.pk)
+
+    # A plain Category, not its proxy: Django sends post_save with Category as
+    # its sender, while the Banner's foreign key names the proxy.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Banner's group, with the category's new name after the Banner's own
+    # title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.banner:{banner.pk}": [
+                NormalizedDocument(
+                    text="Spring sale\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="banner",
+                    source_pk=banner.pk,
+                    title="Spring sale",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_multi_table_child_of_a_product_followed_by_foreign_key_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Review is registered, following its product through its own
+    # foreign key: neither Product nor FeaturedProduct is.
+    rag.register(Review, follow=["product"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the featured product's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_desk_lamp(lighting)
+    review = Review.objects.create(title="Sturdy", product=lamp)
+
+    # Django sends post_save with FeaturedProduct as its sender, not Product,
+    # though the save writes the Product row the Review follows.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.name = "Floor lamp"
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Review's group, with the product's new text after the Review's own
+    # title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.review:{review.pk}": [
+                NormalizedDocument(
+                    text="Sturdy\n\nFloor lamp\n\nA lamp for the desk.\n\nNew",
+                    source_app_label="testapp",
+                    source_model="review",
+                    source_pk=review.pk,
+                    title="Sturdy",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_warehouse_followed_by_a_foreign_key_to_its_code_replaces_its_shelves(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Shelf is registered, following its warehouse through its own
+    # foreign key, which holds the Warehouse's code, not its primary key:
+    # Warehouse itself is not.
+    rag.register(Shelf, follow=["warehouse"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the warehouse's save below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(warehouse=north, label="Timber")
+    # Another warehouse whose code is the North depot's primary key as text: a
+    # shelf matched by comparing that primary key with the stored code would
+    # be this one's, not the North depot's.
+    south = Warehouse.objects.create(name="South depot", code=str(north.pk))
+    Shelf.objects.create(warehouse=south, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        north.name = "North hall"
+        north.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Only the North depot's shelf's group, with the warehouse's new name after
+    # the shelf's own label, and no group of the other warehouse's shelf.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.shelf:{timber.pk}": [
+                NormalizedDocument(
+                    text="Timber\n\nNorth hall",
+                    source_app_label="testapp",
+                    source_model="shelf",
+                    source_pk=timber.pk,
+                    title="Timber",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_depot(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Bin is registered, following its depot through its own nullable
+    # foreign key, which holds the Depot's code, not its primary key: Depot
+    # itself is not.
+    rag.register(Bin, follow=["depot"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the depot's save below is observed. The depot's
+    # code is null.
+    unnamed = Depot.objects.create(name="Unnamed depot", code=None)
+    # Its nullable foreign key is null: it points to no Depot, not even to the
+    # one whose code is null, as the database never joins NULL to NULL.
+    Bin.objects.create(depot=None, label="Spare parts")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        unnamed.name = "Overflow depot"
+        unnamed.save()
+
+    # No bin follows the depot: no group is replaced.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_its_intro(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the PageIntro is registered, following its page through its own
+    # one-to-one field: Page itself is not.
+    rag.register(PageIntro, follow=["page"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the page's save below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    intro = PageIntro.objects.create(page=about, body="We build chairs by hand.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The intro's group, with the page's new title after the intro's own body.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.pageintro:{intro.pk}": [
+                NormalizedDocument(
+                    text="We build chairs by hand.\n\nOur workshop",
+                    source_app_label="testapp",
+                    source_model="pageintro",
+                    source_pk=intro.pk,
+                    title="We build chairs by hand.",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row() -> (
+    None
+):
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # No transaction around the save (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the save must fail before its
+    # INSERT does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        Category.objects.create(name="Lighting")
+
+    assert not Category.objects.exists()
+
+
+def _save_with_signals_off(settings: Settings, category: Category) -> None:
+    """Turn the signals off, then save the category the regular way."""
+    settings.MODEL_RAG_SIGNALS = False
+    category.save()
+
+
+def _save_as_loaddata_does(settings: Settings, category: Category) -> None:
+    """Save the category's row as loaddata saves a fixture: a raw save.
+
+    The signals stay on: only the raw save can keep it from syncing.
+    """
+    fixture = [
+        {"model": "testapp.category", "pk": category.pk, "fields": {"name": "Lamps"}}
+    ]
+    for deserialized in serializers.deserialize("python", fixture):
+        deserialized.save()
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "save",
+    [
+        pytest.param(_save_with_signals_off, id="signals_off"),
+        pytest.param(_save_as_loaddata_does, id="raw_save"),
+    ],
+)
+def test_a_category_followed_by_foreign_key_saved_unsynced_costs_nothing_more(
+    save: Callable[[Settings, Category], None],
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # A working output, so that only the setting or the raw save can keep the
+    # save from sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    lighting = Category.objects.create(name="Lighting")
+    _create_a_plain_desk_lamp(lighting)
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits. With signals on and a regular save, the save of
+    # an existing row would look its followers up: one query more.
+    with (
+        django_assert_num_queries(1) as queries,
+        django_capture_on_commit_callbacks(execute=True) as callbacks,
+    ):
+        lighting.name = "Lamps"
+        save(settings, lighting)
+
+    # The row is written, yet the only query is the save's UPDATE: no lookup of
+    # followers. Nothing is deferred to the commit, and no output is built.
+    assert Category.objects.get(pk=lighting.pk).name == "Lamps"
+    statements = _statements(queries)
+    assert statements == ["UPDATE"]
+    assert callbacks == []
+    assert built_outputs == []
+
+
+@pytest.mark.django_db
+def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_saved(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the categories' saves below are observed.
+    lighting = Category.objects.create(name="Lighting")
+    # Two followers, so that the message cannot name the one follower there is.
+    lamp = _create_a_plain_desk_lamp(lighting)
+    _create_a_bulb(lighting)
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer",
+        description="A hammer for nails.",
+        price="15.00",
+        category=tools,
+    )
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.product:{lamp.pk}"},
+    }
+
+    # The failing category is saved first, so that its failure comes before the
+    # other category's followers are sent. An error escaping the commit
+    # callbacks would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+        tools.name = "Hardware"
+        tools.save()
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the followers' model and the category saved, however
+    # many followers it has, and carries the error itself.
+    assert record.getMessage() == (
+        f"Syncing testapp.product instances that follow "
+        f"testapp.category:{lighting.pk} failed"
+    )
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+    # The other category's follower still reaches an output.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{hammer.pk}": [
+                NormalizedDocument(
+                    text="Hammer\n\nHardware",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=hammer.pk,
+                    title="Hammer",
+                    url=f"/products/{hammer.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_an_output_failing_on_the_followers_of_a_category_proxy_logs_the_category(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: neither Category nor its proxy is.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.product:{lamp.pk}"},
+    }
+
+    # Django sends post_save with the proxy as its sender, not Category. An
+    # error escaping the commit callbacks would fail the test: the commit
+    # itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lamps = CategoryProxy.objects.get(pk=lighting.pk)
+        lamps.name = "Lamps"
+        lamps.save()
+
+    [record] = _package_log_records(caplog)
+    # The record names the row saved by its concrete model's key, the one its
+    # source keys use, not by the proxy's.
+    assert record.getMessage() == (
+        f"Syncing testapp.product instances that follow "
+        f"testapp.category:{lighting.pk} failed"
+    )
+
+
+@pytest.mark.django_db
+def test_an_output_failing_on_the_followers_of_a_deleted_topic_proxy_logs_the_topic(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: neither Topic nor its proxy is. The
+    # Workshop outlives its topic, so its group is replaced at the commit.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's delete below is observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    woodworking_pk = woodworking.pk
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.workshop:{pottery.pk}"},
+    }
+
+    # Django sends pre_delete and post_delete with the proxy as their sender,
+    # not Topic. An error escaping the commit callbacks would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        TopicProxy.objects.get(pk=woodworking_pk).delete()
+
+    [record] = _package_log_records(caplog)
+    # The record names the row deleted by its concrete model's key, the one its
+    # source keys use, not by the proxy's.
+    assert record.getMessage() == (
+        f"Syncing testapp.workshop instances that follow "
+        f"testapp.topic:{woodworking_pk} failed"
+    )
+
+
+@pytest.mark.django_db
+def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # The delete sets the workshop's foreign key to null before the topic's
+    # row goes: by post_delete, the workshop no longer points to the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Workshop's group as committed: the topic's text is gone, only the
+    # Workshop's own title is left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.workshop:{pottery.pk}": [
+                NormalizedDocument(
+                    text="Pottery",
+                    source_app_label="testapp",
+                    source_model="workshop",
+                    source_pk=pottery.pk,
+                    title="Pottery",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_topic_read_two_links_deep_through_set_null_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Session is registered, reading its workshop's topic's title
+    # through a lookup path two links deep, the last one SET_NULL on delete,
+    # with no follow: neither Workshop nor Topic is registered, so the topic
+    # reaches the session only through the path.
+    rag.register(Session, fields=["title", "workshop__topic__title"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed.
+    woodworking = _create_the_woodworking_topic()
+    glazing = Topic.objects.create(
+        summary="Colours and kilns.", title="Glazing", slug="glazing"
+    )
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    ceramics = Workshop.objects.create(title="Ceramics", topic=glazing)
+    morning = Session.objects.create(title="Morning", workshop=pottery)
+    Session.objects.create(title="Evening", workshop=ceramics)
+
+    # The delete sets the workshop's foreign key to null before the topic's
+    # row goes: by post_delete, the path from the session no longer reaches
+    # the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The session's group as committed: the topic's title is gone, only the
+    # session's own title is left. The session of a workshop on another topic
+    # is not sent.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.session:{morning.pk}": [
+                NormalizedDocument(
+                    text="Morning",
+                    source_app_label="testapp",
+                    source_model="session",
+                    source_pk=morning.pk,
+                    title="Morning",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_category_whose_following_products_cascade_sends_only_their_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key, CASCADE on delete: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's delete below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp_pk = _create_a_plain_desk_lamp(lighting).pk
+    bulb_pk = _create_a_bulb(lighting).pk
+
+    # The products are deleted with the category by cascade: they are found as
+    # its followers before the delete, yet no longer exist at the commit.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The products' empty groups, merged across replace calls: whether they
+    # come in one call or one per product is not what this test is about.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp_pk}": [],
+        f"testapp.product:{bulb_pk}": [],
+    }
+    # Each group sent once: no replacement of a product's group follows its
+    # empty one.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [f"testapp.product:{lamp_pk}", f"testapp.product:{bulb_pk}"]
+    )
+
+
+@pytest.mark.django_db
+def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: neither Topic nor its proxy is.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's delete below is observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # Django sends pre_delete and post_delete with the proxy as their sender,
+    # not Topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        TopicProxy.objects.get(pk=woodworking.pk).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Workshop's group as committed: the topic's text is gone, only the
+    # Workshop's own title is left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.workshop:{pottery.pk}": [
+                NormalizedDocument(
+                    text="Pottery",
+                    source_app_label="testapp",
+                    source_model="workshop",
+                    source_pk=pottery.pk,
+                    title="Pottery",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_theme_followed_through_a_set_null_key_to_its_proxy_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Meetup is registered, following its theme through its own
+    # foreign key, SET_NULL on delete, whose model is the proxy ThemeProxy:
+    # neither Theme nor its proxy is.
+    rag.register(Meetup, follow=["theme"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the theme's delete below is observed.
+    joinery = Theme.objects.create(name="Joinery")
+    evening = Meetup.objects.create(title="Evening meetup", theme_id=joinery.pk)
+
+    # A plain Theme, not its proxy: Django sends pre_delete and post_delete
+    # with Theme as their sender, while the Meetup's foreign key names the
+    # proxy.
+    with django_capture_on_commit_callbacks(execute=True):
+        joinery.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Meetup's group as committed: the theme's text is gone, only the
+    # Meetup's own title is left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.meetup:{evening.pk}": [
+                NormalizedDocument(
+                    text="Evening meetup",
+                    source_app_label="testapp",
+                    source_model="meetup",
+                    source_pk=evening.pk,
+                    title="Evening meetup",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_followed_topic_deleted_with_no_output_fails_and_signals_off_costs_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Created before Workshop is registered: with no MODEL_RAG_OUTPUT, their
+    # own saves would fail otherwise.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    rag.register(Workshop, follow=["topic"])
+
+    # No transaction around the delete (transaction=True): the delete runs in
+    # its own, which commits as it ends, so it must fail before then.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        woodworking.delete()
+
+    # The delete is rolled back: the topic's row is there, and the workshop
+    # still points to it.
+    assert Topic.objects.filter(pk=woodworking.pk).exists()
+    assert Workshop.objects.get(pk=pottery.pk).topic_id == woodworking.pk
+
+    settings.MODEL_RAG_SIGNALS = False
+    # A working output, so that only the setting can keep the same delete from
+    # sending to it.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # The delete commits as it ends, running any commit callback it deferred.
+    # With signals on, the delete would look its followers up first: one query
+    # more than the delete's own.
+    with django_assert_num_queries(6) as queries:
+        woodworking.delete()
+
+    # The rows are deleted and nulled, yet the only queries are the delete's
+    # own, in its transaction: the topic's lessons and course links, the
+    # workshop's foreign key, the topic itself. No lookup of followers, and no
+    # output is built, even after the commit.
+    assert not Topic.objects.exists()
+    assert Workshop.objects.get(pk=pottery.pk).topic_id is None
+    statements = _statements(queries)
+    assert statements == ["BEGIN", "DELETE", "DELETE", "UPDATE", "DELETE", "COMMIT"]
+    assert built_outputs == []
 
 
 @pytest.mark.django_db
@@ -1356,6 +2668,30 @@ def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
     assert _replaced(built_outputs) == replaced_while_registered
 
 
+def test_a_forward_followed_topic_is_listened_to_only_while_followed() -> None:
+    # Two registered models follow Topic through their own foreign key;
+    # neither Topic nor its proxy is registered.
+    rag.register(Workshop, follow=["topic"])
+    rag.register(Lesson, follow=["topic"])
+
+    rag.unregister(Workshop)
+
+    # Lesson still follows Topic: its deletes, through Topic or its proxy,
+    # are still listened to.
+    for sender in (Topic, TopicProxy):
+        assert pre_delete.has_listeners(sender)
+        assert post_delete.has_listeners(sender)
+
+    rag.unregister(Lesson)
+
+    # Django's deletion Collector fast-deletes only a model with no pre_delete
+    # and no post_delete listener: once no registered model follows Topic,
+    # nothing is left listening to its deletes, through Topic or its proxy.
+    for sender in (Topic, TopicProxy):
+        assert not pre_delete.has_listeners(sender)
+        assert not post_delete.has_listeners(sender)
+
+
 @pytest.mark.django_db
 def test_each_commit_builds_a_new_output_with_the_configured_options(
     settings: Settings,
@@ -1802,12 +3138,16 @@ def test_a_follower_failing_at_the_commit_of_a_followed_save_is_logged_without_r
         caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
         django_capture_on_commit_callbacks(execute=True),
     ):
-        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
 
     [record] = _package_log_records(caplog)
     assert record.levelno == logging.ERROR
-    # The record names the Page's group, not the plugin, and carries the error.
-    assert f"testapp.page:{page.pk}" in record.getMessage()
+    # The record names the followers' model and the plugin saved, and carries
+    # the error.
+    assert record.getMessage() == (
+        f"Syncing testapp.page instances that follow testapp.textplugin:{plugin.pk} "
+        "failed"
+    )
     assert record.exc_info is not None
     assert isinstance(record.exc_info[1], _ExtractionError)
     # Not even an empty group: what the output held for the Page is kept.

@@ -253,6 +253,19 @@ class Workshop(models.Model):
     )
 
 
+# --- A foreign key to a model with an optional relation -----------------
+# A Session points to a Workshop, which may point to a Topic through its
+# SET_NULL foreign key: a lookup path from a Session reaches the Topic two
+# links deep, the last one nulled when the Topic is deleted.
+
+
+class Session(models.Model):
+    title = models.CharField(max_length=200)
+    workshop = models.ForeignKey(
+        Workshop, related_name="sessions", on_delete=models.CASCADE
+    )
+
+
 # --- A many-to-many relation --------------------------------------------
 # A Course covers several Topics, and a Topic may belong to several Courses.
 
@@ -774,6 +787,19 @@ class CategoryProxy(Category):
         proxy = True
 
 
+# --- A foreign key to a proxy model -------------------------------------
+# A Banner points to a CategoryProxy, not to Category: its foreign key reaches
+# the Category's row, yet names the proxy as its model, while saving a plain
+# Category sends the save's signals with Category as their sender.
+
+
+class Banner(models.Model):
+    title = models.CharField(max_length=200)
+    category = models.ForeignKey(
+        CategoryProxy, related_name="banners", on_delete=models.CASCADE
+    )
+
+
 # --- A proxy of a followed model ----------------------------------------
 # A TextPluginProxy is a TextPlugin under another class: saving or deleting
 # one writes or deletes the TextPlugin's row, which its Page may follow, yet
@@ -783,6 +809,46 @@ class CategoryProxy(Category):
 class TextPluginProxy(TextPlugin):
     class Meta:
         proxy = True
+
+
+# --- A proxy of a model followed through SET_NULL -----------------------
+# A TopicProxy is a Topic under another class: deleting one deletes the
+# Topic's row, which a Workshop may follow through its SET_NULL foreign key,
+# yet Django sends the delete's signals with the proxy, not Topic, as their
+# sender.
+
+
+class TopicProxy(Topic):
+    class Meta:
+        proxy = True
+
+
+# --- A SET_NULL foreign key to a proxy model ----------------------------
+# A Meetup may point to a ThemeProxy, not to Theme, or to nothing: its
+# foreign key reaches the Theme's row and is set to null when that row is
+# deleted, yet names the proxy as its model, while deleting a plain Theme
+# sends the delete's signals with Theme as their sender. Theme has a model
+# of its own, so that no other model's delete gains the Meetup's update.
+
+
+class Theme(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class ThemeProxy(Theme):
+    class Meta:
+        proxy = True
+
+
+class Meetup(models.Model):
+    title = models.CharField(max_length=200)
+    theme = models.ForeignKey(
+        ThemeProxy,
+        related_name="meetups",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
 
 
 # --- A multi-table child of a followed model ----------------------------

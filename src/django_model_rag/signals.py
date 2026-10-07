@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import Any, TypeAlias
 
 from django.conf import settings
@@ -12,11 +13,15 @@ from django.db.models import ForeignObjectRel, Model
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
-from django_model_rag.registry import rag
+from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
+# It carries the followers pointing to it from before the delete to after it.
+_FORWARD_FOLLOWERS_ATTRIBUTE = "_model_rag_forward_followers"
+# Few enough that no query carries more variables than SQLite accepts.
+_PKS_PER_QUERY = 500
 
 # a registered model following an instance, and the primary key of its row
 _Follower: TypeAlias = tuple[type[Model], Any]
@@ -37,12 +42,14 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
+def _followed_source_key(sender: type[Model], instance: Model) -> str:
+    """Return the source key a failure to resync the followers of ``instance`` logs."""
+    return model_source_key(concrete_model_of(sender), instance.pk)
+
+
 def _models_of_the_row(sender: type[Model]) -> tuple[type[Model], ...]:
     """Return the models a row of ``sender`` is a row of, nearest first."""
-    # A proxy sends signals under its own sender: it is its concrete model.
-    concrete_model = sender._meta.concrete_model
-    if concrete_model is None:
-        return ()
+    concrete_model = concrete_model_of(sender)
     # A multi-table child is a row of each of its parents too.
     return (concrete_model, *concrete_model._meta.get_parent_list())
 
@@ -81,13 +88,13 @@ def _group_pk(instance: Model, registered_model: type[Model]) -> Any:
     return getattr(instance, link.attname)
 
 
-def _send_group(send: Callable[[], None], source_key: str) -> None:
-    """Run ``send``, logging a failure with the ``source_key`` of the group."""
+def _send_group(send: Callable[[], None], synced_rows: str) -> None:
+    """Run ``send``, logging a failure that names the ``synced_rows``."""
     try:
         send()
     except Exception:
         # An error escaping a commit callback would break the commit.
-        logger.exception("Syncing %s failed", source_key)
+        logger.exception("Syncing %s failed", synced_rows)
 
 
 def _replace_group(registered_model: type[Model], pk: Any) -> None:
@@ -122,15 +129,17 @@ def remember_followers_before_save(
 ) -> None:
     """Keep the followers the row had before the save, for the commit to replace.
 
-    A save may move the row to other followers: the old ones change too.
+    A save may move the row to other followers: the old ones change too. Only
+    the followers the row points to can move; those pointing to the row through
+    their own foreign key still do after the save, and are found then.
     """
     # An instance built with an existing primary key is "adding" yet saved as an
     # UPDATE: only a missing primary key means there is no row before the save.
     if raw or instance.pk is None or not _signals_enabled():
         return
 
-    # A model nothing follows costs the save no query.
-    if not _is_followed(sender):
+    # A model followed only through foreign keys to it costs the save no query.
+    if not _is_followed_through_reverse_relations(sender):
         return
 
     committed_instance = _committed_instance(sender, instance.pk)
@@ -138,12 +147,16 @@ def remember_followers_before_save(
         setattr(
             instance,
             _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-            _followers(sender, committed_instance),
+            _reverse_followers(sender, committed_instance),
         )
 
 
 def sync_saved_instance(
-    sender: type[Model], instance: Model, raw: bool = False, **kwargs: Any
+    sender: type[Model],
+    instance: Model,
+    raw: bool = False,
+    created: bool = False,
+    **kwargs: Any,
 ) -> None:
     """Replace, once the transaction commits, the groups a saved instance changes.
 
@@ -158,24 +171,59 @@ def sync_saved_instance(
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
+    followers = _reverse_followers(sender, instance)
+    # A row just created has no follower pointing to it yet.
+    if not created:
+        followers += _forward_followers(sender, instance)
     _schedule_follower_replacements(
-        _followers(sender, instance)
-        + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+        followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, []),
+        _followed_source_key(sender, instance),
     )
 
 
-def _schedule_follower_replacements(followers: list[_Follower]) -> None:
-    """Replace, at the commit, the group of each of ``followers``, once each."""
+def _schedule_follower_replacements(
+    followers: list[_Follower], followed_source_key: str
+) -> None:
+    """Replace, at the commit, the groups of ``followers``, one batch per model.
+
+    A failure is logged with the ``followed_source_key`` of the row they follow.
+    """
+    pks_by_model: dict[type[Model], list[Any]] = {}
     # dict.fromkeys drops the duplicates and keeps the order.
     for follower_model, follower_pk in dict.fromkeys(followers):
-        transaction.on_commit(_group_replacer(follower_model, follower_pk))
+        pks_by_model.setdefault(follower_model, []).append(follower_pk)
+    for follower_model, follower_pks in pks_by_model.items():
+        transaction.on_commit(
+            _batch_replacer(follower_model, follower_pks, followed_source_key)
+        )
 
 
-def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered models following ``instance``, with their primary keys.
+def _batch_replacer(
+    registered_model: type[Model], pks: list[Any], followed_source_key: str
+) -> Callable[[], None]:
+    """Return a commit callback replacing the groups of ``registered_model``'s rows."""
 
-    Only the reverse foreign keys are looked at.
-    """
+    def replace_groups_as_committed() -> None:
+        for start in range(0, len(pks), _PKS_PER_QUERY):
+            chunk = pks[start : start + _PKS_PER_QUERY]
+            _send_group(
+                partial(_replace_groups, registered_model, chunk),
+                f"{registered_model._meta.label_lower} instances that follow "
+                f"{followed_source_key}",
+            )
+
+    return replace_groups_as_committed
+
+
+def _replace_groups(registered_model: type[Model], pks: list[Any]) -> None:
+    """Send the committed groups of ``registered_model`` for ``pks`` to the output."""
+    SyncPipeline(configured_output()).run_queryset(
+        registered_model._base_manager.filter(pk__in=pks)
+    )
+
+
+def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through a reverse relation."""
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
@@ -184,8 +232,64 @@ def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
     ]
 
 
+def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through foreign keys.
+
+    They reach it through one foreign key of their own, or a chain of them.
+    """
+    return [
+        (registered_model, follower_pk)
+        for registered_model in rag.registered_models()
+        for lookup, reached_model in _followed_foreign_key_lookups(
+            registered_model, sender
+        )
+        for follower_pk in _pks_reaching(
+            registered_model, lookup, _group_pk(instance, reached_model)
+        )
+    ]
+
+
+def _followed_foreign_key_lookups(
+    registered_model: type[Model], sender: type[Model]
+) -> list[tuple[str, type[Model]]]:
+    """Return the lookups through which ``registered_model`` reads ``sender``.
+
+    Each crosses one foreign key or a chain of them, and comes with the model it
+    reaches, one that ``sender``'s rows are rows of.
+    """
+    followed_models = _models_of_the_row(sender)
+    return [
+        (lookup, reached_model)
+        for lookup, reached_model in rag.foreign_key_lookups(registered_model)
+        # A foreign key may name a proxy: it reaches its concrete model's rows.
+        if concrete_model_of(reached_model) in followed_models
+    ]
+
+
+def _pks_reaching(
+    registered_model: type[Model], lookup: str, reached_pk: Any
+) -> list[Any]:
+    """Return the primary keys of the ``registered_model`` rows reaching a row.
+
+    Those rows reach, through ``lookup``, the row whose primary key is ``reached_pk``.
+    """
+    reaching_rows = registered_model._base_manager.filter(
+        **{f"{lookup}__pk": reached_pk}
+    )
+    return list(reaching_rows.values_list("pk", flat=True))
+
+
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
+    return any(
+        _followed_reverse_relations(registered_model, sender)
+        or _followed_foreign_key_lookups(registered_model, sender)
+        for registered_model in rag.registered_models()
+    )
+
+
+def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
+    """Return whether a registered model follows ``sender`` by a reverse relation."""
     return any(
         _followed_reverse_relations(registered_model, sender)
         for registered_model in rag.registered_models()
@@ -232,10 +336,9 @@ def _followed_reverse_relations(
 
 
 def _group_replacer(registered_model: type[Model], pk: Any) -> Callable[[], None]:
-    """Return a commit callback replacing the group of ``registered_model``'s row.
+    """Return a commit callback replacing the group of a saved instance's row.
 
-    ``pk`` is the primary key of that row: a saved instance's own, or a
-    follower's of a saved or deleted instance.
+    ``pk`` is the saved instance's primary key as a ``registered_model`` row.
     """
 
     def replace_group_as_committed() -> None:
@@ -245,6 +348,24 @@ def _group_replacer(registered_model: type[Model], pk: Any) -> Callable[[], None
         )
 
     return replace_group_as_committed
+
+
+def remember_followers_before_delete(
+    sender: type[Model], instance: Model, **kwargs: Any
+) -> None:
+    """Keep the followers pointing to the row, for the commit to replace.
+
+    Django may null their foreign key before the row goes: by post_delete they
+    no longer point to it.
+    """
+    if not _signals_enabled():
+        return
+
+    setattr(
+        instance,
+        _FORWARD_FOLLOWERS_ATTRIBUTE,
+        _forward_followers(sender, instance),
+    )
 
 
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
@@ -258,14 +379,16 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
-    followers = _followers(sender, instance)
+    followers = _reverse_followers(sender, instance) + instance.__dict__.pop(
+        _FORWARD_FOLLOWERS_ATTRIBUTE, []
+    )
     if not (nearest_registered_model_only or followers):
         return
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
     _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
-    _schedule_follower_replacements(followers)
+    _schedule_follower_replacements(followers, _followed_source_key(sender, instance))
 
 
 def _group_emptier(
