@@ -3449,6 +3449,64 @@ def test_adding_a_course_to_a_topic_following_its_courses_replaces_the_topics_gr
 
 
 @pytest.mark.django_db
+def test_adding_two_topics_to_a_course_replaces_the_group_of_each_topic_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its courses by the reverse
+    # many-to-many ``courses``: Course itself is not.
+    rag.register(Topic, follow=["courses"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    carving = Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    # A topic the course already covers: the add below does not change its
+    # group.
+    finishing = Topic.objects.create(
+        summary="Oils and waxes.", title="Finishing", slug="finishing"
+    )
+    basics.topics.add(finishing)
+
+    # Two topics added at once from the course's side: Django sends one
+    # m2m_changed with the course as its instance, and both topics among the
+    # primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking, carving)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of each added Topic as committed, each ending with the course's
+    # title. No group of the topic the course already covered.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+                title="Woodworking",
+            ),
+        ],
+        f"testapp.topic:{carving.pk}": [
+            NormalizedDocument(
+                text="Carving\n\nKnives and gouges.\n\nWoodworking basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=carving.pk,
+                title="Carving",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
