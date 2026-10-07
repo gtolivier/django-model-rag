@@ -138,16 +138,19 @@ def remember_followers_before_save(
     if raw or instance.pk is None or not _signals_enabled():
         return
 
-    # A model followed only through foreign keys to it costs the save no query.
-    if not _is_followed_through_reverse_relations(sender):
+    # A model followed by nothing costs the save no query.
+    if not _is_followed(sender):
         return
 
     committed_instance = _committed_instance(sender, instance.pk)
     if committed_instance is not None:
+        # The columns the followers name the row by may change with the save:
+        # those that named it before are found from the row as committed.
         setattr(
             instance,
             _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-            _reverse_followers(sender, committed_instance),
+            _reverse_followers(sender, committed_instance)
+            + _forward_followers(sender, committed_instance),
         )
 
 
