@@ -7,7 +7,13 @@ from typing import Any, TypeAlias
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Field, ForeignKey, ForeignObjectRel, Model
+from django.db.models import (
+    Field,
+    ForeignKey,
+    ForeignObject,
+    ForeignObjectRel,
+    Model,
+)
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete, pre_delete
 
@@ -477,7 +483,7 @@ def _models_reached_by_foreign_keys(
     reached: list[tuple[str, type[Model]]] = []
     for link in path_links(model, path):
         related_model = link.relation.related_model
-        if not isinstance(link.relation, ForeignKey) or not isinstance(
+        if not isinstance(link.relation, ForeignObject) or not isinstance(
             related_model, type
         ):
             break
