@@ -46,6 +46,7 @@ from tests.testapp.models import (
     TextPlugin,
     TextPluginProxy,
     Topic,
+    TopicProxy,
     Venue,
     Warehouse,
     Workshop,
@@ -940,6 +941,49 @@ def test_deleting_a_category_whose_following_products_cascade_sends_only_their_g
     assert sorted(sent_source_keys) == sorted(
         [f"testapp.product:{lamp_pk}", f"testapp.product:{bulb_pk}"]
     )
+
+
+@pytest.mark.django_db
+def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: neither Topic nor its proxy is.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's delete below is observed.
+    woodworking = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # Django sends pre_delete and post_delete with the proxy as their sender,
+    # not Topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        TopicProxy.objects.get(pk=woodworking.pk).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Workshop's group as committed: the topic's text is gone, only the
+    # Workshop's own title is left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.workshop:{pottery.pk}": [
+                NormalizedDocument(
+                    text="Pottery",
+                    source_app_label="testapp",
+                    source_model="workshop",
+                    source_pk=pottery.pk,
+                    title="Pottery",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db

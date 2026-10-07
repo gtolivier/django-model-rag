@@ -785,6 +785,18 @@ class TextPluginProxy(TextPlugin):
         proxy = True
 
 
+# --- A proxy of a model followed through SET_NULL -----------------------
+# A TopicProxy is a Topic under another class: deleting one deletes the
+# Topic's row, which a Workshop may follow through its SET_NULL foreign key,
+# yet Django sends the delete's signals with the proxy, not Topic, as their
+# sender.
+
+
+class TopicProxy(Topic):
+    class Meta:
+        proxy = True
+
+
 # --- A multi-table child of a followed model ----------------------------
 # An Album reaches its Tracks by the reverse foreign key ``tracks``. A
 # BonusTrack is a Track with a note of its own, in a table of its own: saving
