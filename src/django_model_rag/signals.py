@@ -20,6 +20,8 @@ _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
 _FORWARD_FOLLOWERS_ATTRIBUTE = "_model_rag_forward_followers"
+# Few enough that no query carries more variables than SQLite accepts.
+_PKS_PER_QUERY = 500
 
 # a registered model following an instance, and the primary key of its row
 _Follower: TypeAlias = tuple[type[Model], Any]
@@ -196,20 +198,16 @@ def _schedule_follower_replacements(
         )
 
 
-_PKS_PER_QUERY = 500
-
-
 def _batch_replacer(
     registered_model: type[Model], pks: list[Any], followed_source_key: str
 ) -> Callable[[], None]:
     """Return a commit callback replacing the groups of ``registered_model``'s rows."""
 
     def replace_groups_as_committed() -> None:
-        # cut so that no query carries more variables than SQLite accepts
         for start in range(0, len(pks), _PKS_PER_QUERY):
             chunk = pks[start : start + _PKS_PER_QUERY]
             _send_group(
-                partial(_run_rows, registered_model, chunk),
+                partial(_replace_groups, registered_model, chunk),
                 f"{registered_model._meta.label_lower} instances that follow "
                 f"{followed_source_key}",
             )
@@ -217,8 +215,8 @@ def _batch_replacer(
     return replace_groups_as_committed
 
 
-def _run_rows(registered_model: type[Model], pks: list[Any]) -> None:
-    """Replace the groups of the ``registered_model`` rows of ``pks``."""
+def _replace_groups(registered_model: type[Model], pks: list[Any]) -> None:
+    """Send the committed groups of ``registered_model`` for ``pks`` to the output."""
     SyncPipeline(configured_output()).run_queryset(
         registered_model._base_manager.filter(pk__in=pks)
     )
