@@ -243,6 +243,7 @@ def sync_changed_relation(
 
     through = kwargs["sender"]
     if action == _BEFORE_CLEAR:
+        _check_output_before_write(through, instance, model)
         _remember_cleared_pks(through, instance, model)
         return
 
