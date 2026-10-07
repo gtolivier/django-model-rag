@@ -39,6 +39,7 @@ from tests.testapp.models import (
     Exhibit,
     FeaturedProduct,
     Lesson,
+    Meetup,
     Notice,
     Offer,
     Page,
@@ -53,6 +54,7 @@ from tests.testapp.models import (
     SupplierProfile,
     TextPlugin,
     TextPluginProxy,
+    Theme,
     Topic,
     TopicProxy,
     Venue,
@@ -1517,6 +1519,49 @@ def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_
                     source_model="workshop",
                     source_pk=pottery.pk,
                     title="Pottery",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_theme_followed_through_a_set_null_key_to_its_proxy_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Meetup is registered, following its theme through its own
+    # foreign key, SET_NULL on delete, whose model is the proxy ThemeProxy:
+    # neither Theme nor its proxy is.
+    rag.register(Meetup, follow=["theme"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the theme's delete below is observed.
+    joinery = Theme.objects.create(name="Joinery")
+    evening = Meetup.objects.create(title="Evening meetup", theme_id=joinery.pk)
+
+    # A plain Theme, not its proxy: Django sends pre_delete and post_delete
+    # with Theme as their sender, while the Meetup's foreign key names the
+    # proxy.
+    with django_capture_on_commit_callbacks(execute=True):
+        joinery.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Meetup's group as committed: the theme's text is gone, only the
+    # Meetup's own title is left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.meetup:{evening.pk}": [
+                NormalizedDocument(
+                    text="Evening meetup",
+                    source_app_label="testapp",
+                    source_model="meetup",
+                    source_pk=evening.pk,
+                    title="Evening meetup",
                 ),
             ],
         }

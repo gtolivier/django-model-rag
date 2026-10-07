@@ -823,6 +823,34 @@ class TopicProxy(Topic):
         proxy = True
 
 
+# --- A SET_NULL foreign key to a proxy model ----------------------------
+# A Meetup may point to a ThemeProxy, not to Theme, or to nothing: its
+# foreign key reaches the Theme's row and is set to null when that row is
+# deleted, yet names the proxy as its model, while deleting a plain Theme
+# sends the delete's signals with Theme as their sender. Theme has a model
+# of its own, so that no other model's delete gains the Meetup's update.
+
+
+class Theme(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class ThemeProxy(Theme):
+    class Meta:
+        proxy = True
+
+
+class Meetup(models.Model):
+    title = models.CharField(max_length=200)
+    theme = models.ForeignKey(
+        ThemeProxy,
+        related_name="meetups",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+
+
 # --- A multi-table child of a followed model ----------------------------
 # An Album reaches its Tracks by the reverse foreign key ``tracks``. A
 # BonusTrack is a Track with a note of its own, in a table of its own: saving
