@@ -358,7 +358,7 @@ class SyncPipeline:
         if instance.pk is None:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
-        kept = _kept_queryset(type(instance), extractor)
+        kept = _kept_queryset(type(instance), extractor, instance._state.db)
         reloaded = _reloaded_instance(instance.pk, kept)
         self._output.replace(
             {_source_key(instance): _reloaded_documents(reloaded, extractor)}
