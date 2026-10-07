@@ -441,7 +441,9 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
     _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
-    _schedule_follower_replacements(followers, model_source_key(sender, instance.pk))
+    _schedule_follower_replacements(
+        followers, model_source_key(_concrete_model(sender), instance.pk)
+    )
 
 
 def _group_emptier(
