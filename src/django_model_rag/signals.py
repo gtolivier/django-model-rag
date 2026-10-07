@@ -247,9 +247,7 @@ def sync_changed_relation(
         return
 
     if action == _BEFORE_ADD:
-        # In autocommit the join row is committed as soon as it is written.
-        if _registered_models_following(type(instance), through):
-            check_output_configuration()
+        _check_output_before_add(through, instance)
         return
 
     if action not in _CHANGING_ACTIONS:
@@ -269,6 +267,16 @@ def sync_changed_relation(
             [(model, pk) for pk in _primary_keys_named(through, model, pk_set)],
             _followed_source_key(type(instance), instance),
         )
+
+
+def _check_output_before_add(through: type[Model], instance: Model) -> None:
+    """Fail before the join rows are written if the add would sync a bad output.
+
+    In autocommit the join rows are committed as soon as they are written:
+    after the add, a failing check would come too late to keep them out.
+    """
+    if _registered_models_following(type(instance), through):
+        check_output_configuration()
 
 
 def _registered_models_following(
