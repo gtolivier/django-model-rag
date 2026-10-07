@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable
+from functools import partial
 from typing import Any, TypeAlias
 
 from django.conf import settings
@@ -195,21 +196,32 @@ def _schedule_follower_replacements(
         )
 
 
+_PKS_PER_QUERY = 500
+
+
 def _batch_replacer(
     registered_model: type[Model], pks: list[Any], followed_source_key: str
 ) -> Callable[[], None]:
     """Return a commit callback replacing the groups of ``registered_model``'s rows."""
 
     def replace_groups_as_committed() -> None:
-        _send_group(
-            lambda: SyncPipeline(configured_output()).run_queryset(
-                registered_model._base_manager.filter(pk__in=pks)
-            ),
-            f"{registered_model._meta.label_lower} instances that follow "
-            f"{followed_source_key}",
-        )
+        # cut so that no query carries more variables than SQLite accepts
+        for start in range(0, len(pks), _PKS_PER_QUERY):
+            chunk = pks[start : start + _PKS_PER_QUERY]
+            _send_group(
+                partial(_run_rows, registered_model, chunk),
+                f"{registered_model._meta.label_lower} instances that follow "
+                f"{followed_source_key}",
+            )
 
     return replace_groups_as_committed
+
+
+def _run_rows(registered_model: type[Model], pks: list[Any]) -> None:
+    """Replace the groups of the ``registered_model`` rows of ``pks``."""
+    SyncPipeline(configured_output()).run_queryset(
+        registered_model._base_manager.filter(pk__in=pks)
+    )
 
 
 def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
