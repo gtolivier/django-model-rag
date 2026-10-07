@@ -340,7 +340,7 @@ def _remember_cleared_pks(
         if field.remote_field is not None
     }
     links = through._base_manager.filter(
-        **{foreign_key_to[instance._meta.concrete_model].name: instance.pk}
+        **{foreign_key_to[concrete_model_of(type(instance))].name: instance.pk}
     )
     setattr(
         instance,
