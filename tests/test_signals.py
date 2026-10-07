@@ -3107,6 +3107,51 @@ def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_
 
 
 @pytest.mark.django_db
+def test_deleting_a_course_followed_by_reverse_many_to_many_replaces_the_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its courses by the reverse
+    # many-to-many ``courses``: Course itself is not.
+    rag.register(Topic, follow=["courses"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the course's delete below is observed. The
+    # topic is covered by two courses, so that its group keeps the one left.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    joinery = Course.objects.create(title="Joinery")
+    basics.topics.add(woodworking)
+    joinery.topics.add(woodworking)
+
+    # The delete removes the course's link to the topic before the course's
+    # row goes: by post_delete, the topic no longer has the course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Topic's group as committed: the deleted course's title is gone, only
+    # the Topic's own title and summary and the other course's title are left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nJoinery",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_tag_of_a_photo_following_its_generic_relation_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
