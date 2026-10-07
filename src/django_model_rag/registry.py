@@ -189,14 +189,20 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
     Raises:
         ImproperlyConfigured: a ``depends_on`` name is not a relation, is a
             many-to-many (forward or reverse), is a generic foreign key or
-            generic relation, or crosses a reverse relation past its first link.
+            generic relation, or crosses a reverse relation past its first link,
+            or a name is given twice.
     """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported while they load
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
     accessors = relations_by_accessor(model)
+    seen: set[str] = set()
     for name in names:
+        if name in seen:
+            message = f"{model.__name__}: depends_on {name!r} is given twice"
+            raise ImproperlyConfigured(message)
+        seen.add(name)
         first, *rest = name.split(LOOKUP_SEP)
         relation = accessors.get(first)
         if relation is None:
