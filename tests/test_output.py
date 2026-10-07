@@ -537,6 +537,33 @@ def test_run_instance_extracts_the_instance_as_stored_not_its_unsaved_changes() 
     ]
 
 
+@pytest.mark.django_db
+def test_run_instance_finds_an_instance_whose_pk_is_given_in_another_type() -> None:
+    # Django's lookups coerce the key: filter(pk="1") finds the row of key 1.
+    # An instance built with its key as a string, as from a URL, is stored:
+    # an empty group for it would delete documents the database still backs.
+    stored = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+    lighting = Category(pk=str(stored.pk), name="Lighting")
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{stored.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=stored.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
 def _create_lighting_with_two_lamps() -> Category:
     """Create the Lighting category with its Desk lamp and Floor lamp products."""
     lighting = Category.objects.create(name="Lighting")
