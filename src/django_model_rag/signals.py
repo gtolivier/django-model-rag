@@ -174,14 +174,48 @@ def sync_saved_instance(
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
+    previous_followers = instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+    if not created and any(
+        _followed_foreign_key_lookups(registered_model, sender)
+        for registered_model in rag.registered_models()
+    ):
+        # Rows may be attached to it before the commit, by a write that sends
+        # no signal: its followers are looked up then.
+        transaction.on_commit(
+            partial(
+                _replace_followers_as_committed,
+                sender,
+                instance,
+                created,
+                previous_followers,
+            )
+        )
+        return
+
+    _schedule_follower_replacements(
+        _reverse_followers(sender, instance) + previous_followers,
+        _followed_source_key(sender, instance),
+    )
+
+
+def _replace_followers_as_committed(
+    sender: type[Model],
+    instance: Model,
+    created: bool,
+    previous_followers: list[_Follower],
+) -> None:
+    """Replace the groups of the followers the row has at the commit.
+
+    Rows attached after the save, in the same transaction, follow it too.
+    """
     followers = _reverse_followers(sender, instance)
     # A row just created has no follower pointing to it yet.
     if not created:
         followers += _forward_followers(sender, instance)
-    _schedule_follower_replacements(
-        followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, []),
-        _followed_source_key(sender, instance),
-    )
+    for replace_groups in _follower_replacers(
+        followers + previous_followers, _followed_source_key(sender, instance)
+    ):
+        replace_groups()
 
 
 def _schedule_follower_replacements(
@@ -191,14 +225,22 @@ def _schedule_follower_replacements(
 
     A failure is logged with the ``followed_source_key`` of the row they follow.
     """
+    for replace_groups in _follower_replacers(followers, followed_source_key):
+        transaction.on_commit(replace_groups)
+
+
+def _follower_replacers(
+    followers: list[_Follower], followed_source_key: str
+) -> list[Callable[[], None]]:
+    """Return one callback per model replacing the groups of its ``followers``."""
     pks_by_model: dict[type[Model], list[Any]] = {}
     # dict.fromkeys drops the duplicates and keeps the order.
     for follower_model, follower_pk in dict.fromkeys(followers):
         pks_by_model.setdefault(follower_model, []).append(follower_pk)
-    for follower_model, follower_pks in pks_by_model.items():
-        transaction.on_commit(
-            _batch_replacer(follower_model, follower_pks, followed_source_key)
-        )
+    return [
+        _batch_replacer(follower_model, follower_pks, followed_source_key)
+        for follower_model, follower_pks in pks_by_model.items()
+    ]
 
 
 def _batch_replacer(
