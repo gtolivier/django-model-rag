@@ -523,22 +523,21 @@ class Registry:
     def _delete_senders(self, model: type[Model]) -> list[type[Model]]:
         """List the senders whose deletions change the group of ``model``.
 
-        They are ``model`` and its proxies, and the models of the reverse
-        foreign keys ``model`` follows and their proxies.
+        They are ``model`` and its proxies, and the models of the reverse and
+        forward foreign keys ``model`` follows and their proxies.
         """
-        return (
-            _model_and_proxies(model)
-            + [
-                sender
-                for relation in self.followed_reverse_relations(model)
-                for sender in _model_and_proxies(relation.related_model)
-            ]
-            + [
-                sender
-                for foreign_key in self.followed_forward_foreign_keys(model)
-                for sender in _model_and_proxies(foreign_key.related_model)
-            ]
-        )
+        followed_models = [
+            relation.related_model
+            for relation in self.followed_reverse_relations(model)
+        ] + [
+            foreign_key.related_model
+            for foreign_key in self.followed_forward_foreign_keys(model)
+        ]
+        return _model_and_proxies(model) + [
+            sender
+            for followed_model in followed_models
+            for sender in _model_and_proxies(followed_model)
+        ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
         """List the reverse foreign keys ``model`` follows.

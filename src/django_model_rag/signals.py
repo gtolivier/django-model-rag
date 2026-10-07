@@ -17,6 +17,7 @@ from django_model_rag.registry import rag
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
+# It carries the followers pointing to it from before the delete to after it.
 _FORWARD_FOLLOWERS_ATTRIBUTE = "_model_rag_forward_followers"
 
 # a registered model following an instance, and the primary key of its row
@@ -207,15 +208,6 @@ def _batch_replacer(
         )
 
     return replace_groups_as_committed
-
-
-def _followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered models following ``instance``, with their primary keys.
-
-    Those following through a reverse foreign key, and those following through
-    their own foreign key to ``instance``.
-    """
-    return _reverse_followers(sender, instance) + _forward_followers(sender, instance)
 
 
 def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
