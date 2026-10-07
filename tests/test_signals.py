@@ -55,6 +55,7 @@ from tests.testapp.models import (
     Spotlight,
     Supplier,
     SupplierProfile,
+    Talk,
     TextPlugin,
     TextPluginProxy,
     Theme,
@@ -2855,6 +2856,59 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
                     source_model="seminar",
                     source_pk=acoustics.pk,
                     title="Acoustics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Talk is registered, reading its seminar's venue's name through a
+    # lookup path whose later link is the multi-column ForeignObject ``venue``:
+    # neither Seminar nor Venue is.
+    rag.register(Talk, fields=["title", "seminar__venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
+    # Another venue of the same city: only both columns together name a venue,
+    # so the talk of its seminar does not read the hall.
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    lighting = Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
+    Talk.objects.create(title="Spotlights", seminar=lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Both columns are the key the seminars name the venue by: the save
+        # changes neither, so the talks of the hall's seminars still read it.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the talks of the seminars at the hall: their
+    # group, with the venue's name after the Talk's own title; not the talk at
+    # the other venue.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.talk:{keynote.pk}": [
+                NormalizedDocument(
+                    text="Keynote\n\nHalle Tony Garnier",
+                    source_app_label="testapp",
+                    source_model="talk",
+                    source_pk=keynote.pk,
+                    title="Keynote",
                 ),
             ],
         }

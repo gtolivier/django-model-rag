@@ -927,3 +927,14 @@ class Seminar(models.Model):
         to_fields=["city", "name"],
         related_name="seminars",
     )
+
+
+# --- A foreign key to a model with a multi-column relation --------------
+# A Talk points to a Seminar by a plain foreign key, and the Seminar points to
+# its Venue through the multi-column ForeignObject ``venue``: a lookup path
+# from a Talk crosses that relation past its first link.
+
+
+class Talk(models.Model):
+    title = models.CharField(max_length=200)
+    seminar = models.ForeignKey(Seminar, related_name="talks", on_delete=models.CASCADE)
