@@ -97,6 +97,16 @@ def _reloaded_by_hook(pks: Iterable[Any], kept: QuerySet[Model]) -> dict[Any, Mo
     return {instance.pk: instance for instance in reloads}
 
 
+def _reloaded_instance(pk: Any, kept: QuerySet[Model]) -> Model | None:
+    """Reload the instance of ``pk`` from ``kept``, as get_queryset() hooked it.
+
+    What get_queryset() adds to it (an annotation...) then reaches extract().
+    The result is None when get_queryset() filters the instance out.
+    """
+    # one row is enough, even when a join in get_queryset() repeats the instance
+    return next(iter(kept.filter(pk=pk)[:1]), None)
+
+
 def _checked_queryset(
     hooked: object, extractor: BaseExtractor[Any], model: type[Model]
 ) -> QuerySet[Model]:
@@ -265,10 +275,9 @@ def _reloaded_groups(
         TypeError: extract() returned a document of another source.
     """
     reloaded = _reloaded_by_hook(pks, kept)
-    to_python = kept.model._meta.pk.to_python
     return {
         model_source_key(kept.model, pk): _reloaded_documents(
-            reloaded.get(to_python(pk)), extractor
+            reloaded.get(pk), extractor
         )
         for pk in pks
     }
@@ -350,4 +359,7 @@ class SyncPipeline:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
         kept = _kept_queryset(type(instance), extractor)
-        self._output.replace(_reloaded_groups([instance.pk], kept, extractor))
+        reloaded = _reloaded_instance(instance.pk, kept)
+        self._output.replace(
+            {_source_key(instance): _reloaded_documents(reloaded, extractor)}
+        )
