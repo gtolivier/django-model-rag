@@ -193,7 +193,11 @@ def sync_saved_instance(
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
-    previous_followers = instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+    # At post_save the instance is the row as saved: a change left unsaved in
+    # memory afterwards is not followed.
+    followers_at_save = _reverse_followers(sender, instance) + instance.__dict__.pop(
+        _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
+    )
     if not created and _is_followed_through_foreign_keys(sender):
         # Rows may be attached to it before the commit, by a write that sends
         # no signal: its followers are looked up then.
@@ -202,21 +206,20 @@ def sync_saved_instance(
                 _replace_followers_as_committed,
                 sender,
                 instance,
-                previous_followers,
+                followers_at_save,
             )
         )
         return
 
     _schedule_follower_replacements(
-        _reverse_followers(sender, instance) + previous_followers,
-        _followed_source_key(sender, instance),
+        followers_at_save, _followed_source_key(sender, instance)
     )
 
 
 def _replace_followers_as_committed(
     sender: type[Model],
     instance: Model,
-    previous_followers: list[_Follower],
+    followers_at_save: list[_Follower],
 ) -> None:
     """Replace the groups of the followers the row has at the commit.
 
@@ -224,13 +227,7 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        # The row as committed: a change left unsaved in memory is not followed.
-        committed_instance = _committed_instance(sender, instance.pk) or instance
-        followers = (
-            _reverse_followers(sender, committed_instance)
-            + _forward_followers(sender, instance)
-            + previous_followers
-        )
+        followers = _forward_followers(sender, instance) + followers_at_save
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
