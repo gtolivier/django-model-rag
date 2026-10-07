@@ -256,9 +256,35 @@ def sync_changed_relation(
             _CLEARED_PKS_ATTRIBUTE, set()
         )
         _schedule_follower_replacements(
-            [(model, pk) for pk in pk_set],
+            [
+                (model, pk)
+                for pk in _primary_keys_named(kwargs["sender"], model, pk_set)
+            ],
             _followed_source_key(type(instance), instance),
         )
+
+
+def _primary_keys_named(
+    through: type[Model], model: type[Model], keys: set[Any]
+) -> set[Any]:
+    """Return the primary keys of the ``model`` rows that ``keys`` name.
+
+    The through model's foreign key to ``model`` may point to a unique column
+    other than its primary key, and ``keys`` are then values of that column.
+    """
+    target_field = next(
+        field.target_field
+        for field in through._meta.fields
+        if isinstance(field, ForeignObject) and field.related_model is model
+    )
+    if target_field.primary_key:
+        return keys
+
+    return set(
+        model._base_manager.filter(**{f"{target_field.name}__in": keys}).values_list(
+            "pk", flat=True
+        )
+    )
 
 
 def _reaches_registered_rows(model: type[Model] | None) -> TypeGuard[type[Model]]:
