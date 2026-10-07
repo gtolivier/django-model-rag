@@ -554,7 +554,11 @@ class Registry:
         return _model_and_proxies(model) + [
             sender
             for followed_model in followed_models
-            for sender in _model_and_proxies(followed_model)
+            # A foreign key may name a proxy: Django deletes the concrete model's
+            # rows under the concrete model, or under any of its proxies.
+            for sender in _model_and_proxies(
+                followed_model._meta.concrete_model or followed_model
+            )
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
