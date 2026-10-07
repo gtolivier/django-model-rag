@@ -727,6 +727,22 @@ def test_depending_on_a_path_through_a_later_non_relation_fails() -> None:
         rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
 
 
+def test_depending_on_a_path_through_a_later_unknown_name_fails_unregistered() -> None:
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.body)
+
+    # TextPlugin.page is a foreign key, but Page has no field named nope.
+    name = "page__nope"
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+
+    assert TextPlugin not in rag.registered_models()
+
+
 def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
     class TextPluginExtractor(BaseExtractor[TextPlugin]):
         def extract(self, instance: TextPlugin) -> NormalizedDocument:
