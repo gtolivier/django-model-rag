@@ -2,7 +2,6 @@
 
 import inspect
 from collections.abc import Callable
-from itertools import islice
 from typing import Any, TypeAlias
 
 from django.apps import apps
@@ -564,15 +563,27 @@ class Registry:
             relation
             for relation in self._followed_relations(model)
             if isinstance(relation, ForeignKey)
-        ]
-        extractor = self.new_extractor(model)
-        if isinstance(extractor, DeclaredFieldsExtractor):
-            # A lookup path in the fields reads through its first foreign key.
-            for path in extractor.fields:
-                for link in islice(path_links(model, path), 1):
-                    if isinstance(link.relation, ForeignKey):
-                        foreign_keys.append(link.relation)
+        ] + self._lookup_path_foreign_keys(model)
         return list(dict.fromkeys(foreign_keys))
+
+    def _lookup_path_foreign_keys(
+        self, model: type[Model]
+    ) -> list["ForeignKey[Any, Any]"]:
+        """List the foreign keys of ``model`` its lookup path fields start with.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
+        if not isinstance(extractor, DeclaredFieldsExtractor):
+            return []
+
+        first_links = (next(path_links(model, path), None) for path in extractor.fields)
+        return [
+            link.relation
+            for link in first_links
+            if link is not None and isinstance(link.relation, ForeignKey)
+        ]
 
     def _followed_relations(
         self, model: type[Model]
