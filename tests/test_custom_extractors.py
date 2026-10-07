@@ -601,6 +601,29 @@ def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
         rag.register_extractor(TextPlugin, depends_on="page")(TextPluginExtractor)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        # TextPlugin.body exists but holds content: its changes are the
+        # model's own, not a relation's.
+        pytest.param("body", id="content-field"),
+        pytest.param("pgae", id="unknown-name"),
+    ],
+)
+def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
+    name: str,
+) -> None:
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.body)
+
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+
+
 @pytest.mark.django_db
 def test_extractor_for_a_model_registered_with_fields_fails_and_keeps_them() -> None:
     Category.objects.create(name="Tools")
