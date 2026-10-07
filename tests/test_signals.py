@@ -40,11 +40,13 @@ from tests.testapp.models import (
     FeaturedProduct,
     Lesson,
     Meetup,
+    Note,
     Notice,
     Offer,
     Page,
     PageIntro,
     Product,
+    Remark,
     Review,
     Seminar,
     Session,
@@ -1302,6 +1304,49 @@ def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_p
                 source_app_label="testapp",
                 source_model="page",
                 source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_remark_a_custom_extractor_depends_on_without_related_name_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Note is registered, with a custom extractor reading its
+    # remarks: depends_on names the reverse relation by its default accessor,
+    # "remark_set", while the relation's query name is "remark". Remark itself
+    # is not registered.
+    @rag.register_extractor(Note, depends_on=["remark_set"])
+    class NoteExtractor(BaseExtractor[Note]):
+        def extract(self, instance: Note) -> NormalizedDocument:
+            bodies = [remark.body for remark in instance.remark_set.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.title, *bodies])
+            )
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Note's own save never runs, so only the remark's save below is observed.
+    note = Note.objects.create(title="Workshop rules", body="Wear goggles.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Remark.objects.create(note=note, body="Gloves too.")
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Note's group, with the remark's text after its title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.note:{note.pk}": [
+            NormalizedDocument(
+                text="Workshop rules\n\nGloves too.",
+                source_app_label="testapp",
+                source_model="note",
+                source_pk=note.pk,
             ),
         ],
     }

@@ -4,6 +4,7 @@ from typing import TypeVar
 
 import pytest
 from django.db import connection
+from django.db.models import Model
 
 from django_model_rag import rag
 from tests.recording import PruneOnlyOutput, ReplaceOnlyOutput, TrackedRecordingOutput
@@ -84,4 +85,20 @@ def restored_registry() -> Iterator[None]:
     yield
     for model in rag.registered_models():
         if model not in registered_before:
-            rag.unregister(model)
+            _forget(model)
+
+
+def _forget(model: type[Model]) -> None:
+    """Unregister ``model``, even one a failed registration left half-registered.
+
+    A registration that raises once the model is recorded (while it connects
+    its delete listeners, say) may leave a model ``unregister`` fails on too:
+    it is then dropped from the registry directly, so that the failure stays
+    the failing test's own instead of breaking every test after it.
+    """
+    try:
+        rag.unregister(model)
+    # Any exception: whatever broke the registration breaks its undoing too.
+    except Exception:
+        rag._registrations.pop(model, None)
+        rag._dependencies.pop(model, None)
