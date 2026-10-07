@@ -3600,6 +3600,37 @@ def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_co
 
 
 @pytest.mark.django_db
+def test_adding_a_topic_to_a_course_neither_side_following_the_link_defers_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only what each side follows can keep the add
+    # from deferring anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Both sides of the link are registered, neither following it: the Course
+    # does not follow its topics, nor the Topic its courses.
+    rag.register(Course)
+    rag.register(Topic)
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # The commit callbacks run: one sending anything would reach the output.
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        basics.topics.add(woodworking)
+
+    # The link is part of neither group: nothing is deferred to the commit,
+    # and nothing reaches the output.
+    assert callbacks == []
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
