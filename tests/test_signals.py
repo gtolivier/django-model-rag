@@ -1291,6 +1291,52 @@ def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_
 
 
 @pytest.mark.django_db
+def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the TextPlugin is registered, with a custom extractor reading its
+    # page's title: depends_on names the page, whose saves change its
+    # documents. Page itself is not registered.
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+    # Created outside the captured callbacks: its commit callbacks never run,
+    # and it has no plugin yet.
+    about = Page.objects.create(title="About us", slug="about-us")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Attached after the page's save, in the same transaction, by a write
+        # that sends no signal: only the page's save is observed.
+        (chairs,) = TextPlugin.objects.bulk_create(
+            [TextPlugin(page=about, body="We build chairs by hand.")]
+        )
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The plugin attached after the save is a follower of the
+    # page at the commit, so its group is replaced, with the page's new title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
