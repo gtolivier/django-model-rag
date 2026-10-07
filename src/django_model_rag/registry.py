@@ -239,7 +239,7 @@ def _require_relation(
     relation = accessors.get(first)
     if relation is None:
         raise _not_a_relation(model, name)
-    # a forward many-to-many is a dependency only as a one-link path
+    # a many-to-many, forward or reverse, is a dependency only as a one-link path
     if rest:
         _require_not_many_to_many(model, name, relation)
     related = _require_related_model(model, name, relation)
@@ -744,8 +744,8 @@ class Registry:
 
         ``depends_on`` names the relations whose saves change the documents
         of ``model``: a forward foreign key or one-to-one, a reverse relation
-        as a one-link path, or a lookup path through forward foreign keys or
-        one-to-ones.
+        or a many-to-many as a one-link path, or a lookup path through forward
+        foreign keys or one-to-ones.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered, checked
@@ -755,9 +755,9 @@ class Registry:
                 ``depends_on`` is not a list or a tuple, or is given while
                 models are loading; an item of ``depends_on`` is not a string,
                 or a name in it is given twice; a link of it is not a
-                relation, is a many-to-many (forward or reverse), a generic
-                foreign key or a generic relation; or a path of several links
-                crosses a reverse relation.
+                relation, is a many-to-many in a path of several links, a
+                generic foreign key or a generic relation; or a path of several
+                links crosses a reverse relation.
         """
 
         def decorator(
