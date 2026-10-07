@@ -2767,6 +2767,65 @@ def test_deleting_a_seminar_of_a_venue_following_by_multi_column_replaces_the_ve
 
 
 @pytest.mark.django_db
+def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_venues(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, following its seminars by the reverse of
+    # the multi-column ForeignObject ``venue``: Seminar itself is not.
+    rag.register(Venue, fields=["name"], follow=["seminars"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's move below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Another venue of the same city: the move changes only the name column,
+    # so the city column alone cannot tell the two venues apart.
+    transbordeur = Venue.objects.create(city="Lyon", name="Transbordeur")
+    moved_seminar = Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_seminar.venue_name = "Transbordeur"
+        moved_seminar.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Venue is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Venues' groups as committed: the venue it left keeps only its
+    # remaining seminar's text, the venue it joined gains the moved seminar's
+    # text, each after the Venue's own name.
+    assert received == {
+        f"testapp.venue:{hall.pk}": [
+            NormalizedDocument(
+                text="Halle Tony Garnier\n\nAcoustics\n\nLyon\n\nHalle Tony Garnier",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=hall.pk,
+                title="Halle Tony Garnier",
+            ),
+        ],
+        f"testapp.venue:{transbordeur.pk}": [
+            NormalizedDocument(
+                text="Transbordeur\n\nStage lighting\n\nLyon\n\nTransbordeur",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=transbordeur.pk,
+                title="Transbordeur",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_seminars(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
