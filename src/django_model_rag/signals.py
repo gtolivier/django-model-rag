@@ -16,7 +16,7 @@ from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
-_CHANGING_ACTIONS = frozenset({"post_add", "post_remove"})
+_CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
