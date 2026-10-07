@@ -331,9 +331,11 @@ class MyOutput:
   extractor's queryset filters out, is removed. Only the instance's primary
   key is read: it is reloaded through its extractor's queryset, and the
   documents are those of the row as stored, not of unsaved changes made to
-  `instance`; a row deleted since is sent as an empty group. It never
-  prunes, and sends nothing if the extractor raises. An unsaved instance
-  (no primary key) raises `ValueError`.
+  `instance`; a row deleted since is sent as an empty group. The reload
+  reads from the database the router picks for reads of the model, not
+  from the one `instance` was loaded from. It never prunes, and sends
+  nothing if the extractor raises. An unsaved instance (no primary key)
+  raises `ValueError`.
 - **`run_queryset(queryset)`** sends the groups of the instances of
   `queryset` only, a queryset of a registered model, in batches: one
   `replace()` per chunk of 1000 instances, in primary key order whatever
@@ -559,9 +561,10 @@ own: in a `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
 of them, which reads them at the commit and sends them in batches — or
 `run_instance(instance)` for a single one, which reloads it at the commit
-too: an instance loaded earlier in the transaction is fine to pass. Catch and log what the callback raises, as the signals do, or pass `robust=True` to `on_commit`: otherwise an error reaches
-the code that committed, after the commit, and the callbacks queued after
-it do not run.
+too: an instance loaded earlier in the transaction is fine to pass. Catch
+and log what the callback raises, as the signals do, or pass `robust=True`
+to `on_commit`: otherwise an error reaches the code that committed, after
+the commit, and the callbacks queued after it do not run.
 
 **Failures.** An extractor, an output or a database error reloading the
 instance that raises at the commit is logged with `logger.exception` on the

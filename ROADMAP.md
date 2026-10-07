@@ -563,10 +563,13 @@ reference.
     `run()` and `run_queryset()`, which extract what the database holds;
     an instance loaded earlier in a transaction can be passed at the
     commit. A row deleted since gets an empty group, as before.
-  - **Not changed here**: the signals still reload the instance with the
-    base manager before calling `run_instance()`, which reloads it again:
-    two queries per commit, as before. The reload reads from the
-    database the router picks, as the check did (10c).
+  - **Two queries per commit, as before**: the signals still check with
+    the base manager that the row exists before calling `run_instance()`
+    (a row deleted since is left to the delete's own callback), but that
+    check now loads the primary key only.
+  - **Not changed here**: the reload reads from the database the router
+    picks, as the check did, not from the one the instance was loaded
+    from (10c).
 - [x] **11a. Resync the instances that follow a reverse relation.** Saving
   or deleting an instance that a registered model reaches through a reverse
   foreign key or reverse one-to-one it follows — a text plugin of a page
