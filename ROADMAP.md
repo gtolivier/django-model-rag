@@ -253,6 +253,12 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
+What is left, in the order planned: 11d, the one gap left in `follow`;
+then 12a, which rewires the signals, so the `m2m_changed` receiver of 11d
+joins the new wiring rather than being rewired after it; then 12b, which
+needs the `MODEL_RAG_SYNC` setting of 12a. 10c stays postponed, and
+11c-quater is not planned.
+
 - [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
   over every registered model, in registration order, or over the models it
   is given as `app_label.model_name`, into the output built from
@@ -747,14 +753,16 @@ reference.
     looks up no follower — a null foreign key does not reach it.
   - **Left out**: rows attached by a write that sends no signal to a row
     created in the same transaction are not resynced — see 11c-quater.
-- [ ] **11c-quater. Followers looked up at the commit after a creation.**
-  11c-ter keeps the lookup at the save for a creation, so a row attached
+- **11c-quater. Followers looked up at the commit after a creation** — not
+  planned unless a project runs into it. 11c-ter keeps the lookup at the save for a creation, so a row attached
   by `bulk_create()` or `QuerySet.update()` to a row created in the same
   transaction is not resynced. Looking them up at the commit after a
   creation too would cost one query per insert of a model followed through
   foreign keys, where a creation costs none today: the test
   `test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing`
-  and the README's promise on the cost of a creation change with it.
+  and the README's promise on the cost of a creation change with it. A
+  query on every insert is too high a price for a corner case the README
+  already documents, and that `sync_model_rag` repairs.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.
