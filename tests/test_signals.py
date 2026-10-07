@@ -2671,44 +2671,53 @@ def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
 
 
 @pytest.mark.django_db
-def test_a_seminar_of_a_venue_following_a_reverse_multi_column_relation_sends_nothing(
+def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venue(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
-    # A working output, so that only the kind of relation can keep the save
-    # and the delete from sending anything.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Only the Venue is registered, following its seminars by the reverse of
     # the multi-column ForeignObject ``venue``: Seminar itself is not.
-    rag.register(Venue, follow=["seminars"])
+    rag.register(Venue, fields=["name"], follow=["seminars"])
 
-    # Created outside the captured callbacks: the commit callback of the
-    # Venue's own save never runs, so only the seminar's saves and delete
-    # below are observed.
-    Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Another venue of the same city, with a seminar of its own: only both
+    # columns together name a venue, so a seminar at the hall is not one of
+    # its seminars.
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
 
-    # The commit callbacks run, and an error escaping them would fail the test.
     with django_capture_on_commit_callbacks(execute=True):
-        seminar = Seminar.objects.create(
+        Seminar.objects.create(
             title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
         )
-        seminar.title = "Acoustics of large halls"
-        seminar.save()
-        seminar.delete()
-        # A ForeignObject has no database constraint: a seminar may name a
-        # venue no Venue row matches.
-        stray_seminar = Seminar.objects.create(
-            title="Lighting", venue_city="Paris", venue_name="Nowhere"
-        )
-        stray_seminar.title = "Stage lighting"
-        stray_seminar.save()
-        stray_seminar.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
 
-    # A multi-column relation is left out of the followed relations: the
-    # seminars' saves and deletes send nothing for the Venue.
-    assert _replaced(built_outputs) == []
+    # The group of the venue the seminar's two columns name, with the seminar's
+    # text fields, title first, after the Venue's own name; not the group of
+    # the other venue of the same city.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.venue:{hall.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Halle Tony Garnier\n\nAcoustics\n\nLyon\n\nHalle Tony Garnier"
+                    ),
+                    source_app_label="testapp",
+                    source_model="venue",
+                    source_pk=hall.pk,
+                    title="Halle Tony Garnier",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
