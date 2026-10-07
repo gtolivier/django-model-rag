@@ -342,12 +342,11 @@ def _remember_cleared_pks(
         if isinstance(field, ForeignObject)
     }
     # The foreign key may name the instance by a unique column other than its
-    # primary key.
-    # A multi-table child names the row of the parent holding the links.
-    instance_model = concrete_model_of(type(instance))
+    # primary key, and a multi-table child by the row of the parent holding the
+    # links.
     instance_key = next(
         foreign_key_to[candidate]
-        for candidate in (instance_model, *instance_model._meta.get_parent_list())
+        for candidate in _models_of_the_row(type(instance))
         if candidate in foreign_key_to
     )
     links = through._base_manager.filter(
