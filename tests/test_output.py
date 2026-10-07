@@ -564,6 +564,26 @@ def test_run_instance_finds_an_instance_whose_pk_is_given_in_another_type() -> N
     ]
 
 
+@pytest.mark.django_db
+def test_run_instance_hands_an_empty_group_for_an_instance_whose_row_was_deleted() -> (
+    None
+):
+    # A post_delete handler or a queued task may run an instance whose row is
+    # gone: the empty group deletes what the output still holds for it, where
+    # extracting the stale instance in memory would index a row no reader of
+    # the table sees. The row is deleted through the queryset, which leaves the
+    # instance its primary key; it is deleted before the model is registered,
+    # so the package's signals hand nothing over for it.
+    lighting = Category.objects.create(name="Lighting")
+    Category.objects.filter(pk=lighting.pk).delete()
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [{f"testapp.category:{lighting.pk}": []}]
+
+
 def _create_lighting_with_two_lamps() -> Category:
     """Create the Lighting category with its Desk lamp and Floor lamp products."""
     lighting = Category.objects.create(name="Lighting")
