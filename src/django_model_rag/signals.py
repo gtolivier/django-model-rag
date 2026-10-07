@@ -221,21 +221,50 @@ def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
 
 
 def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through foreign keys.
+
+    They reach it through one foreign key of their own, or a chain of them.
+    """
+    return _foreign_key_followers(sender, instance) + _deep_lookup_followers(
+        sender, instance
+    )
+
+
+def _foreign_key_followers(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered rows following ``instance`` through their foreign key."""
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         for foreign_key in _followed_foreign_keys(registered_model, sender)
         for follower_pk in _pks_pointing_to(registered_model, foreign_key, instance)
-    ] + [
+    ]
+
+
+def _deep_lookup_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows reaching ``instance`` through a foreign key chain."""
+    followed_models = _models_of_the_row(sender)
+    return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         for lookup, reached_model in rag.deep_lookup_models(registered_model)
-        if reached_model in _models_of_the_row(sender)
-        for follower_pk in registered_model._base_manager.filter(
-            **{f"{lookup}__pk": _group_pk(instance, reached_model)}
-        ).values_list("pk", flat=True)
+        if reached_model in followed_models
+        for follower_pk in _pks_reaching(
+            registered_model, lookup, _group_pk(instance, reached_model)
+        )
     ]
+
+
+def _pks_reaching(
+    registered_model: type[Model], lookup: str, reached_pk: Any
+) -> list[Any]:
+    """Return the primary keys of the ``registered_model`` rows reaching a row.
+
+    Those rows reach, through ``lookup``, the row whose primary key is ``reached_pk``.
+    """
+    reaching_rows = registered_model._base_manager.filter(
+        **{f"{lookup}__pk": reached_pk}
+    )
+    return list(reaching_rows.values_list("pk", flat=True))
 
 
 def _followed_foreign_keys(

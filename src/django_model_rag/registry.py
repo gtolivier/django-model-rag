@@ -343,6 +343,26 @@ def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
     return found
 
 
+def _models_reached_by_foreign_keys(
+    model: type[Model], path: str
+) -> list[tuple[str, type[Model]]]:
+    """List the models the leading foreign keys of ``path`` reach from ``model``.
+
+    Each is paired with the lookup, from ``model``, that reaches it.
+    """
+    names: list[str] = []
+    reached: list[tuple[str, type[Model]]] = []
+    for link in path_links(model, path):
+        related_model = link.relation.related_model
+        if not isinstance(link.relation, ForeignKey) or not isinstance(
+            related_model, type
+        ):
+            break
+        names.append(link.name)
+        reached.append((LOOKUP_SEP.join(names), related_model))
+    return reached
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -574,23 +594,12 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        extractor = self.new_extractor(model)
-        if not isinstance(extractor, DeclaredFieldsExtractor):
-            return []
-
-        reached: list[tuple[str, type[Model]]] = []
-        for path in [*extractor.fields, *extractor.single_fields]:
-            names: list[str] = []
-            for link in path_links(model, path):
-                related_model = link.relation.related_model
-                if not isinstance(link.relation, ForeignKey) or not isinstance(
-                    related_model, type
-                ):
-                    break
-                names.append(link.name)
-                if len(names) > 1:
-                    reached.append((LOOKUP_SEP.join(names), related_model))
-        return reached
+        return [
+            reached
+            for path in self._lookup_paths(model)
+            # The first model is reached through one foreign key only.
+            for reached in _models_reached_by_foreign_keys(model, path)[1:]
+        ]
 
     def _lookup_path_foreign_keys(
         self, model: type[Model]
@@ -600,17 +609,25 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        extractor = self.new_extractor(model)
-        if not isinstance(extractor, DeclaredFieldsExtractor):
-            return []
-
-        paths = [*extractor.fields, *extractor.single_fields]
-        first_links = (next(path_links(model, path), None) for path in paths)
+        first_links = (
+            next(path_links(model, path), None) for path in self._lookup_paths(model)
+        )
         return [
             link.relation
             for link in first_links
             if link is not None and isinstance(link.relation, ForeignKey)
         ]
+
+    def _lookup_paths(self, model: type[Model]) -> list[str]:
+        """List the lookup paths ``model`` declares in fields and single_fields.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
+        if not isinstance(extractor, DeclaredFieldsExtractor):
+            return []
+        return [*extractor.fields, *extractor.single_fields]
 
     def _followed_relations(
         self, model: type[Model]
