@@ -2721,6 +2721,52 @@ def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venu
 
 
 @pytest.mark.django_db
+def test_deleting_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venue(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, following its seminars by the reverse of
+    # the multi-column ForeignObject ``venue``: Seminar itself is not.
+    rag.register(Venue, fields=["name"], follow=["seminars"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's delete below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    deleted_seminar = Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        deleted_seminar.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Venue's group as committed: the deleted seminar's text is gone, the
+    # remaining seminar's text fields stay after the Venue's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.venue:{hall.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Halle Tony Garnier\n\nAcoustics\n\nLyon\n\nHalle Tony Garnier"
+                    ),
+                    source_app_label="testapp",
+                    source_model="venue",
+                    source_pk=hall.pk,
+                    title="Halle Tony Garnier",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_seminars(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
