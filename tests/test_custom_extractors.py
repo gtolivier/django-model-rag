@@ -19,7 +19,6 @@ from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_docume
 from tests.testapp.models import (
     AccordionItem,
     Category,
-    Course,
     Membership,
     Page,
     Photo,
@@ -666,7 +665,6 @@ def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
 @pytest.mark.parametrize(
     ("model", "name"),
     [
-        pytest.param(Course, "topics", id="forward"),
         pytest.param(Topic, "courses", id="reverse"),
     ],
 )
