@@ -341,8 +341,8 @@ reference.
     or a parent that a custom extractor reads — goes stale when that model
     changes, unless the dependent instances are found and re-extracted.
     Reverse relations in `follow` are done (11a), forward foreign keys and
-    one-to-ones in `follow` and in lookup paths too (11b); a custom
-    extractor's dependencies (11c) and many-to-many relations (11d) are
+    one-to-ones in `follow` and in lookup paths too (11b), a custom
+    extractor's dependencies too (11c); many-to-many relations (11d) are
     not. Until then, a project connects its own receiver that runs
     `run_queryset` on the dependent instances, and the command repairs the
     rest;
@@ -650,12 +650,28 @@ reference.
     batching per transaction belongs with 12b; each save now also walks
     the lookup paths of every registered model, which the index of the
     followed senders left open by 11a would avoid.
-- [ ] **11c. `depends_on` for custom extractors.** A custom extractor
-  (`register_extractor`) has no `follow`: a `depends_on` declaration, as
-  lookup paths from the registered model, would resync it as 11a and 11b
-  do. Followers that the model's `get_queryset()` filters out are then
-  sent with an empty group — a case only a custom extractor can reach
-  through the public API.
+- [x] **11c. `depends_on` for custom extractors.** A custom extractor
+  (`register_extractor`) has no `follow`: it declares what its documents
+  read with `@rag.register_extractor(TextPlugin, depends_on=["page"])`,
+  and a save or a delete of what it names resyncs it as 11a and 11b do.
+  Requested by the demo project, whose receiver resyncing the text plugins
+  of a saved page can now go. Decided in this feature:
+  - **Three shapes of path**, from the registered model: a forward foreign
+    key or one-to-one (`"page"`), a reverse foreign key or one-to-one on
+    its own, by its accessor (`"text_plugins"` on `Page`), or a path
+    through forward foreign keys only (`"product__category"`).
+  - **Same machinery as 11a and 11b**: a forward path joins the lookup
+    paths of 11b, a reverse relation the followed relations of 11a, with
+    their batching, delete handling (`pre_delete`, before a `SET_NULL`),
+    proxies and listeners connected only while needed. Followers that the
+    model's `get_queryset()` filters out are sent with an empty group.
+  - **Refused at registration**, with `ImproperlyConfigured`: `depends_on`
+    that is not a list or a tuple, a link that is not a relation (an
+    unknown name or a content field, at any depth), a many-to-many forward
+    or reverse (left for 11d), a generic foreign key or `GenericRelation`,
+    a path of several links that crosses a reverse relation (first link
+    included), a path given twice, and `depends_on` while models are still
+    loading. Every check runs before anything is registered.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.
