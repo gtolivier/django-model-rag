@@ -8,7 +8,7 @@ from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import Field, ForeignKey, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, pre_delete
 
 from django_model_rag.apps import DISCOVERED_MODULE
 from django_model_rag.extractors import (
@@ -518,6 +518,7 @@ class Registry:
         for sender in senders:
             if sender not in kept:
                 post_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
+                pre_delete.disconnect(dispatch_uid=_delete_uid(sender), sender=sender)
 
     def _delete_senders(self, model: type[Model]) -> list[type[Model]]:
         """List the senders whose deletions change the group of ``model``.
@@ -525,11 +526,19 @@ class Registry:
         They are ``model`` and its proxies, and the models of the reverse
         foreign keys ``model`` follows and their proxies.
         """
-        return _model_and_proxies(model) + [
-            sender
-            for relation in self.followed_reverse_relations(model)
-            for sender in _model_and_proxies(relation.related_model)
-        ]
+        return (
+            _model_and_proxies(model)
+            + [
+                sender
+                for relation in self.followed_reverse_relations(model)
+                for sender in _model_and_proxies(relation.related_model)
+            ]
+            + [
+                sender
+                for foreign_key in self.followed_forward_foreign_keys(model)
+                for sender in _model_and_proxies(foreign_key.related_model)
+            ]
+        )
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
         """List the reverse foreign keys ``model`` follows.
@@ -579,6 +588,7 @@ class Registry:
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
+            remember_followers_before_delete,
             sync_deleted_instance,
         )
 
@@ -586,6 +596,11 @@ class Registry:
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):
+            pre_delete.connect(
+                remember_followers_before_delete,
+                sender=sender,
+                dispatch_uid=_delete_uid(sender),
+            )
             post_delete.connect(
                 sync_deleted_instance, sender=sender, dispatch_uid=_delete_uid(sender)
             )

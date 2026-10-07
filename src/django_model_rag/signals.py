@@ -17,6 +17,7 @@ from django_model_rag.registry import rag
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
+_FORWARD_FOLLOWERS_ATTRIBUTE = "_model_rag_forward_followers"
 
 # a registered model following an instance, and the primary key of its row
 _Follower: TypeAlias = tuple[type[Model], Any]
@@ -342,6 +343,24 @@ def _group_replacer(registered_model: type[Model], pk: Any) -> Callable[[], None
     return replace_group_as_committed
 
 
+def remember_followers_before_delete(
+    sender: type[Model], instance: Model, **kwargs: Any
+) -> None:
+    """Keep the followers pointing to the row, for the commit to replace.
+
+    Django may null their foreign key before the row goes: by post_delete they
+    no longer point to it.
+    """
+    if not _signals_enabled():
+        return
+
+    setattr(
+        instance,
+        _FORWARD_FOLLOWERS_ATTRIBUTE,
+        _forward_followers(sender, instance),
+    )
+
+
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Empty the group of a deleted instance, and replace those following it.
 
@@ -353,7 +372,9 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
-    followers = _followers(sender, instance)
+    followers = _reverse_followers(sender, instance) + instance.__dict__.pop(
+        _FORWARD_FOLLOWERS_ATTRIBUTE, []
+    )
     if not (nearest_registered_model_only or followers):
         return
 
