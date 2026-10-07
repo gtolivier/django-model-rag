@@ -567,9 +567,11 @@ reference.
     the base manager that the row exists before calling `run_instance()`
     (a row deleted since is left to the delete's own callback), but that
     check now loads the primary key only.
-  - **Not changed here**: the reload reads from the database the router
-    picks, as the check did, not from the one the instance was loaded
-    from (10c).
+  - **The instance's database**: the reload reads from the database the
+    instance was loaded from (`instance._state.db`), as `run_queryset()`
+    reads from its queryset's; the router picks it for an instance built
+    by hand. Before, the check read from the router's database. The
+    signals still reload from the router's database (10c).
 - [x] **11a. Resync the instances that follow a reverse relation.** Saving
   or deleting an instance that a registered model reaches through a reverse
   foreign key or reverse one-to-one it follows — a text plugin of a page

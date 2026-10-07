@@ -332,8 +332,9 @@ class MyOutput:
   key is read: it is reloaded through its extractor's queryset, and the
   documents are those of the row as stored, not of unsaved changes made to
   `instance`; a row deleted since is sent as an empty group. The reload
-  reads from the database the router picks for reads of the model, not
-  from the one `instance` was loaded from. It never prunes, and sends
+  reads from the database `instance` was loaded from, as `run_queryset`
+  reads from its queryset's, or the one the router picks for an instance
+  built by hand. It never prunes, and sends
   nothing if the extractor raises. An unsaved instance (no primary key)
   raises `ValueError`.
 - **`run_queryset(queryset)`** sends the groups of the instances of
