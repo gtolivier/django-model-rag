@@ -849,6 +849,49 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
 
 
 @pytest.mark.django_db
+def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed.
+    woodworking = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # The delete sets the workshop's foreign key to null before the topic's
+    # row goes: by post_delete, the workshop no longer points to the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Workshop's group as committed: the topic's text is gone, only the
+    # Workshop's own title is left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.workshop:{pottery.pk}": [
+                NormalizedDocument(
+                    text="Pottery",
+                    source_app_label="testapp",
+                    source_model="workshop",
+                    source_pk=pottery.pk,
+                    title="Pottery",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
