@@ -175,10 +175,7 @@ def sync_saved_instance(
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
     previous_followers = instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
-    if not created and any(
-        _followed_foreign_key_lookups(registered_model, sender)
-        for registered_model in rag.registered_models()
-    ):
+    if not created and _is_followed_through_foreign_keys(sender):
         # Rows may be attached to it before the commit, by a write that sends
         # no signal: its followers are looked up then.
         transaction.on_commit(
@@ -186,7 +183,6 @@ def sync_saved_instance(
                 _replace_followers_as_committed,
                 sender,
                 instance,
-                created,
                 previous_followers,
             )
         )
@@ -201,19 +197,19 @@ def sync_saved_instance(
 def _replace_followers_as_committed(
     sender: type[Model],
     instance: Model,
-    created: bool,
     previous_followers: list[_Follower],
 ) -> None:
     """Replace the groups of the followers the row has at the commit.
 
     Rows attached after the save, in the same transaction, follow it too.
     """
-    followers = _reverse_followers(sender, instance)
-    # A row just created has no follower pointing to it yet.
-    if not created:
-        followers += _forward_followers(sender, instance)
+    followers = (
+        _reverse_followers(sender, instance)
+        + _forward_followers(sender, instance)
+        + previous_followers
+    )
     for replace_groups in _follower_replacers(
-        followers + previous_followers, _followed_source_key(sender, instance)
+        followers, _followed_source_key(sender, instance)
     ):
         replace_groups()
 
@@ -326,9 +322,16 @@ def _pks_reaching(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
-    return any(
+    return _is_followed_through_foreign_keys(sender) or any(
         _followed_reverse_relations(registered_model, sender)
-        or _followed_foreign_key_lookups(registered_model, sender)
+        for registered_model in rag.registered_models()
+    )
+
+
+def _is_followed_through_foreign_keys(sender: type[Model]) -> bool:
+    """Return whether a registered model reads ``sender``'s rows by foreign keys."""
+    return any(
+        _followed_foreign_key_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
