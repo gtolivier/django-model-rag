@@ -239,17 +239,20 @@ def _require_no_later_reverse_relation(
     """Fail if ``segments``, the rest of ``model``'s ``depends_on`` path ``name``
     walked from ``related``, cross a reverse relation.
 
-    The walk stops at the first segment that is not a relation, or whose
-    related model is unknown.
+    The walk stops at the first segment whose related model is unknown.
 
     Raises:
-        ImproperlyConfigured: a segment is a reverse relation.
+        ImproperlyConfigured: a segment is not a relation, or is a reverse
+            relation.
     """
     for segment in segments:
         step = relations_by_accessor(related).get(segment)
-        if step is not None and step.auto_created:
+        if step is None:
+            message = f"{model.__name__}: depends_on {name!r} is not a relation"
+            raise ImproperlyConfigured(message)
+        if step.auto_created:
             raise _reverse_relation_crossed(model, name, segment)
-        if step is None or step.related_model is None:
+        if step.related_model is None:
             return
         related = step.related_model
 
