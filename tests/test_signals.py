@@ -986,6 +986,57 @@ def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_
     ]
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_followed_topic_deleted_with_no_output_fails_and_signals_off_costs_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # Created before Workshop is registered: with no MODEL_RAG_OUTPUT, their
+    # own saves would fail otherwise.
+    woodworking = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    rag.register(Workshop, follow=["topic"])
+
+    # No transaction around the delete (transaction=True): the delete runs in
+    # its own, which commits as it ends, so it must fail before then.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        woodworking.delete()
+
+    # The delete is rolled back: the topic's row is there, and the workshop
+    # still points to it.
+    assert Topic.objects.filter(pk=woodworking.pk).exists()
+    assert Workshop.objects.get(pk=pottery.pk).topic_id == woodworking.pk
+
+    settings.MODEL_RAG_SIGNALS = False
+    # A working output, so that only the setting can keep the same delete from
+    # sending to it.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # The delete commits as it ends, running any commit callback it deferred.
+    # With signals on, the delete would look its followers up first: one query
+    # more than the delete's own.
+    with django_assert_num_queries(6) as queries:
+        woodworking.delete()
+
+    # The rows are deleted and nulled, yet the only queries are the delete's
+    # own, in its transaction: the topic's lessons and course links, the
+    # workshop's foreign key, the topic itself. No lookup of followers, and no
+    # output is built, even after the commit.
+    assert not Topic.objects.exists()
+    assert Workshop.objects.get(pk=pottery.pk).topic_id is None
+    statements = _statements(queries)
+    assert statements == ["BEGIN", "DELETE", "DELETE", "UPDATE", "DELETE", "COMMIT"]
+    assert built_outputs == []
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
