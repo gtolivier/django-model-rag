@@ -4723,3 +4723,100 @@ def test_a_database_error_reloading_a_saved_instance_is_logged_without_raising(
             ],
         }
     ]
+
+
+# How a query on Product compares a row's category with a parameter.
+PRODUCT_CATEGORY_LOOKUP = '"testapp_product"."category_id" = %s'
+
+
+def _looks_up_products_of_category(sql: str, params: Any, category_pk: Any) -> bool:
+    """Whether ``sql`` is a SELECT looking up the Products of a Category.
+
+    The Category is the one of primary key ``category_pk``. The parameter
+    compared is the lookup's own, found by counting the placeholders before it.
+    """
+    if not sql.startswith("SELECT") or PRODUCT_CATEGORY_LOOKUP not in sql:
+        return False
+    lookup_param_index = sql[: sql.index(PRODUCT_CATEGORY_LOOKUP)].count("%s")
+    return bool(params[lookup_param_index] == category_pk)
+
+
+@pytest.mark.django_db
+def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logged(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the categories' saves below are observed.
+    lighting = Category.objects.create(name="Lighting")
+    _create_a_plain_desk_lamp(lighting)
+    tools = Category.objects.create(name="Tools")
+    hammer = Product.objects.create(
+        name="Hammer",
+        description="A hammer for nails.",
+        price="15.00",
+        category=tools,
+    )
+
+    # The saves themselves go through: their callbacks are captured here, and
+    # run below as the commit would run them, once the database fails.
+    with django_capture_on_commit_callbacks() as callbacks:
+        lighting.name = "Lamps"
+        lighting.save()
+        tools.name = "Hardware"
+        tools.save()
+
+    lookup_error = DatabaseError("the database is unreachable")
+
+    def fail_looking_up_lighting_followers(
+        execute: Callable[[str, Any, bool, dict[str, Any]], Any],
+        sql: str,
+        params: Any,
+        many: bool,
+        context: dict[str, Any],
+    ) -> Any:
+        # Only looking up the Products of Lighting fails: every query on the
+        # Products of Tools goes through.
+        if _looks_up_products_of_category(sql, params, lighting.pk):
+            raise lookup_error
+        return execute(sql, params, many, context)
+
+    # The callbacks run in order, the failing category's first, so that its
+    # failure comes before the other category's followers are sent. An error
+    # escaping a callback would fail the test: the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        connection.execute_wrapper(fail_looking_up_lighting_followers),
+    ):
+        for callback in callbacks:
+            callback()
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the category saved, and carries the error itself.
+    assert f"testapp.category:{lighting.pk}" in record.getMessage()
+    assert record.exc_info is not None
+    assert record.exc_info[1] is lookup_error
+    # The other category's follower still reaches an output.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{hammer.pk}": [
+                NormalizedDocument(
+                    text="Hammer\n\nHardware",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=hammer.pk,
+                    title="Hammer",
+                    url=f"/products/{hammer.pk}/",
+                ),
+            ],
+        }
+    ]
