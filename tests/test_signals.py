@@ -536,6 +536,53 @@ def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
 
 
 @pytest.mark.django_db
+def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its title from its category
+    # through a lookup path, with no follow and no other path through the
+    # category: Category itself is not registered.
+    rag.register(Product, fields=["name"], title_field="category__name")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Product: its group, with the category's new
+    # name as its title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Lamps",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
