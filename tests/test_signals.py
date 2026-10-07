@@ -3684,6 +3684,52 @@ def test_a_topic_added_to_a_course_following_it_with_no_output_writes_no_link() 
 
 
 @pytest.mark.django_db
+def test_an_output_failing_on_a_course_added_to_a_topic_logs_the_course_and_the_topic(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.course:{basics.pk}"},
+    }
+
+    # Added from the reverse side: Django sends m2m_changed with the topic as
+    # its instance. An error escaping the commit callbacks would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        woodworking.courses.add(basics)
+
+    # The link is committed all the same.
+    assert list(basics.topics.all()) == [woodworking]
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the followers' model and the topic the add came from,
+    # and carries the error.
+    assert record.getMessage() == (
+        f"Syncing testapp.course instances that follow "
+        f"testapp.topic:{woodworking.pk} failed"
+    )
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
