@@ -840,6 +840,54 @@ def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
 
 
 @pytest.mark.django_db
+def test_saving_a_category_followed_by_more_rows_than_sqlite_variables_replaces_all(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    sqlite_variable_limit_lowered: int,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # More followers than SQLite accepts variables in one query. Created
+    # outside the captured callbacks: bulk_create sends no signal anyway, so
+    # only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamps = Product.objects.bulk_create(
+        Product(
+            name=f"Lamp {number}",
+            description="A lamp.",
+            price="25.00",
+            category=lighting,
+        )
+        for number in range(sqlite_variable_limit_lowered + 100)
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+
+    # Every follower's group, with the category's new name after the
+    # Product's own name: none is left out for the size of the query.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text=f"{lamp.name}\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title=lamp.name,
+                url=f"/products/{lamp.pk}/",
+            ),
+        ]
+        for lamp in lamps
+    }
+
+
+@pytest.mark.django_db
 def test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],

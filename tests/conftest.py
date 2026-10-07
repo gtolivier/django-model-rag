@@ -1,3 +1,4 @@
+import sqlite3
 from collections.abc import Iterator
 from typing import TypeVar
 
@@ -47,6 +48,24 @@ def unordered_selects_reversed(db: None) -> Iterator[None]:
     yield
     with connection.cursor() as cursor:
         cursor.execute("PRAGMA reverse_unordered_selects = OFF")
+
+
+@pytest.fixture
+def sqlite_variable_limit_lowered(db: None) -> Iterator[int]:
+    """Lower the number of variables SQLite accepts in one query, and yield it.
+
+    The local SQLite build accepts tens of thousands of them: lowered, a query
+    that puts one variable per row in its SQL fails with a few rows only. The
+    previous limit is restored after the test.
+    """
+    lowered_limit = 1500
+    connection.ensure_connection()
+    sqlite_connection = connection.connection
+    previous_limit = sqlite_connection.setlimit(
+        sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, lowered_limit
+    )
+    yield lowered_limit
+    sqlite_connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, previous_limit)
 
 
 @pytest.fixture(autouse=True)
