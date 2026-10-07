@@ -315,7 +315,8 @@ def _link_back_fields(
 ) -> list[str] | None:
     """Return the fields of the related model that link it back through ``relation``.
 
-    These are the foreign key of a reverse foreign key, the object_id and
+    These are the local columns of a reverse foreign key — the foreign key
+    itself, or each column of a multi-column ForeignObject — the object_id and
     content_type of a generic relation, and none for a many-to-many; None for
     any other relation.
     """
@@ -324,7 +325,7 @@ def _link_back_fields(
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
     if _is_reverse_foreign_key(relation):
-        return [relation.field.name]
+        return [field.name for field in relation.field.local_related_fields]
     if isinstance(relation, GenericRelation):
         return [relation.object_id_field_name, relation.content_type_field_name]
     if relation.many_to_many:
@@ -487,24 +488,24 @@ def _prefetch_match_columns(followed: _RelationsByAccessor) -> set[str]:
     return {
         column
         for relation in followed.values()
-        if (column := _prefetch_match_column(relation)) is not None
+        for column in _prefetch_match_columns_of(relation)
     }
 
 
-def _prefetch_match_column(
+def _prefetch_match_columns_of(
     relation: "Field[Any, Any] | ForeignObjectRel",
-) -> str | None:
-    """Return the name of the parent's column a prefetch of ``relation`` matches by.
+) -> list[str]:
+    """Return the names of the parent's columns a prefetch of ``relation`` matches by.
 
-    None when ``relation`` is not a reverse foreign key or a many-to-many.
+    Empty when ``relation`` is not a reverse foreign key or a many-to-many.
     """
-    # the prefetch matches the related objects to their parent by the column
+    # the prefetch matches the related objects to their parent by the columns
     # the foreign key to the parent targets, which may not be the primary key:
     # the reverse foreign key itself, or the through model's for a many-to-many
     if _is_reverse_foreign_key(relation):
-        return relation.field.target_field.name
+        return [target.name for target in relation.field.foreign_related_fields]
     key = _through_key_to_parent(relation)
-    return key.target_field.name if isinstance(key, ForeignKey) else None
+    return [key.target_field.name] if isinstance(key, ForeignKey) else []
 
 
 def _through_key_to_parent(

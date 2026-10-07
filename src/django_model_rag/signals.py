@@ -8,7 +8,7 @@ from typing import Any, TypeAlias
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignObjectRel, Model
+from django.db.models import ForeignObject, ForeignObjectRel, Model
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
@@ -304,21 +304,33 @@ def _follower_pks(
     ``instance`` points to them through the foreign key behind ``relation``.
     """
     foreign_key = relation.field
-    target_field = foreign_key.foreign_related_fields[0]
-    target_value = getattr(instance, foreign_key.attname)
-    if target_value is None:
+    follower_lookup = _follower_lookup(foreign_key, instance)
+    if None in follower_lookup.values():
         # A null foreign key points to no follower.
         return []
-    if target_field.primary_key:
+    target_field = foreign_key.foreign_related_fields[0]
+    if target_field.primary_key and len(follower_lookup) == 1:
         # The common case costs the save no query: the value already is the key.
-        return [target_value]
+        return [follower_lookup[target_field.attname]]
 
-    # A foreign key with a to_field holds another unique column: the group is
-    # named after the primary key, which only the follower row knows.
-    follower_rows = registered_model._base_manager.filter(
-        **{target_field.attname: target_value}
-    )
+    # A foreign key with a to_field, or over several columns, holds other
+    # columns: the group is named after the primary key, which only the
+    # follower row knows.
+    follower_rows = registered_model._base_manager.filter(**follower_lookup)
     return list(follower_rows.values_list("pk", flat=True))
+
+
+def _follower_lookup(
+    foreign_key: "ForeignObject[Any, Any]", instance: Model
+) -> dict[str, Any]:
+    """Return the follower row's columns, each with the value ``instance`` holds."""
+    return dict(
+        zip(
+            (target.attname for target in foreign_key.foreign_related_fields),
+            foreign_key.get_local_related_value(instance),
+            strict=True,
+        )
+    )
 
 
 def _followed_reverse_relations(
@@ -330,8 +342,6 @@ def _followed_reverse_relations(
         relation
         for relation in rag.followed_reverse_relations(registered_model)
         if relation.related_model in followed_models
-        # A multi-column relation is left out: no single value names a follower.
-        and len(relation.field.foreign_related_fields) == 1
     ]
 
 

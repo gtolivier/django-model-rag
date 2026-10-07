@@ -3,11 +3,11 @@
 import inspect
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeGuard
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Field, ForeignKey, ForeignObjectRel, Model
+from django.db.models import Field, ForeignObject, ForeignObjectRel, Model
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete, pre_delete
 
@@ -263,6 +263,19 @@ def _require_single_valued(
     return related
 
 
+def _is_followed_like_a_foreign_key(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> "TypeGuard[ForeignObject[Any, Any]]":
+    """Tell whether the signals follow ``relation`` like a foreign key.
+
+    These are the forward relations to a single object, on one column or
+    several: a generic relation is a ForeignObject too, but to many objects.
+    """
+    return isinstance(relation, ForeignObject) and bool(
+        relation.many_to_one or relation.one_to_one
+    )
+
+
 def _require_forward_relations(
     model: type[Model], name: str, related: type[Model], segments: list[str]
 ) -> None:
@@ -477,7 +490,7 @@ def _models_reached_by_foreign_keys(
     reached: list[tuple[str, type[Model]]] = []
     for link in path_links(model, path):
         related_model = link.relation.related_model
-        if not isinstance(link.relation, ForeignKey) or not isinstance(
+        if not _is_followed_like_a_foreign_key(link.relation) or not isinstance(
             related_model, type
         ):
             break
@@ -787,7 +800,7 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
-            if isinstance(relation, ForeignKey)
+            if _is_followed_like_a_foreign_key(relation)
         ]
         read_through_paths = [
             reached

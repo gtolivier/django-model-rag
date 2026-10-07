@@ -45,6 +45,7 @@ from tests.testapp.models import (
     Offer,
     Page,
     PageIntro,
+    Photo,
     Product,
     Remark,
     Review,
@@ -55,6 +56,8 @@ from tests.testapp.models import (
     Spotlight,
     Supplier,
     SupplierProfile,
+    Tag,
+    Talk,
     TextPlugin,
     TextPluginProxy,
     Theme,
@@ -118,6 +121,20 @@ def _register_products_by_name() -> None:
 def _register_pages_following_their_plugins() -> None:
     """Register only Page, following its text plugins: TextPlugin itself is not."""
     rag.register(Page, follow=["text_plugins"])
+
+
+def _register_venues_following_their_seminars() -> None:
+    """Register only Venue, by its name, following its seminars by the reverse of
+    the multi-column ForeignObject ``venue``: Seminar itself is not."""
+    rag.register(Venue, fields=["name"], follow=["seminars"])
+
+
+def _create_the_transbordeur_and_its_seminar() -> Seminar:
+    """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    return Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
 
 
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
@@ -2670,44 +2687,454 @@ def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
 
 
 @pytest.mark.django_db
-def test_a_seminar_of_a_venue_following_a_reverse_multi_column_relation_sends_nothing(
+def test_saving_a_tag_of_a_photo_following_its_generic_relation_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
-    # A working output, so that only the kind of relation can keep the save
-    # and the delete from sending anything.
+    # A working output, so that only the kind of relation can keep the saves
+    # from sending anything.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Venue is registered, following its seminars by the reverse of
-    # the multi-column ForeignObject ``venue``: Seminar itself is not.
-    rag.register(Venue, follow=["seminars"])
+    # Only the Photo is registered, following its tags by the generic relation
+    # ``tags``: Tag itself is not.
+    rag.register(Photo, follow=["tags"])
 
     # Created outside the captured callbacks: the commit callback of the
-    # Venue's own save never runs, so only the seminar's saves and delete
-    # below are observed.
-    Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Photo's own save never runs, so only the tag's saves below are observed.
+    workbench = Photo.objects.create(title="Workbench")
 
     # The commit callbacks run, and an error escaping them would fail the test.
     with django_capture_on_commit_callbacks(execute=True):
-        seminar = Seminar.objects.create(
+        tag = Tag.objects.create(label="oak", content_object=workbench)
+        tag.label = "white oak"
+        tag.save()
+
+    # A generic relation is not followed by the signals: neither the tag's
+    # creation nor its update sends anything for the Photo, whose documents
+    # are left stale.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venue(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_venues_following_their_seminars()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Another venue of the same city, with a seminar of its own: only both
+    # columns together name a venue, so a seminar at the hall is not one of
+    # its seminars.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Seminar.objects.create(
             title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
         )
-        seminar.title = "Acoustics of large halls"
-        seminar.save()
-        seminar.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the venue the seminar's two columns name, with the seminar's
+    # text fields, title first, after the Venue's own name; not the group of
+    # the other venue of the same city.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.venue:{hall.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Halle Tony Garnier\n\nAcoustics\n\nLyon\n\nHalle Tony Garnier"
+                    ),
+                    source_app_label="testapp",
+                    source_model="venue",
+                    source_pk=hall.pk,
+                    title="Halle Tony Garnier",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venue(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_venues_following_their_seminars()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's delete below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    deleted_seminar = Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        deleted_seminar.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Venue's group as committed: the deleted seminar's text is gone, the
+    # remaining seminar's text fields stay after the Venue's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.venue:{hall.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Halle Tony Garnier\n\nAcoustics\n\nLyon\n\nHalle Tony Garnier"
+                    ),
+                    source_app_label="testapp",
+                    source_model="venue",
+                    source_pk=hall.pk,
+                    title="Halle Tony Garnier",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_venues(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_venues_following_their_seminars()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's move below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Another venue of the same city: the move changes only the name column,
+    # so the city column alone cannot tell the two venues apart.
+    transbordeur = Venue.objects.create(city="Lyon", name="Transbordeur")
+    moved_seminar = Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_seminar.venue_name = "Transbordeur"
+        moved_seminar.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Venue is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Venues' groups as committed: the venue it left keeps only its
+    # remaining seminar's text, the venue it joined gains the moved seminar's
+    # text, each after the Venue's own name.
+    assert received == {
+        f"testapp.venue:{hall.pk}": [
+            NormalizedDocument(
+                text="Halle Tony Garnier\n\nAcoustics\n\nLyon\n\nHalle Tony Garnier",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=hall.pk,
+                title="Halle Tony Garnier",
+            ),
+        ],
+        f"testapp.venue:{transbordeur.pk}": [
+            NormalizedDocument(
+                text="Transbordeur\n\nStage lighting\n\nLyon\n\nTransbordeur",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=transbordeur.pk,
+                title="Transbordeur",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_seminar_naming_no_venue_of_a_venue_following_by_multi_column_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_venues_following_their_seminars()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the stray seminar's saves and delete below are
+    # observed. A venue of the same city, with a seminar of its own: the stray
+    # seminar's city column matches it, its name column does not.
+    _create_the_transbordeur_and_its_seminar()
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
         # A ForeignObject has no database constraint: a seminar may name a
-        # venue no Venue row matches.
+        # (city, name) pair no Venue row has.
         stray_seminar = Seminar.objects.create(
-            title="Lighting", venue_city="Paris", venue_name="Nowhere"
+            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
         )
-        stray_seminar.title = "Stage lighting"
+        stray_seminar.title = "Acoustics of large halls"
         stray_seminar.save()
         stray_seminar.delete()
 
-    # A multi-column relation is left out of the followed relations: the
-    # seminars' saves and deletes send nothing for the Venue.
+    # The stray seminar's two columns name no venue: its saves and its delete
+    # send nothing, not even for the venue of the same city.
     assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
+def test_saving_a_seminar_a_custom_extractor_depends_on_by_multi_column_replaces_venue(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, with a custom extractor reading its
+    # seminars: depends_on names the reverse of the multi-column ForeignObject
+    # ``venue``, whose saves change its documents. Seminar itself is not
+    # registered.
+    @rag.register_extractor(Venue, depends_on=["seminars"])
+    class VenueExtractor(BaseExtractor[Venue]):
+        def extract(self, instance: Venue) -> NormalizedDocument:
+            titles = [seminar.title for seminar in instance.seminars.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.name, *titles])
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the seminar's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    # Another venue of the same city, with a seminar of its own: only both
+    # columns together name a venue, so a seminar at the hall is not one of
+    # its seminars.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        Seminar.objects.create(
+            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+        )
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the venue the seminar's two columns name,
+    # with the seminar's title after the venue's name; no group of the other
+    # venue of the same city.
+    assert _received_groups(built_outputs) == {
+        f"testapp.venue:{hall.pk}": [
+            NormalizedDocument(
+                text="Halle Tony Garnier\n\nAcoustics",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=hall.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_seminars(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, reading its venue's name through a lookup
+    # path across the multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title", "venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    # Another venue of the same city: only both columns together name a venue,
+    # so its seminar does not read the hall.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Both columns are the key the seminars name the venue by: the save
+        # changes neither, so the hall's seminars still read it.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the seminars at the hall: their group, with the
+    # venue's name after the Seminar's own title; not the other venue's seminar.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics\n\nHalle Tony Garnier",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_venue_a_custom_extractor_depends_on_by_multi_column_replaces_seminars(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, with a custom extractor reading its
+    # venue's name: depends_on names the multi-column ForeignObject ``venue``,
+    # whose saves change its documents. Venue itself is not registered.
+    @rag.register_extractor(Seminar, depends_on=["venue"])
+    class SeminarExtractor(BaseExtractor[Seminar]):
+        def extract(self, instance: Seminar) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.venue.name}: {instance.title}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    # Another venue of the same city: only both columns together name a venue,
+    # so its seminar does not depend on the hall.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Both columns are the key the seminars name the venue by: the save
+        # changes neither, so the hall's seminars still depend on it.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the seminar at the hall, with the venue's
+    # name; no group of the other venue's seminar.
+    assert _received_groups(built_outputs) == {
+        f"testapp.seminar:{acoustics.pk}": [
+            NormalizedDocument(
+                text="Halle Tony Garnier: Acoustics",
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=acoustics.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminars(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, following its venue through the
+    # multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title"], follow=["venue"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    # Another venue of the same city: only both columns together name a venue,
+    # so its seminar does not follow the hall.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Both columns are the key the seminars name the venue by: the save
+        # changes neither, so the hall's seminars still follow it.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the seminar at the hall, with the venue's text fields, name
+    # first, after the Seminar's own title; not the other venue's seminar.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics\n\nHalle Tony Garnier\n\nLyon",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Talk is registered, reading its seminar's venue's name through a
+    # lookup path whose later link is the multi-column ForeignObject ``venue``:
+    # neither Seminar nor Venue is.
+    rag.register(Talk, fields=["title", "seminar__venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
+    # Another venue of the same city: only both columns together name a venue,
+    # so the talk of its seminar does not read the hall.
+    lighting = _create_the_transbordeur_and_its_seminar()
+    Talk.objects.create(title="Spotlights", seminar=lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Both columns are the key the seminars name the venue by: the save
+        # changes neither, so the talks of the hall's seminars still read it.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the talks of the seminars at the hall: their
+    # group, with the venue's name after the Talk's own title; not the talk at
+    # the other venue.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.talk:{keynote.pk}": [
+                NormalizedDocument(
+                    text="Keynote\n\nHalle Tony Garnier",
+                    source_app_label="testapp",
+                    source_model="talk",
+                    source_pk=keynote.pk,
+                    title="Keynote",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
