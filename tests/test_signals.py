@@ -3187,6 +3187,59 @@ def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_t
 
 
 @pytest.mark.django_db
+def test_renaming_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Talk is registered, reading its seminar's venue's name through a
+    # lookup path whose later link is the multi-column ForeignObject ``venue``:
+    # neither Seminar nor Venue is.
+    rag.register(Talk, fields=["title", "seminar__venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's rename below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
+    # Another venue of the same city: the rename changes only the name column,
+    # so the city column alone cannot tell the talk of its seminar from the
+    # talk of the hall's.
+    lighting = _create_the_transbordeur_and_its_seminar()
+    Talk.objects.create(title="Spotlights", seminar=lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The name is one of the columns the seminars name the venue by: after
+        # the save, the hall's seminar still carries the old name, so only the
+        # venue as it was before the save tells which talks read it.
+        hall.name = "Grande Halle"
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the talk of the seminar that named the hall, as committed:
+    # its seminar's two columns now name no venue, so only the Talk's own title
+    # is left, not the stale venue name; no group of the other venue's talk.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.talk:{keynote.pk}": [
+                NormalizedDocument(
+                    text="Keynote",
+                    source_app_label="testapp",
+                    source_model="talk",
+                    source_pk=keynote.pk,
+                    title="Keynote",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_a_save_sends_the_documents_of_the_instance_as_committed(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
