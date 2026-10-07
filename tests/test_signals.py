@@ -121,6 +121,20 @@ def _register_pages_following_their_plugins() -> None:
     rag.register(Page, follow=["text_plugins"])
 
 
+def _register_venues_following_their_seminars() -> None:
+    """Register only Venue, by its name, following its seminars by the reverse of
+    the multi-column ForeignObject ``venue``: Seminar itself is not."""
+    rag.register(Venue, fields=["name"], follow=["seminars"])
+
+
+def _create_the_transbordeur_and_its_seminar() -> Seminar:
+    """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    return Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
+
+
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
     """Create a Desk lamp, a FeaturedProduct: a Product row and its child row."""
     return FeaturedProduct.objects.create(
@@ -2678,9 +2692,7 @@ def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venu
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Venue is registered, following its seminars by the reverse of
-    # the multi-column ForeignObject ``venue``: Seminar itself is not.
-    rag.register(Venue, fields=["name"], follow=["seminars"])
+    _register_venues_following_their_seminars()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's save below is observed.
@@ -2688,10 +2700,7 @@ def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venu
     # Another venue of the same city, with a seminar of its own: only both
     # columns together name a venue, so a seminar at the hall is not one of
     # its seminars.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
         Seminar.objects.create(
@@ -2728,9 +2737,7 @@ def test_deleting_a_seminar_of_a_venue_following_by_multi_column_replaces_the_ve
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Venue is registered, following its seminars by the reverse of
-    # the multi-column ForeignObject ``venue``: Seminar itself is not.
-    rag.register(Venue, fields=["name"], follow=["seminars"])
+    _register_venues_following_their_seminars()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's delete below is observed.
@@ -2774,9 +2781,7 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Venue is registered, following its seminars by the reverse of
-    # the multi-column ForeignObject ``venue``: Seminar itself is not.
-    rag.register(Venue, fields=["name"], follow=["seminars"])
+    _register_venues_following_their_seminars()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's move below is observed.
@@ -2833,18 +2838,13 @@ def test_a_seminar_naming_no_venue_of_a_venue_following_by_multi_column_sends_no
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Venue is registered, following its seminars by the reverse of
-    # the multi-column ForeignObject ``venue``: Seminar itself is not.
-    rag.register(Venue, fields=["name"], follow=["seminars"])
+    _register_venues_following_their_seminars()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the stray seminar's saves and delete below are
     # observed. A venue of the same city, with a seminar of its own: the stray
     # seminar's city column matches it, its name column does not.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    _create_the_transbordeur_and_its_seminar()
 
     # The commit callbacks run, and an error escaping them would fail the test.
     with django_capture_on_commit_callbacks(execute=True):
@@ -2888,10 +2888,7 @@ def test_saving_a_seminar_a_custom_extractor_depends_on_by_multi_column_replaces
     # Another venue of the same city, with a seminar of its own: only both
     # columns together name a venue, so a seminar at the hall is not one of
     # its seminars.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
         Seminar.objects.create(
@@ -2936,10 +2933,7 @@ def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_sem
     )
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not read the hall.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
         # Both columns are the key the seminars name the venue by: the save
@@ -2991,10 +2985,7 @@ def test_saving_a_venue_a_custom_extractor_depends_on_by_multi_column_replaces_s
     )
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not depend on the hall.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
         # Both columns are the key the seminars name the venue by: the save
@@ -3038,10 +3029,7 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
     )
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not follow the hall.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
         # Both columns are the key the seminars name the venue by: the save
@@ -3089,10 +3077,7 @@ def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_t
     keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
     # Another venue of the same city: only both columns together name a venue,
     # so the talk of its seminar does not read the hall.
-    Venue.objects.create(city="Lyon", name="Transbordeur")
-    lighting = Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    lighting = _create_the_transbordeur_and_its_seminar()
     Talk.objects.create(title="Spotlights", seminar=lighting)
 
     with django_capture_on_commit_callbacks(execute=True):
