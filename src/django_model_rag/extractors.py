@@ -487,11 +487,11 @@ def _prefetch_match_columns(followed: _RelationsByAccessor) -> set[str]:
     return {
         column
         for relation in followed.values()
-        for column in _prefetch_match_column(relation)
+        for column in _prefetch_match_columns_of(relation)
     }
 
 
-def _prefetch_match_column(
+def _prefetch_match_columns_of(
     relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> list[str]:
     """Return the names of the parent's columns a prefetch of ``relation`` matches by.

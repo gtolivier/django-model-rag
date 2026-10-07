@@ -305,7 +305,7 @@ def _follower_pks(
     """
     foreign_key = relation.field
     # The instance's columns, matched to those of the follower row they name.
-    target_values = {
+    follower_lookup = {
         target.attname: getattr(instance, local.attname)
         for local, target in zip(
             foreign_key.local_related_fields,
@@ -313,17 +313,18 @@ def _follower_pks(
             strict=True,
         )
     }
-    if None in target_values.values():
+    if None in follower_lookup.values():
         # A null foreign key points to no follower.
         return []
     target_field = foreign_key.foreign_related_fields[0]
-    if target_field.primary_key and len(target_values) == 1:
+    if target_field.primary_key and len(follower_lookup) == 1:
         # The common case costs the save no query: the value already is the key.
-        return [target_values[target_field.attname]]
+        return [follower_lookup[target_field.attname]]
 
-    # A foreign key with a to_field holds another unique column: the group is
-    # named after the primary key, which only the follower row knows.
-    follower_rows = registered_model._base_manager.filter(**target_values)
+    # A foreign key with a to_field, or over several columns, holds other
+    # columns: the group is named after the primary key, which only the
+    # follower row knows.
+    follower_rows = registered_model._base_manager.filter(**follower_lookup)
     return list(follower_rows.values_list("pk", flat=True))
 
 
