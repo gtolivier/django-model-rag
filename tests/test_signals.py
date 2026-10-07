@@ -404,6 +404,52 @@ def test_saving_a_category_followed_by_foreign_key_replaces_the_group_that_follo
 
 
 @pytest.mark.django_db
+def test_saving_a_category_read_through_a_lookup_path_replaces_the_group_reading_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its category's name through a
+    # lookup path, with no follow: Category itself is not registered.
+    rag.register(Product, fields=["name", "category__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the Product, as follow=["category"] does: its
+    # group, with the category's new name after the Product's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
