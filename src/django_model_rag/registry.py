@@ -183,11 +183,12 @@ def _require_related_text(
 
 def _require_relations(model: type[Model], names: FieldNames) -> None:
     """Fail unless each of ``names`` starts with a relation accessor of ``model``
-    that is not a many-to-many.
+    that is neither a many-to-many nor generic.
 
     Raises:
-        ImproperlyConfigured: a ``depends_on`` name is not a relation, or is
-            a many-to-many (forward or reverse).
+        ImproperlyConfigured: a ``depends_on`` name is not a relation, is a
+            many-to-many (forward or reverse), or is a generic foreign key or
+            generic relation.
     """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported while they load
