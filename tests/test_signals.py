@@ -3291,6 +3291,68 @@ def test_clearing_the_topics_of_a_course_following_them_replaces_the_courses_gro
 
 
 @pytest.mark.django_db
+def test_clearing_the_courses_of_a_topic_replaces_the_group_of_each_course_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Two courses cover the topic: one covers another topic too, so that its
+    # group keeps the one left, the other covers it alone.
+    woodworking = _create_the_woodworking_topic()
+    carving = Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+    # A course not covering the topic: the clear below does not change its
+    # group.
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+
+    # Cleared from the reverse side: Django sends m2m_changed with the topic as
+    # its instance and no primary keys at all, so the courses covering it can
+    # only be found before the clear. No row is saved again: the clear deletes
+    # only the links of the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both courses as committed, each without the topic's text,
+    # and no group of the course that never covered it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+                title="Woodworking basics",
+            ),
+        ],
+        f"testapp.course:{joinery.pk}": [
+            NormalizedDocument(
+                text="Joinery",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=joinery.pk,
+                title="Joinery",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
