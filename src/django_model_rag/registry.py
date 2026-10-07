@@ -1,7 +1,7 @@
 """The registry of models whose content feeds the pipeline."""
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any, TypeAlias
 
 from django.apps import apps
@@ -138,6 +138,22 @@ def _require_models_ready(model: type[Model], action: str) -> None:
         raise ImproperlyConfigured(message)
 
 
+def _each_once(names: FieldNames, twice_message: Callable[[str], str]) -> Iterator[str]:
+    """Yield each of ``names``, failing on the first one given a second time.
+
+    ``twice_message`` words the error for that name.
+
+    Raises:
+        ImproperlyConfigured: a name is given twice.
+    """
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            raise ImproperlyConfigured(twice_message(name))
+        seen.add(name)
+        yield name
+
+
 def _require_followable_relations(model: type[Model], names: FieldNames) -> None:
     """Fail unless ``names`` names, once each, relations of ``model`` with text.
 
@@ -147,15 +163,12 @@ def _require_followable_relations(model: type[Model], names: FieldNames) -> None
             key) or has no text field.
     """
     accessors = relations_by_accessor(model)
-    seen: set[str] = set()
-    for name in names:
+    for name in _each_once(
+        names, lambda twice: f"{model.__name__}: relation {twice!r} is followed twice"
+    ):
         if name not in accessors:
             message = f"{model.__name__}: cannot follow {name!r}, not a relation"
             raise ImproperlyConfigured(message)
-        if name in seen:
-            message = f"{model.__name__}: relation {name!r} is followed twice"
-            raise ImproperlyConfigured(message)
-        seen.add(name)
         _require_related_text(model, name, accessors[name].related_model)
 
 
@@ -190,12 +203,9 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
             :func:`_require_relation` accepts.
     """
     accessors = relations_by_accessor(model)
-    seen: set[str] = set()
-    for name in names:
-        if name in seen:
-            message = f"{model.__name__}: depends_on {name!r} is given twice"
-            raise ImproperlyConfigured(message)
-        seen.add(name)
+    for name in _each_once(
+        names, lambda twice: f"{model.__name__}: depends_on {twice!r} is given twice"
+    ):
         _require_relation(model, name, accessors)
 
 
@@ -326,12 +336,9 @@ def _require_distinct_content_fields(
         ImproperlyConfigured: a name is not one of ``model``'s fields or is a
             relation, or it is given twice.
     """
-    seen: set[str] = set()
-    for name in names:
-        if name in seen:
-            message = f"{model.__name__}: field {name!r} is {verb} twice"
-            raise ImproperlyConfigured(message)
-        seen.add(name)
+    for name in _each_once(
+        names, lambda twice: f"{model.__name__}: field {twice!r} is {verb} twice"
+    ):
         _require_content_field(model, name)
 
 
