@@ -3,14 +3,22 @@
 import logging
 from collections.abc import Callable
 from functools import partial
-from typing import Any, TypeAlias, TypeGuard
+from typing import Any, TypeAlias, TypeGuard, cast
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignObject, ForeignObjectRel, Model, QuerySet
+from django.db.models import (
+    ForeignObject,
+    ForeignObjectRel,
+    ManyToManyField,
+    ManyToManyRel,
+    Model,
+    QuerySet,
+)
 
 from django_model_rag.documents import model_source_key
+from django_model_rag.extractors import through_key_to_parent
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag
@@ -242,10 +250,11 @@ def sync_changed_relation(
         return
 
     through = kwargs["sender"]
+    reverse = kwargs["reverse"]
     if action in _BEFORE_WRITE:
         _check_output_before_write(through, instance, model)
         if action == _BEFORE_CLEAR:
-            _remember_cleared_pks(through, instance, model)
+            _remember_cleared_pks(through, instance, model, reverse)
         return
 
     if action not in _CHANGING_ACTIONS:
@@ -261,8 +270,9 @@ def sync_changed_relation(
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
         )
+        _, key_to_model = _through_keys(through, instance, model, reverse)
         _schedule_follower_replacements(
-            [(model, pk) for pk in _primary_keys_named(through, model, pk_set)],
+            [(model, pk) for pk in _primary_keys_named(key_to_model, model, pk_set)],
             _followed_source_key(type(instance), instance),
         )
 
@@ -292,19 +302,46 @@ def _registered_models_following(
     ]
 
 
+def _through_keys(
+    through: type[Model], instance: Model, model: type[Model], reverse: bool
+) -> tuple["ForeignObject[Any, Any]", "ForeignObject[Any, Any]"]:
+    """Return the foreign keys of ``through`` to the instance's side, then ``model``'s.
+
+    ``reverse``, as m2m_changed sends it, is False when the instance's model
+    declares the many-to-many.
+    """
+    declaring_model = model if reverse else type(instance)
+    # m2m_changed comes from a many-to-many of the declaring model, inherited
+    # or not, and each many-to-many has a through model of its own.
+    field = next(
+        field
+        for field in declaring_model._meta.many_to_many
+        if field.remote_field.through is through
+    )
+    instance_side, model_side = (
+        (field.remote_field, field) if reverse else (field, field.remote_field)
+    )
+    return _through_key(instance_side), _through_key(model_side)
+
+
+def _through_key(
+    relation: "ManyToManyField[Any, Any] | ManyToManyRel",
+) -> "ForeignObject[Any, Any]":
+    """Return the through model's foreign key to the side ``relation`` is read from."""
+    # A through model reaches each side of its many-to-many by a foreign key.
+    return cast("ForeignObject[Any, Any]", through_key_to_parent(relation))
+
+
 def _primary_keys_named(
-    through: type[Model], model: type[Model], keys: set[Any]
+    key_to_model: "ForeignObject[Any, Any]", model: type[Model], keys: set[Any]
 ) -> set[Any]:
     """Return the primary keys of the ``model`` rows that ``keys`` name.
 
-    The through model's foreign key to ``model`` may point to a unique column
-    other than its primary key, and ``keys`` are then values of that column.
+    The through model's foreign key to ``model``, ``key_to_model``, may point to
+    a unique column other than its primary key, and ``keys`` are then values of
+    that column.
     """
-    target_field = next(
-        field.target_field
-        for field in through._meta.fields
-        if isinstance(field, ForeignObject) and field.related_model is model
-    )
+    target_field = key_to_model.target_field
     if target_field.primary_key:
         return keys
 
@@ -327,39 +364,31 @@ def _reaches_registered_rows(
 
 
 def _remember_cleared_pks(
-    through: type[Model], instance: Model, model: type[Model] | None
+    through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
 ) -> None:
     """Keep the keys of the registered rows a clear is about to unlink.
 
-    Django sends no primary keys with the clear: they can only be found before it.
+    Django sends no primary keys with the clear: they can only be found before
+    it. ``reverse`` is m2m_changed's.
     """
     if not _reaches_registered_rows(model, through):
         return
 
-    foreign_key_to = {
-        field.related_model: field
-        for field in through._meta.fields
-        if isinstance(field, ForeignObject)
-    }
+    key_to_instance, key_to_model = _through_keys(through, instance, model, reverse)
     # The foreign key may name the instance by a unique column other than its
     # primary key, and a multi-table child by the row of the parent holding the
     # links.
-    instance_key = next(
-        foreign_key_to[candidate]
-        for candidate in _models_of_the_row(type(instance))
-        if candidate in foreign_key_to
-    )
     links = through._base_manager.filter(
         **{
-            instance_key.name: getattr(
-                instance, instance_key.foreign_related_fields[0].attname
+            key_to_instance.name: getattr(
+                instance, key_to_instance.foreign_related_fields[0].attname
             )
         }
     )
     setattr(
         instance,
         _CLEARED_PKS_ATTRIBUTE,
-        set(links.values_list(foreign_key_to[model].attname, flat=True)),
+        set(links.values_list(key_to_model.attname, flat=True)),
     )
 
 
