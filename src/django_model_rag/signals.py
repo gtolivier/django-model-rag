@@ -129,9 +129,9 @@ def remember_followers_before_save(
 ) -> None:
     """Keep the followers the row had before the save, for the commit to replace.
 
-    A save may move the row to other followers: the old ones change too. Only
-    the followers the row points to can move; those pointing to the row through
-    their own foreign key still do after the save, and are found then.
+    A save may move the row to other followers: the old ones change too. The
+    row may point to other followers, and other followers may name it, by the
+    columns their foreign key holds.
     """
     # An instance built with an existing primary key is "adding" yet saved as an
     # UPDATE: only a missing primary key means there is no row before the save.
@@ -287,14 +287,6 @@ def _is_followed(sender: type[Model]) -> bool:
     return any(
         _followed_reverse_relations(registered_model, sender)
         or _followed_foreign_key_lookups(registered_model, sender)
-        for registered_model in rag.registered_models()
-    )
-
-
-def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
-    """Return whether a registered model follows ``sender`` by a reverse relation."""
-    return any(
-        _followed_reverse_relations(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
