@@ -228,7 +228,6 @@ def sync_saved_instance(
 def sync_changed_relation(
     instance: Model,
     action: str,
-    reverse: bool = False,
     model: type[Model] | None = None,
     pk_set: set[Any] | None = None,
     **kwargs: Any,
@@ -242,7 +241,7 @@ def sync_changed_relation(
         return
 
     if action == _BEFORE_CLEAR:
-        _remember_cleared_pks(kwargs["sender"], instance, model, reverse)
+        _remember_cleared_pks(kwargs["sender"], instance, model)
         return
 
     if action not in _CHANGING_ACTIONS:
@@ -251,7 +250,7 @@ def sync_changed_relation(
     _schedule_commit_callbacks(
         _registered_models(type(instance)), instance, _group_replacer
     )
-    if _unlinks_registered_rows(model, reverse):
+    if _unlinks_registered_rows(model):
         # Only a clear leaves keys behind, found before it: pk_set is None then.
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
@@ -262,21 +261,19 @@ def sync_changed_relation(
         )
 
 
-def _unlinks_registered_rows(
-    model: type[Model] | None, reverse: bool
-) -> TypeGuard[type[Model]]:
-    """Return whether a links change from the reverse side reaches registered rows."""
-    return reverse and model is not None and rag.is_registered(model)
+def _unlinks_registered_rows(model: type[Model] | None) -> TypeGuard[type[Model]]:
+    """Return whether a links change reaches registered rows."""
+    return model is not None and rag.is_registered(model)
 
 
 def _remember_cleared_pks(
-    through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
+    through: type[Model], instance: Model, model: type[Model] | None
 ) -> None:
-    """Keep the keys of the registered rows a reverse clear is about to unlink.
+    """Keep the keys of the registered rows a clear is about to unlink.
 
     Django sends no primary keys with the clear: they can only be found before it.
     """
-    if not _unlinks_registered_rows(model, reverse):
+    if not _unlinks_registered_rows(model):
         return
 
     foreign_key_to = {
