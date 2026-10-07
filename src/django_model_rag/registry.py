@@ -2,6 +2,7 @@
 
 import inspect
 from collections.abc import Callable
+from itertools import islice
 from typing import Any, TypeAlias
 
 from django.apps import apps
@@ -559,11 +560,19 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        return [
+        foreign_keys = [
             relation
             for relation in self._followed_relations(model)
             if isinstance(relation, ForeignKey)
         ]
+        extractor = self.new_extractor(model)
+        if isinstance(extractor, DeclaredFieldsExtractor):
+            # A lookup path in the fields reads through its first foreign key.
+            for path in extractor.fields:
+                for link in islice(path_links(model, path), 1):
+                    if isinstance(link.relation, ForeignKey):
+                        foreign_keys.append(link.relation)
+        return list(dict.fromkeys(foreign_keys))
 
     def _followed_relations(
         self, model: type[Model]
