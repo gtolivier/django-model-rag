@@ -1307,6 +1307,50 @@ def test_an_output_failing_on_the_followers_of_a_category_proxy_logs_the_categor
 
 
 @pytest.mark.django_db
+def test_an_output_failing_on_the_followers_of_a_deleted_topic_proxy_logs_the_topic(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: neither Topic nor its proxy is. The
+    # Workshop outlives its topic, so its group is replaced at the commit.
+    rag.register(Workshop, follow=["topic"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's delete below is observed.
+    woodworking = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    woodworking_pk = woodworking.pk
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.workshop:{pottery.pk}"},
+    }
+
+    # Django sends pre_delete and post_delete with the proxy as their sender,
+    # not Topic. An error escaping the commit callbacks would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        TopicProxy.objects.get(pk=woodworking_pk).delete()
+
+    [record] = _package_log_records(caplog)
+    # The record names the row deleted by its concrete model's key, the one its
+    # source keys use, not by the proxy's.
+    assert record.getMessage() == (
+        f"Syncing testapp.workshop instances that follow "
+        f"testapp.topic:{woodworking_pk} failed"
+    )
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
