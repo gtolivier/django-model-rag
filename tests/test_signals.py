@@ -125,6 +125,33 @@ def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
     )
 
 
+def _create_a_plain_desk_lamp(category: Category) -> Product:
+    """Create a Desk lamp, a plain Product: a single row."""
+    return Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=category,
+    )
+
+
+def _create_a_bulb(category: Category) -> Product:
+    """Create a Bulb, a plain Product: a single row."""
+    return Product.objects.create(
+        name="Bulb",
+        description="A bulb for the lamp.",
+        price="5.00",
+        category=category,
+    )
+
+
+def _create_the_woodworking_topic() -> Topic:
+    """Create the Woodworking topic."""
+    return Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_replaces_its_group_once_its_transaction_commits(
     settings: Settings,
@@ -378,12 +405,7 @@ def test_saving_a_category_followed_by_foreign_key_replaces_the_group_that_follo
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting.name = "Lamps"
@@ -424,12 +446,7 @@ def test_saving_a_category_read_through_a_lookup_path_replaces_the_group_reading
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting.name = "Lamps"
@@ -553,12 +570,7 @@ def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_grou
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting.name = "Lamps"
@@ -602,12 +614,7 @@ def test_saving_a_category_read_two_foreign_keys_deep_replaces_the_group_reading
     # saves never run, so only the category's save below is observed.
     lighting = Category.objects.create(name="Lighting")
     garden = Category.objects.create(name="Garden")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
     rake = Product.objects.create(
         name="Rake",
         description="Wooden.",
@@ -660,12 +667,7 @@ def test_saving_a_product_in_the_middle_of_a_lookup_path_replaces_the_group_read
     # saves never run, so only the product's save below is observed.
     lighting = Category.objects.create(name="Lighting")
     garden = Category.objects.create(name="Garden")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
     rake = Product.objects.create(
         name="Rake",
         description="Wooden.",
@@ -715,18 +717,8 @@ def test_saving_a_category_both_followed_and_read_by_a_path_replaces_each_group_
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
-    bulb = Product.objects.create(
-        name="Bulb",
-        description="A bulb for the lamp.",
-        price="5.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
+    bulb = _create_a_bulb(lighting)
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting.name = "Lamps"
@@ -798,18 +790,8 @@ def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
-    bulb = Product.objects.create(
-        name="Bulb",
-        description="A bulb for the lamp.",
-        price="5.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
+    bulb = _create_a_bulb(lighting)
     # A product of another category: the save below does not change its group.
     seating = Category.objects.create(name="Seating")
     Product.objects.create(
@@ -901,12 +883,7 @@ def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_i
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
 
     # Django sends post_save with the proxy as its sender, not Category.
     with django_capture_on_commit_callbacks(execute=True):
@@ -1152,12 +1129,7 @@ def test_a_category_followed_by_foreign_key_saved_unsynced_costs_nothing_more(
     rag.register(Product, fields=["name"], follow=["category"])
 
     lighting = Category.objects.create(name="Lighting")
-    Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    _create_a_plain_desk_lamp(lighting)
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits. With signals on and a regular save, the save of
@@ -1195,18 +1167,8 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
     # saves never run, so only the categories' saves below are observed.
     lighting = Category.objects.create(name="Lighting")
     # Two followers, so that the message cannot name the one follower there is.
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
-    Product.objects.create(
-        name="Bulb",
-        description="A bulb for the lamp.",
-        price="5.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
+    _create_a_bulb(lighting)
     tools = Category.objects.create(name="Tools")
     hammer = Product.objects.create(
         name="Hammer",
@@ -1274,12 +1236,7 @@ def test_an_output_failing_on_the_followers_of_a_category_proxy_logs_the_categor
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's save below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_plain_desk_lamp(lighting)
 
     settings.MODEL_RAG_OUTPUT = {
         "BACKEND": FAILING_ON_KEY_BACKEND,
@@ -1321,9 +1278,7 @@ def test_an_output_failing_on_the_followers_of_a_deleted_topic_proxy_logs_the_to
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's delete below is observed.
-    woodworking = Topic.objects.create(
-        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
-    )
+    woodworking = _create_the_woodworking_topic()
     pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
     woodworking_pk = woodworking.pk
 
@@ -1364,9 +1319,7 @@ def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the topic's delete below is observed.
-    woodworking = Topic.objects.create(
-        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
-    )
+    woodworking = _create_the_woodworking_topic()
     pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
 
     # The delete sets the workshop's foreign key to null before the topic's
@@ -1409,9 +1362,7 @@ def test_deleting_a_topic_read_two_links_deep_through_set_null_replaces_the_grou
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the topic's delete below is observed.
-    woodworking = Topic.objects.create(
-        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
-    )
+    woodworking = _create_the_woodworking_topic()
     glazing = Topic.objects.create(
         summary="Colours and kilns.", title="Glazing", slug="glazing"
     )
@@ -1461,18 +1412,8 @@ def test_deleting_a_category_whose_following_products_cascade_sends_only_their_g
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's delete below is observed.
     lighting = Category.objects.create(name="Lighting")
-    lamp_pk = Product.objects.create(
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    ).pk
-    bulb_pk = Product.objects.create(
-        name="Bulb",
-        description="A bulb for the lamp.",
-        price="5.00",
-        category=lighting,
-    ).pk
+    lamp_pk = _create_a_plain_desk_lamp(lighting).pk
+    bulb_pk = _create_a_bulb(lighting).pk
 
     # The products are deleted with the category by cascade: they are found as
     # its followers before the delete, yet no longer exist at the commit.
@@ -1511,9 +1452,7 @@ def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's delete below is observed.
-    woodworking = Topic.objects.create(
-        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
-    )
+    woodworking = _create_the_woodworking_topic()
     pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
 
     # Django sends pre_delete and post_delete with the proxy as their sender,
@@ -1548,9 +1487,7 @@ def test_a_followed_topic_deleted_with_no_output_fails_and_signals_off_costs_not
 ) -> None:
     # Created before Workshop is registered: with no MODEL_RAG_OUTPUT, their
     # own saves would fail otherwise.
-    woodworking = Topic.objects.create(
-        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
-    )
+    woodworking = _create_the_woodworking_topic()
     pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
