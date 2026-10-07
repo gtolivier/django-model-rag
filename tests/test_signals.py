@@ -3088,6 +3088,55 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
 
 
 @pytest.mark.django_db
+def test_renaming_a_venue_followed_by_multi_column_replaces_the_seminars_naming_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, following its venue through the
+    # multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title"], follow=["venue"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's rename below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    # Another venue of the same city: the rename changes only the name column,
+    # so the city column alone cannot tell its seminar from the hall's.
+    _create_the_transbordeur_and_its_seminar()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The name is one of the columns the seminars name the venue by: after
+        # the save, the hall's seminar still carries the old name, so only the
+        # venue as it was before the save tells which seminars named it.
+        hall.name = "Grande Halle"
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of the seminar that named the hall, as committed: its two
+    # columns now name no venue, so only the Seminar's own title is left, not
+    # the stale venue text; no group of the other venue's seminar.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_talks(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
