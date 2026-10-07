@@ -125,6 +125,18 @@ def _register_pages_following_their_plugins() -> None:
     rag.register(Page, follow=["text_plugins"])
 
 
+def _register_courses_following_their_topics() -> None:
+    """Register only Course, following its topics through its own many-to-many
+    ``topics``: Topic itself is not."""
+    rag.register(Course, follow=["topics"])
+
+
+def _register_topics_following_their_courses() -> None:
+    """Register only Topic, following its courses by the reverse many-to-many
+    ``courses``: Course itself is not."""
+    rag.register(Topic, follow=["courses"])
+
+
 def _register_plugins_by_their_page_title() -> None:
     """Register only TextPlugin, with a custom extractor reading its page's title
     before its body: depends_on names the page, whose saves change its
@@ -135,6 +147,21 @@ def _register_plugins_by_their_page_title() -> None:
         def extract(self, instance: TextPlugin) -> NormalizedDocument:
             return self.build_document(
                 instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+
+def _register_topics_by_their_course_titles() -> None:
+    """Register only Topic, with a custom extractor reading its title, then the
+    titles of its courses: depends_on names its reverse many-to-many
+    ``courses``, whose saves, links and deletes change its documents. Course
+    itself is not registered."""
+
+    @rag.register_extractor(Topic, depends_on=["courses"])
+    class TopicExtractor(BaseExtractor[Topic]):
+        def extract(self, instance: Topic) -> NormalizedDocument:
+            titles = [course.title for course in instance.courses.order_by("pk")]
+            return self.build_document(
+                instance, text=f"{instance.title}: {', '.join(titles)}"
             )
 
 
@@ -206,6 +233,13 @@ def _create_the_woodworking_topic() -> Topic:
     """Create the Woodworking topic."""
     return Topic.objects.create(
         summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+
+
+def _create_the_carving_topic() -> Topic:
+    """Create the Carving topic."""
+    return Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
     )
 
 
@@ -1868,16 +1902,7 @@ def test_adding_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_top
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, with a custom extractor reading the titles
-    # of its courses: depends_on names its reverse many-to-many ``courses``,
-    # whose links change its documents. Course itself is not registered.
-    @rag.register_extractor(Topic, depends_on=["courses"])
-    class TopicExtractor(BaseExtractor[Topic]):
-        def extract(self, instance: Topic) -> NormalizedDocument:
-            titles = [course.title for course in instance.courses.order_by("pk")]
-            return self.build_document(
-                instance, text=f"{instance.title}: {', '.join(titles)}"
-            )
+    _register_topics_by_their_course_titles()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the add below is observed.
@@ -1913,16 +1938,7 @@ def test_saving_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_top
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, with a custom extractor reading the titles
-    # of its courses: depends_on names its reverse many-to-many ``courses``,
-    # whose saves change its documents. Course itself is not registered.
-    @rag.register_extractor(Topic, depends_on=["courses"])
-    class TopicExtractor(BaseExtractor[Topic]):
-        def extract(self, instance: Topic) -> NormalizedDocument:
-            titles = [course.title for course in instance.courses.order_by("pk")]
-            return self.build_document(
-                instance, text=f"{instance.title}: {', '.join(titles)}"
-            )
+    _register_topics_by_their_course_titles()
 
     # Created and linked outside the captured callbacks: the commit callbacks
     # of these saves and of the add never run, so only the course's save below
@@ -1959,16 +1975,7 @@ def test_deleting_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_t
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, with a custom extractor reading the titles
-    # of its courses: depends_on names its reverse many-to-many ``courses``,
-    # whose deletes change its documents. Course itself is not registered.
-    @rag.register_extractor(Topic, depends_on=["courses"])
-    class TopicExtractor(BaseExtractor[Topic]):
-        def extract(self, instance: Topic) -> NormalizedDocument:
-            titles = [course.title for course in instance.courses.order_by("pk")]
-            return self.build_document(
-                instance, text=f"{instance.title}: {', '.join(titles)}"
-            )
+    _register_topics_by_their_course_titles()
 
     # Created and linked outside the captured callbacks: the commit callbacks
     # of these saves and adds never run, so only the course's delete below is
@@ -3175,9 +3182,7 @@ def test_saving_a_course_followed_by_reverse_many_to_many_replaces_the_topics_gr
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: Course itself is not.
-    rag.register(Topic, follow=["courses"])
+    _register_topics_following_their_courses()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the course's save below is observed.
@@ -3216,9 +3221,7 @@ def test_saving_a_topic_followed_by_forward_many_to_many_replaces_the_courses_gr
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the topic's save below is observed.
@@ -3257,9 +3260,7 @@ def test_adding_a_topic_to_a_course_following_its_topics_replaces_the_courses_gr
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the add below is observed. Neither row is
@@ -3297,9 +3298,7 @@ def test_adding_a_course_to_a_topic_replaces_the_group_of_the_course_following_i
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the add below is observed. Neither row is
@@ -3343,17 +3342,13 @@ def test_removing_a_topic_from_a_course_following_its_topics_replaces_the_course
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the remove below is observed. The
     # course covers two topics, so that its group keeps the one left.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
 
@@ -3389,17 +3384,13 @@ def test_removing_a_course_from_a_topic_replaces_the_group_of_the_course_followi
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and these adds never run, so only the remove below is observed.
     # The course covers two topics, so that its group keeps the one left.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
     # A course still covering the topic after the remove below: its group does
@@ -3441,17 +3432,13 @@ def test_clearing_the_topics_of_a_course_following_them_replaces_the_courses_gro
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the clear below is observed. The
     # course covers two topics, so that the clear removes more than one link.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
 
@@ -3487,18 +3474,14 @@ def test_clearing_the_courses_of_a_topic_replaces_the_group_of_each_course_follo
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and these adds never run, so only the clear below is observed.
     # Two courses cover the topic: one covers another topic too, so that its
     # group keeps the one left, the other covers it alone.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
     joinery = Course.objects.create(title="Joinery")
@@ -3549,9 +3532,7 @@ def test_adding_a_topic_to_a_course_replaces_the_group_of_the_topic_following_it
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: Course itself is not.
-    rag.register(Topic, follow=["courses"])
+    _register_topics_following_their_courses()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the add below is observed.
@@ -3559,9 +3540,7 @@ def test_adding_a_topic_to_a_course_replaces_the_group_of_the_topic_following_it
     basics = Course.objects.create(title="Woodworking basics")
     # A topic the course already covers: the add below does not change its
     # group.
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics.topics.add(carving)
 
     # Added from the course's side: Django sends m2m_changed with the course as
@@ -3597,9 +3576,7 @@ def test_adding_a_course_to_a_topic_following_its_courses_replaces_the_topics_gr
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: Course itself is not.
-    rag.register(Topic, follow=["courses"])
+    _register_topics_following_their_courses()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the add below is observed.
@@ -3607,9 +3584,7 @@ def test_adding_a_course_to_a_topic_following_its_courses_replaces_the_topics_gr
     basics = Course.objects.create(title="Woodworking basics")
     # Another topic the course already covers: the add below does not change
     # its group.
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics.topics.add(carving)
 
     # Added from the topic's side: Django sends m2m_changed with the topic as
@@ -3645,9 +3620,8 @@ def test_adding_a_course_to_a_topic_through_a_proxy_replaces_the_topics_group(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: neither Course nor TopicProxy is.
-    rag.register(Topic, follow=["courses"])
+    # TopicProxy is not registered either.
+    _register_topics_following_their_courses()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the add below is observed.
@@ -3688,18 +3662,15 @@ def test_clearing_the_courses_of_a_topic_through_a_proxy_replaces_the_courses_gr
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: neither Topic nor TopicProxy is.
-    rag.register(Course, follow=["topics"])
+    # TopicProxy is not registered either.
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and these adds never run, so only the clear below is observed.
     # Two courses cover the topic: one covers another topic too, so that its
     # group keeps the one left, the other covers it alone.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
     joinery = Course.objects.create(title="Joinery")
@@ -3750,16 +3721,12 @@ def test_adding_two_topics_to_a_course_replaces_the_group_of_each_topic_followin
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: Course itself is not.
-    rag.register(Topic, follow=["courses"])
+    _register_topics_following_their_courses()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the add below is observed.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     # A topic the course already covers: the add below does not change its
     # group.
@@ -3889,9 +3856,7 @@ def test_adding_a_topic_to_a_course_following_its_topics_with_signals_off_sends_
     # to it.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the add below is observed. Neither row is
@@ -3919,9 +3884,7 @@ def test_a_topic_added_to_a_course_following_it_with_no_output_writes_no_link() 
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # No transaction around the add (transaction=True): in autocommit, each
     # query commits as soon as it runs, so the add must fail before its
@@ -3941,9 +3904,7 @@ def test_a_following_course_added_to_a_topic_with_no_output_writes_no_link() -> 
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Added from the topic's side: the course following the link is among the
     # rows the add names, not its instance. No transaction around the add
@@ -3967,9 +3928,7 @@ def test_a_topic_removed_from_a_course_following_it_with_no_output_keeps_the_lin
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # No transaction around the remove (transaction=True): in autocommit, each
     # query commits as soon as it runs, so the remove must fail before its
@@ -3988,17 +3947,13 @@ def test_the_topics_of_a_course_following_them_cleared_with_no_output_stay_linke
     # their own saves and the add would fail otherwise. The course covers two
     # topics, so that the clear would delete more than one link.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # No transaction around the clear (transaction=True): in autocommit, each
     # query commits as soon as it runs, so the clear must fail before its
@@ -4017,9 +3972,7 @@ def test_an_output_failing_on_a_course_added_to_a_topic_logs_the_course_and_the_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the add below is observed. Neither row is
@@ -4063,17 +4016,13 @@ def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Course is registered, following its topics through its own
-    # many-to-many ``topics``: Topic itself is not.
-    rag.register(Course, follow=["topics"])
+    _register_courses_following_their_topics()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the topic's delete below is observed. The
     # course covers two topics, so that its group keeps the one left.
     woodworking = _create_the_woodworking_topic()
-    carving = Topic.objects.create(
-        summary="Knives and gouges.", title="Carving", slug="carving"
-    )
+    carving = _create_the_carving_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking, carving)
 
@@ -4109,9 +4058,7 @@ def test_deleting_a_course_followed_by_reverse_many_to_many_replaces_the_topics_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: Course itself is not.
-    rag.register(Topic, follow=["courses"])
+    _register_topics_following_their_courses()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the course's delete below is observed. The
