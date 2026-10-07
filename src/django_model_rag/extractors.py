@@ -76,8 +76,9 @@ class BaseExtractor(ABC, Generic[M]):
     def get_queryset(self, queryset: QuerySet[M]) -> QuerySet[M]:
         """Shape how ``queryset`` loads the instances to extract, and which it holds.
 
-        An instance it filters out is not extracted. A run of a single instance,
-        already loaded, only asks it whether that instance is kept.
+        An instance it filters out is not extracted. Every run, that of a single
+        instance included, extracts the instances as it loads them, so what it
+        adds to them (an annotation, a select_related) reaches extract().
         """
         return queryset
 

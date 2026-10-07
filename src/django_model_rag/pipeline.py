@@ -330,8 +330,12 @@ class SyncPipeline:
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
 
-        The group is empty when its extractor's get_queryset() filters
-        ``instance`` out: it is then not extracted.
+        ``instance`` is reloaded through its extractor's get_queryset(), by
+        the same query that tells whether the hook keeps it, and that
+        reload is extracted: the instance as stored in the database, with what
+        the hook adds to it, not as given with its unsaved changes. The group
+        is empty when get_queryset() filters ``instance`` out: it is then not
+        extracted.
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
