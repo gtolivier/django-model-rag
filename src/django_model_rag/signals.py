@@ -172,7 +172,7 @@ def sync_saved_instance(
         followers += _forward_followers(sender, instance)
     _schedule_follower_replacements(
         followers + instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, []),
-        model_source_key(sender, instance.pk),
+        model_source_key(sender._meta.concrete_model or sender, instance.pk),
     )
 
 
