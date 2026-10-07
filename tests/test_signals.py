@@ -3631,6 +3631,37 @@ def test_adding_a_topic_to_a_course_neither_side_following_the_link_defers_nothi
 
 
 @pytest.mark.django_db
+def test_adding_a_topic_to_a_course_following_its_topics_with_signals_off_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the setting can keep the add from sending
+    # to it.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    settings.MODEL_RAG_SIGNALS = False
+
+    # The commit callbacks run: one sending anything would reach the output.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking)
+
+    # The link is written, yet nothing reaches the output.
+    assert list(basics.topics.all()) == [woodworking]
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
