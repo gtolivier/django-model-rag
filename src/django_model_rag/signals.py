@@ -248,9 +248,15 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(
-        _registered_models(type(instance)), instance, _group_replacer
+        [
+            registered_model
+            for registered_model in _registered_models(type(instance))
+            if rag.follows_many_to_many(registered_model, kwargs["sender"])
+        ],
+        instance,
+        _group_replacer,
     )
-    if _reaches_registered_rows(model):
+    if _reaches_registered_rows(model, kwargs["sender"]):
         # Only a clear leaves keys behind, found before it: pk_set is None then.
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
@@ -287,9 +293,15 @@ def _primary_keys_named(
     )
 
 
-def _reaches_registered_rows(model: type[Model] | None) -> TypeGuard[type[Model]]:
-    """Return whether a links change reaches registered rows."""
-    return model is not None and rag.is_registered(model)
+def _reaches_registered_rows(
+    model: type[Model] | None, through: type[Model]
+) -> TypeGuard[type[Model]]:
+    """Return whether a links change reaches rows following the links."""
+    return (
+        model is not None
+        and rag.is_registered(model)
+        and rag.follows_many_to_many(model, through)
+    )
 
 
 def _remember_cleared_pks(
@@ -299,7 +311,7 @@ def _remember_cleared_pks(
 
     Django sends no primary keys with the clear: they can only be found before it.
     """
-    if not _reaches_registered_rows(model):
+    if not _reaches_registered_rows(model, through):
         return
 
     foreign_key_to = {
