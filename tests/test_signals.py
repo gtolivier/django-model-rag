@@ -45,6 +45,7 @@ from tests.testapp.models import (
     Offer,
     Page,
     PageIntro,
+    Photo,
     Product,
     Remark,
     Review,
@@ -55,6 +56,7 @@ from tests.testapp.models import (
     Spotlight,
     Supplier,
     SupplierProfile,
+    Tag,
     Talk,
     TextPlugin,
     TextPluginProxy,
@@ -2682,6 +2684,36 @@ def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
     # Django's deletion Collector fast-deletes a model with no post_delete
     # listener: nothing listens to Course's deletes.
     assert not post_delete.has_listeners(Course)
+
+
+@pytest.mark.django_db
+def test_saving_a_tag_of_a_photo_following_its_generic_relation_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the kind of relation can keep the saves
+    # from sending anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Photo is registered, following its tags by the generic relation
+    # ``tags``: Tag itself is not.
+    rag.register(Photo, follow=["tags"])
+
+    # Created outside the captured callbacks: the commit callback of the
+    # Photo's own save never runs, so only the tag's saves below are observed.
+    workbench = Photo.objects.create(title="Workbench")
+
+    # The commit callbacks run, and an error escaping them would fail the test.
+    with django_capture_on_commit_callbacks(execute=True):
+        tag = Tag.objects.create(label="oak", content_object=workbench)
+        tag.label = "white oak"
+        tag.save()
+
+    # A generic relation is not followed by the signals: neither the tag's
+    # creation nor its update sends anything for the Photo, whose documents
+    # are left stale.
+    assert _replaced(built_outputs) == []
 
 
 @pytest.mark.django_db
