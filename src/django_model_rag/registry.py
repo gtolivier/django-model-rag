@@ -18,6 +18,7 @@ from django_model_rag.extractors import (
     PathLink,
     guessed_language_field,
     path_links,
+    query_name,
     relations_by_accessor,
     text_fields,
 )
@@ -727,10 +728,17 @@ class Registry:
 
     def _dependency_paths(self, model: type[Model]) -> list[str]:
         """List the lookup paths through the dependencies ``model`` declares."""
-        # A dependency ends on a relation: a field after it makes it a lookup path.
-        return [
-            f"{dependency}{LOOKUP_SEP}pk" for dependency in self._dependencies[model]
-        ]
+        dependencies = self._dependencies[model]
+        if not dependencies:
+            return []
+        relations = relations_by_accessor(model)
+        # A dependency ends on a relation: a field after it makes it a lookup
+        # path. It names its first relation by accessor, a lookup path by query name.
+        paths = []
+        for dependency in dependencies:
+            first, *rest = dependency.split(LOOKUP_SEP)
+            paths.append(LOOKUP_SEP.join([query_name(relations[first]), *rest, "pk"]))
+        return paths
 
     def _dependency_relations(
         self, model: type[Model]
