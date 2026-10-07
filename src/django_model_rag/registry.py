@@ -310,6 +310,15 @@ def _is_followed_like_a_foreign_key(
     )
 
 
+def _is_many_to_many(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> "TypeGuard[ManyToManyField[Any, Any] | ForeignObjectRel]":
+    """Tell whether ``relation`` is a many-to-many, forward or reverse."""
+    return isinstance(relation, ManyToManyField) or (
+        isinstance(relation, ForeignObjectRel) and relation.many_to_many
+    )
+
+
 def _require_forward_relations(
     model: type[Model], name: str, related: type[Model], segments: list[str]
 ) -> None:
@@ -853,8 +862,8 @@ class Registry:
         Those are the models of the foreign keys and many-to-many relations,
         forward or reverse, it follows, the models its lookup paths and
         dependencies reach through their leading foreign keys, and the models
-        of the forward many-to-many relations it depends on. Each is paired
-        with the lookup, from ``model``, that reaches it.
+        of the many-to-many relations, forward or reverse, it depends on. Each
+        is paired with the lookup, from ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -862,9 +871,7 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
-            if _is_followed_like_a_foreign_key(relation)
-            or isinstance(relation, ManyToManyField)
-            or (isinstance(relation, ForeignObjectRel) and relation.many_to_many)
+            if _is_followed_like_a_foreign_key(relation) or _is_many_to_many(relation)
         ]
         read_through_paths = [
             reached
@@ -876,8 +883,7 @@ class Registry:
             *(
                 (relation.name, relation.related_model)
                 for relation in self._dependencies[model].relations
-                if isinstance(relation, ManyToManyField)
-                or (isinstance(relation, ForeignObjectRel) and relation.many_to_many)
+                if _is_many_to_many(relation)
             ),
         ]
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
