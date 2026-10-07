@@ -877,6 +877,7 @@ class Registry:
                 (relation.name, relation.related_model)
                 for relation in self._dependencies[model].relations
                 if isinstance(relation, ManyToManyField)
+                or (isinstance(relation, ForeignObjectRel) and relation.many_to_many)
             ),
         ]
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
