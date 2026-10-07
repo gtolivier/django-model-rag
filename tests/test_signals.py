@@ -1364,6 +1364,55 @@ def test_saving_a_category_a_custom_extractor_depends_on_two_links_deep_replaces
     }
 
 
+@pytest.mark.django_db
+def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the TextPlugin is registered, with a custom extractor reading its
+    # page's title and depending on the page, whose get_queryset() leaves out
+    # the plugins with an empty body. Page itself is not registered.
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def get_queryset(self, queryset: QuerySet[TextPlugin]) -> QuerySet[TextPlugin]:
+            return queryset.exclude(body="")
+
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the page's save below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    blank = TextPlugin.objects.create(page=about, body="")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The kept plugin's group, with the page's new title, and
+    # the left-out plugin's group empty, so the output drops what it held.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+        f"testapp.textplugin:{blank.pk}": [],
+    }
+
+
 @pytest.mark.django_db(transaction=True)
 def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row() -> (
     None
