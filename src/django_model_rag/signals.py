@@ -222,14 +222,30 @@ def sync_saved_instance(
     )
 
 
-def sync_changed_relation(instance: Model, action: str, **kwargs: Any) -> None:
-    """Replace, once the transaction commits, the group of an instance given links."""
+def sync_changed_relation(
+    instance: Model,
+    action: str,
+    reverse: bool = False,
+    model: type[Model] | None = None,
+    pk_set: set[Any] | None = None,
+    **kwargs: Any,
+) -> None:
+    """Replace, once the transaction commits, the groups given links.
+
+    Those are the group of the instance, and the groups of the registered rows
+    that ``pk_set`` names when the links were added from the reverse side.
+    """
     if action != _POST_ADD or not _signals_enabled():
         return
 
     _schedule_commit_callbacks(
         _registered_models(type(instance)), instance, _group_replacer
     )
+    if reverse and model is not None and rag.is_registered(model):
+        _schedule_follower_replacements(
+            [(model, pk) for pk in pk_set or ()],
+            _followed_source_key(type(instance), instance),
+        )
 
 
 def _replace_followers_as_committed(
