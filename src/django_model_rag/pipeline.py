@@ -86,15 +86,6 @@ def _hooked_queryset(
     return _checked_queryset(extractor.get_queryset(queryset), extractor, model)
 
 
-def _is_kept_by_hook(instance: Model, extractor: BaseExtractor[Any]) -> bool:
-    """Tell whether ``extractor``'s get_queryset() keeps ``instance``.
-
-    Raises:
-        TypeError: get_queryset() did not return a QuerySet of the model's instances.
-    """
-    return _kept_queryset(type(instance), extractor).filter(pk=instance.pk).exists()
-
-
 def _reloaded_by_hook(pks: Iterable[Any], kept: QuerySet[Model]) -> dict[Any, Model]:
     """Reload the instances of ``pks`` from ``kept``, as get_queryset() hooked it.
 
@@ -104,6 +95,16 @@ def _reloaded_by_hook(pks: Iterable[Any], kept: QuerySet[Model]) -> dict[Any, Mo
     # streamed: a join in get_queryset() can multiply the rows to cache
     reloads = kept.filter(pk__in=pks).iterator(chunk_size=_CHUNK_SIZE)
     return {instance.pk: instance for instance in reloads}
+
+
+def _reloaded_instance(pk: Any, kept: QuerySet[Model]) -> Model | None:
+    """Reload the instance of ``pk`` from ``kept``, as get_queryset() hooked it.
+
+    What get_queryset() adds to it (an annotation...) then reaches extract().
+    The result is None when get_queryset() filters the instance out.
+    """
+    # one row is enough, even when a join in get_queryset() repeats the instance
+    return next(iter(kept.filter(pk=pk)[:1]), None)
 
 
 def _checked_queryset(
@@ -195,23 +196,6 @@ def _own_documents(
         if document.source_key != source_key:
             raise _foreign_source(extractor, source_key)
         yield document
-
-
-def _kept_documents(
-    instance: Model, extractor: BaseExtractor[Any]
-) -> list[NormalizedDocument]:
-    """Return the documents of ``instance``, none if get_queryset() filters it out.
-
-    An instance filtered out is not extracted.
-
-    Raises:
-        TypeError: ``extractor``'s get_queryset() did not return a QuerySet of
-            the model's instances, or its extract() returned a document of
-            another source.
-    """
-    if not _is_kept_by_hook(instance, extractor):
-        return []
-    return list(_own_documents(instance, extractor))
 
 
 def _reloaded_documents(
@@ -356,8 +340,15 @@ class SyncPipeline:
     def run_instance(self, instance: Model) -> None:
         """Hand the documents of ``instance`` only to the output, as one group.
 
-        The group is empty when its extractor's get_queryset() filters
-        ``instance`` out: it is then not extracted.
+        ``instance`` is reloaded through its extractor's get_queryset(), by
+        the same query that tells whether the hook keeps it, and that
+        reload is extracted: the instance as stored in the database, with what
+        the hook adds to it, not as given with its unsaved changes. The group
+        is empty when get_queryset() filters ``instance`` out: it is then not
+        extracted.
+
+        It is reloaded from the database ``instance`` was loaded from, or the
+        one Django's routers pick by default when it was not loaded from one.
 
         Raises:
             NotRegistered: the model of ``instance`` is not registered.
@@ -370,6 +361,8 @@ class SyncPipeline:
         if instance.pk is None:
             msg = "run_instance() needs a saved instance: its primary key is None"
             raise ValueError(msg)
+        kept = _kept_queryset(type(instance), extractor, using=instance._state.db)
+        reloaded = _reloaded_instance(instance.pk, kept)
         self._output.replace(
-            {_source_key(instance): _kept_documents(instance, extractor)}
+            {_source_key(instance): _reloaded_documents(reloaded, extractor)}
         )

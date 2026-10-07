@@ -548,13 +548,30 @@ reference.
     instances; the README shows the `pk__in` subquery to use instead.
   - **Not decided here**: a `values()` queryset works, since only its
     primary keys are read, but no test pins it down.
-- [ ] **10g. `run_instance()` extracts the instance `get_queryset()`
-  loads.** It still extracts the instance it is given, after asking the
-  hook's queryset whether it keeps it, so what the hook adds (an
-  annotation, a `select_related`) does not reach `extract()` there, while
-  `run()` and `run_queryset()` extract the reloaded instance. Aligning it
-  costs no extra query: the query asking whether the hook keeps the
-  instance can load it.
+- [x] **10g. `run_instance()` extracts the instance `get_queryset()`
+  loads.** It extracted the instance it was given, after asking the hook's
+  queryset whether it kept it, so what the hook adds (an annotation, a
+  `select_related`) did not reach `extract()` there, while `run()` and
+  `run_queryset()` extract the reloaded instance. Decided in this feature:
+  - **One query instead of a check**: the query asking whether the hook
+    keeps the instance now loads it, through the same path as
+    `run_queryset()`, so it costs no extra query — and fewer for a
+    followed foreign key, which comes in that query (`select_related`)
+    rather than in one of its own.
+  - **The stored row, not the instance given**: only its primary key is
+    read. Unsaved changes made to it do not reach the output, as in
+    `run()` and `run_queryset()`, which extract what the database holds;
+    an instance loaded earlier in a transaction can be passed at the
+    commit. A row deleted since gets an empty group, as before.
+  - **Two queries per commit, as before**: the signals still check with
+    the base manager that the row exists before calling `run_instance()`
+    (a row deleted since is left to the delete's own callback), but that
+    check now loads the primary key only.
+  - **The instance's database**: the reload reads from the database the
+    instance was loaded from (`instance._state.db`), as `run_queryset()`
+    reads from its queryset's; the router picks it for an instance built
+    by hand. Before, the check read from the router's database. The
+    signals still reload from the router's database (10c).
 - [x] **11a. Resync the instances that follow a reverse relation.** Saving
   or deleting an instance that a registered model reaches through a reverse
   foreign key or reverse one-to-one it follows — a text plugin of a page

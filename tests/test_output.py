@@ -511,6 +511,110 @@ def test_run_instance_hands_the_documents_of_an_instance_its_queryset_keeps() ->
     ]
 
 
+@pytest.mark.django_db
+def test_run_instance_extracts_the_instance_as_stored_not_its_unsaved_changes() -> None:
+    # The output mirrors the database: a rename still in memory, never saved,
+    # must not reach it, or it would hold a name no reader of the table sees.
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+    lighting.name = "Lamps"
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_run_instance_finds_an_instance_whose_pk_is_given_in_another_type() -> None:
+    # Django's lookups coerce the key: filter(pk="1") finds the row of key 1.
+    # An instance built with its key as a string, as from a URL, is stored:
+    # an empty group for it would delete documents the database still backs.
+    stored = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+    lighting = Category(pk=str(stored.pk), name="Lighting")
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{stored.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=stored.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_run_instance_hands_an_empty_group_for_an_instance_whose_row_was_deleted() -> (
+    None
+):
+    # A post_delete handler or a queued task may run an instance whose row is
+    # gone: the empty group deletes what the output still holds for it, where
+    # extracting the stale instance in memory would index a row no reader of
+    # the table sees. The row is deleted through the queryset, which leaves the
+    # instance its primary key; it is deleted before the model is registered,
+    # so the package's signals hand nothing over for it.
+    lighting = Category.objects.create(name="Lighting")
+    Category.objects.filter(pk=lighting.pk).delete()
+    rag.register(Category, fields=["name"])
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [{f"testapp.category:{lighting.pk}": []}]
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+def test_run_instance_reloads_the_instance_from_the_database_it_was_loaded_from() -> (
+    None
+):
+    # The instance was loaded from "other": it must be reloaded there, not from
+    # the router's default. Default holds a category under the same primary key
+    # but another name: a reload from default would hand Desks' document under
+    # lighting's key, or an empty group if default held nothing.
+    stored = Category.objects.using("other").create(name="Lighting")
+    Category.objects.create(pk=stored.pk, name="Desks")
+    rag.register(Category, fields=["name"])
+    lighting = Category.objects.using("other").get(pk=stored.pk)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
 def _create_lighting_with_two_lamps() -> Category:
     """Create the Lighting category with its Desk lamp and Floor lamp products."""
     lighting = Category.objects.create(name="Lighting")
@@ -523,12 +627,12 @@ def _create_lighting_with_two_lamps() -> Category:
     return lighting
 
 
-@pytest.mark.django_db
-def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() -> None:
-    # run() extracts the instances get_queryset() loads: an extractor relying
-    # on what the hook adds to them, here a count of products, must read it
-    # from run_queryset() too, though the queryset handed over lacks it.
-    lighting = _create_lighting_with_two_lamps()
+def _register_product_counting_category_extractor() -> None:
+    """Register a Category extractor whose get_queryset() counts the products.
+
+    It documents each category as "<name>: <count> products", the count read
+    from the annotation get_queryset() adds.
+    """
 
     @rag.register_extractor(Category)
     class CountingCategoryExtractor(BaseExtractor[Category]):
@@ -543,8 +647,42 @@ def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() 
                 instance, text=f"{instance.name}: {product_count} products"
             )
 
+
+@pytest.mark.django_db
+def test_run_queryset_extracts_its_instances_as_their_get_queryset_loads_them() -> None:
+    # run() extracts the instances get_queryset() loads: an extractor relying
+    # on what the hook adds to them, here a count of products, must read it
+    # from run_queryset() too, though the queryset handed over lacks it.
+    lighting = _create_lighting_with_two_lamps()
+    _register_product_counting_category_extractor()
+
     output = RecordingOutput()
     SyncPipeline(output).run_queryset(Category.objects.filter(name="Lighting"))
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting: 2 products",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_run_instance_extracts_the_instance_as_its_get_queryset_loads_it() -> None:
+    # run() extracts the instances get_queryset() loads: an extractor relying
+    # on what the hook adds to them, here a count of products, must read it
+    # from run_instance() too, though the instance handed over lacks it.
+    lighting = _create_lighting_with_two_lamps()
+    _register_product_counting_category_extractor()
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
 
     assert output.replaced == [
         {

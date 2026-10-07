@@ -245,8 +245,8 @@ primary keys its extractor's queryset keeps. `run_queryset` reads only the
 primary keys of the queryset it is given, in chunks of 1000 too, and loads
 each chunk's instances through the extractor's queryset in one more query,
 plus one per followed reverse relation. `run_instance` makes one query
-to ask the extractor's queryset whether it keeps the instance, then at most
-one query per relation it crosses.
+that both asks the extractor's queryset whether it keeps the instance and
+reloads it through that queryset, plus one per followed reverse relation.
 
 Those queries load only the columns the documents read: the declared
 fields, the title, language and URL fields, the related columns a lookup
@@ -264,12 +264,10 @@ of the model's instances: a `values()` queryset, or another model's, raises
 sets, and an instance repeated by a join is extracted once, from its
 first row, even when its rows straddle two of `run()`'s chunks. An instance
 the hook filters out is not extracted: `run()` skips it and prunes its
-documents; `run_queryset` reloads the instances it is given through the
-hook's queryset, so that what the hook adds to them (an annotation, say)
-reaches `extract()`, and sends an empty group for an instance the hook
-filters out; and `run_instance`, which already holds the instance, only asks
-the hook's queryset whether it keeps it, and sends an empty group if not —
-it extracts the instance it was given, not one reloaded by the hook.
+documents; `run_queryset` and `run_instance` reload the instances they are
+given through the hook's queryset, so that what the hook adds to them (an
+annotation, say) reaches `extract()`, and send an empty group for an
+instance the hook filters out.
 
 ## The output
 
@@ -330,7 +328,13 @@ class MyOutput:
     such a transaction, and read from the primary database.
 - **`run_instance(instance)`** sends that instance's group, even empty, so
   that an instance whose extractor now returns `None`, or that its
-  extractor's queryset filters out, is removed. It never prunes, and sends
+  extractor's queryset filters out, is removed. Only the instance's primary
+  key is read: it is reloaded through its extractor's queryset, and the
+  documents are those of the row as stored, not of unsaved changes made to
+  `instance`; a row deleted since is sent as an empty group. The reload
+  reads from the database `instance` was loaded from, as `run_queryset`
+  reads from its queryset's, or the one the router picks for an instance
+  built by hand. It never prunes, and sends
   nothing if the extractor raises. An unsaved instance (no primary key)
   raises `ValueError`.
 - **`run_queryset(queryset)`** sends the groups of the instances of
@@ -557,12 +561,11 @@ or whatever a custom extractor reads without declaring it in
 own: in a `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
 of them, which reads them at the commit and sends them in batches — or
-`run_instance(instance)` for a single one. `run_instance` extracts the
-instance it is given as it stands in memory: reload it at the commit, as
-the signals do, rather than keep one loaded earlier in the transaction.
-Catch and log what the callback raises, as the signals do, or pass `robust=True` to `on_commit`: otherwise an error reaches
-the code that committed, after the commit, and the callbacks queued after
-it do not run.
+`run_instance(instance)` for a single one, which reloads it at the commit
+too: an instance loaded earlier in the transaction is fine to pass. Catch
+and log what the callback raises, as the signals do, or pass `robust=True`
+to `on_commit`: otherwise an error reaches the code that committed, after
+the commit, and the callbacks queued after it do not run.
 
 **Failures.** An extractor, an output or a database error reloading the
 instance that raises at the commit is logged with `logger.exception` on the

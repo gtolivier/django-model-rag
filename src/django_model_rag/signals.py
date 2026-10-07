@@ -8,7 +8,7 @@ from typing import Any, TypeAlias
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignObject, ForeignObjectRel, Model
+from django.db.models import ForeignObject, ForeignObjectRel, Model, QuerySet
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
@@ -34,10 +34,10 @@ def _signals_enabled() -> bool:
     return bool(getattr(settings, _SIGNALS_SETTING, True))
 
 
-def _committed_instance(model: type[Model], pk: Any) -> Model | None:
-    """Return the instance of ``model`` with primary key ``pk`` as committed, if any."""
+def _committed_instance(rows: QuerySet[Model], pk: Any) -> Model | None:
+    """Return the row of ``rows`` with primary key ``pk`` as committed, if any."""
     try:
-        return model._base_manager.get(pk=pk)
+        return rows.get(pk=pk)
     except ObjectDoesNotExist:
         return None
 
@@ -99,7 +99,11 @@ def _send_group(send: Callable[[], None], synced_rows: str) -> None:
 
 def _replace_group(registered_model: type[Model], pk: Any) -> None:
     """Send the committed group of ``registered_model`` for ``pk`` to the output."""
-    committed_instance = _committed_instance(registered_model, pk)
+    # run_instance() reloads the row itself: only whether it still exists, and
+    # its primary key as stored, are needed here.
+    committed_instance = _committed_instance(
+        registered_model._base_manager.only("pk"), pk
+    )
     # Deleted since the save: the delete's own callback sends the empty group.
     if committed_instance is None:
         return
@@ -165,7 +169,7 @@ def _committed_reverse_followers(sender: type[Model], pk: Any) -> list[_Follower
     if not _is_followed_through_reverse_relations(sender):
         return []
 
-    committed_instance = _committed_instance(sender, pk)
+    committed_instance = _committed_instance(sender._base_manager.all(), pk)
     if committed_instance is None:
         return []
 
