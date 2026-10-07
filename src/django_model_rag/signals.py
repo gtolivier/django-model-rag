@@ -81,13 +81,13 @@ def _group_pk(instance: Model, registered_model: type[Model]) -> Any:
     return getattr(instance, link.attname)
 
 
-def _send_group(send: Callable[[], None], source_key: str) -> None:
-    """Run ``send``, logging a failure with the ``source_key`` of the group."""
+def _send_group(send: Callable[[], None], synced_rows: str) -> None:
+    """Run ``send``, logging a failure that names the ``synced_rows``."""
     try:
         send()
     except Exception:
         # An error escaping a commit callback would break the commit.
-        logger.exception("Syncing %s failed", source_key)
+        logger.exception("Syncing %s failed", synced_rows)
 
 
 def _replace_group(registered_model: type[Model], pk: Any) -> None:
