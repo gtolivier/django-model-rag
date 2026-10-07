@@ -387,6 +387,8 @@ class Registry:
         # registration order across both kinds. It holds factories, not
         # extractors, so that no state an extractor keeps leaks between runs.
         self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
+        # The lookups a custom extractor reads through, declared by its model.
+        self._dependencies: dict[type[Model], tuple[str, ...]] = {}
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -507,9 +509,12 @@ class Registry:
         self._add(model, build_extractor)
 
     def register_extractor(
-        self, model: type[M]
+        self, model: type[M], *, depends_on: FieldNames = ()
     ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
+
+        ``depends_on`` names the foreign keys, or lookup paths through them,
+        whose saves change the documents of ``model``.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -522,7 +527,7 @@ class Registry:
         ) -> type[BaseExtractor[M]]:
             _require_extractor_class(extractor_class)
             self._require_unregistered(model)
-            self._add(model, extractor_class)
+            self._add(model, extractor_class, tuple(depends_on))
             return extractor_class
 
         return decorator
@@ -536,6 +541,7 @@ class Registry:
         self._require_registered(model)
         senders = self._delete_senders(model)
         del self._registrations[model]
+        self._dependencies.pop(model, None)
         # A sender another registered model still listens to keeps its listener.
         kept = {
             sender
@@ -593,9 +599,13 @@ class Registry:
             for relation in self._followed_relations(model)
             if isinstance(relation, ForeignKey)
         ]
+        # A dependency ends on a relation: a field after it makes it a lookup path.
+        dependency_paths = [
+            f"{dependency}{LOOKUP_SEP}pk" for dependency in self._dependencies[model]
+        ]
         read_through_paths = [
             reached
-            for path in self._lookup_paths(model)
+            for path in [*self._lookup_paths(model), *dependency_paths]
             for reached in _models_reached_by_foreign_keys(model, path)
         ]
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
@@ -630,7 +640,10 @@ class Registry:
         return [relations[accessor] for accessor in extractor.follow]
 
     def _add(
-        self, model: type[Model], factory: Callable[[], BaseExtractor[Any]]
+        self,
+        model: type[Model],
+        factory: Callable[[], BaseExtractor[Any]],
+        depends_on: tuple[str, ...] = (),
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
@@ -639,6 +652,7 @@ class Registry:
         )
 
         self._registrations[model] = factory
+        self._dependencies[model] = depends_on
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):
