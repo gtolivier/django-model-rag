@@ -822,10 +822,7 @@ class Registry:
         """
         return [
             relation
-            for relation in [
-                *self._followed_relations(model),
-                *self._dependencies[model].relations,
-            ]
+            for relation in self._followed_or_depended_on_relations(model)
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
@@ -837,11 +834,18 @@ class Registry:
         """
         return any(
             _through_model_of(relation) is through
-            for relation in [
-                *self._followed_relations(model),
-                *self._dependencies[model].relations,
-            ]
+            for relation in self._followed_or_depended_on_relations(model)
         )
+
+    def _followed_or_depended_on_relations(
+        self, model: type[Model]
+    ) -> "list[Field[Any, Any] | ForeignObjectRel]":
+        """List the relations ``model`` follows and those it depends on in one link.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        return [*self._followed_relations(model), *self._dependencies[model].relations]
 
     def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
         """List the models ``model`` reads through relations, one or a chain.

@@ -24,7 +24,7 @@ _CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
-_FORWARD_FOLLOWERS_ATTRIBUTE = "_model_rag_forward_followers"
+_REACHING_FOLLOWERS_ATTRIBUTE = "_model_rag_reaching_followers"
 # Few enough that no query carries more variables than SQLite accepts.
 _PKS_PER_QUERY = 500
 
@@ -160,7 +160,7 @@ def remember_followers_before_save(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
         _committed_reverse_followers(sender, instance.pk)
-        + _forward_followers(sender, instance),
+        + _followers_reaching(sender, instance),
     )
 
 
@@ -208,7 +208,7 @@ def sync_saved_instance(
         _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
     )
     # A row just created has no follower pointing to it at its save.
-    if not created and _is_followed_through_foreign_keys(sender):
+    if not created and _is_followed_through_lookups(sender):
         # Rows may be attached to it before the commit, by a write that sends
         # no signal: its followers are looked up then.
         transaction.on_commit(
@@ -233,7 +233,7 @@ def sync_changed_relation(
     pk_set: set[Any] | None = None,
     **kwargs: Any,
 ) -> None:
-    """Replace, once the transaction commits, the groups given links.
+    """Replace, once the transaction commits, the groups a change of links alters.
 
     Those are the group of the instance, and the groups of the registered rows
     that ``pk_set`` names, from either side of the links.
@@ -364,7 +364,7 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = _forward_followers(sender, instance) + followers_at_save
+        followers = _followers_reaching(sender, instance) + followers_at_save
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
@@ -433,30 +433,29 @@ def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
     ]
 
 
-def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered rows following ``instance`` through foreign keys.
+def _followers_reaching(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through a lookup.
 
-    They reach it through one foreign key of their own, or a chain of them.
+    They reach it through one foreign key of their own, a chain of them, or a
+    many-to-many.
     """
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for lookup, reached_model in _followed_foreign_key_lookups(
-            registered_model, sender
-        )
+        for lookup, reached_model in _followed_lookups(registered_model, sender)
         for follower_pk in _pks_reaching(
             registered_model, lookup, _group_pk(instance, reached_model)
         )
     ]
 
 
-def _followed_foreign_key_lookups(
+def _followed_lookups(
     registered_model: type[Model], sender: type[Model]
 ) -> list[tuple[str, type[Model]]]:
     """Return the lookups through which ``registered_model`` reads ``sender``.
 
-    Each crosses one foreign key or a chain of them, and comes with the model it
-    reaches, one that ``sender``'s rows are rows of.
+    Each crosses one foreign key, a chain of them, or a many-to-many, and comes
+    with the model it reaches, one that ``sender``'s rows are rows of.
     """
     followed_models = _models_of_the_row(sender)
     return [
@@ -487,7 +486,7 @@ def _pks_reaching(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
-    return _is_followed_through_foreign_keys(
+    return _is_followed_through_lookups(
         sender
     ) or _is_followed_through_reverse_relations(sender)
 
@@ -500,10 +499,10 @@ def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
     )
 
 
-def _is_followed_through_foreign_keys(sender: type[Model]) -> bool:
-    """Return whether a registered model reads ``sender``'s rows by foreign keys."""
+def _is_followed_through_lookups(sender: type[Model]) -> bool:
+    """Return whether a registered model reads ``sender``'s rows by a lookup."""
     return any(
-        _followed_foreign_key_lookups(registered_model, sender)
+        _followed_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
@@ -585,8 +584,8 @@ def remember_followers_before_delete(
 
     setattr(
         instance,
-        _FORWARD_FOLLOWERS_ATTRIBUTE,
-        _forward_followers(sender, instance),
+        _REACHING_FOLLOWERS_ATTRIBUTE,
+        _followers_reaching(sender, instance),
     )
 
 
@@ -602,7 +601,7 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
     followers = _reverse_followers(sender, instance) + instance.__dict__.pop(
-        _FORWARD_FOLLOWERS_ATTRIBUTE, []
+        _REACHING_FOLLOWERS_ATTRIBUTE, []
     )
     if not (nearest_registered_model_only or followers):
         return
