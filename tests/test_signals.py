@@ -1218,6 +1218,53 @@ def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_
     }
 
 
+@pytest.mark.django_db
+def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, with a custom extractor reading its
+    # topic's title when it has one: depends_on names the topic, its own
+    # foreign key, SET_NULL on delete. Topic itself is not registered.
+    @rag.register_extractor(Workshop, depends_on=["topic"])
+    class WorkshopExtractor(BaseExtractor[Workshop]):
+        def extract(self, instance: Workshop) -> NormalizedDocument:
+            if instance.topic is None:
+                return self.build_document(instance, text=instance.title)
+            return self.build_document(
+                instance, text=f"{instance.topic.title}: {instance.title}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed.
+    woodworking = _create_the_woodworking_topic()
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+
+    # The delete sets the workshop's foreign key to null before the topic's
+    # row goes: by post_delete, the workshop no longer points to the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Workshop's group as committed: the topic's text is
+    # gone, only the Workshop's own title is left.
+    assert _received_groups(built_outputs) == {
+        f"testapp.workshop:{pottery.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=pottery.pk,
+            ),
+        ],
+    }
+
+
 @pytest.mark.django_db(transaction=True)
 def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row() -> (
     None
