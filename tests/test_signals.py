@@ -2711,6 +2711,55 @@ def test_a_seminar_of_a_venue_following_a_reverse_multi_column_relation_sends_no
 
 
 @pytest.mark.django_db
+def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_seminars(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, reading its venue's name through a lookup
+    # path across the multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title", "venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    # Another venue of the same city: only both columns together name a venue,
+    # so its seminar does not read the hall.
+    Venue.objects.create(city="Lyon", name="Transbordeur")
+    Seminar.objects.create(
+        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Both columns are the key the seminars name the venue by: the save
+        # changes neither, so the hall's seminars still read it.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The path alone resyncs the seminars at the hall: their group, with the
+    # venue's name after the Seminar's own title; not the other venue's seminar.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics\n\nHalle Tony Garnier",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_a_save_sends_the_documents_of_the_instance_as_committed(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
