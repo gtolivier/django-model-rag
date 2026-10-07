@@ -545,7 +545,7 @@ class Registry:
 
         They are ``model`` and its proxies, and the models of the reverse and
         forward foreign keys ``model`` follows, the models its lookup paths reach
-        two links deep, and their proxies.
+        through two foreign keys or more, and their proxies.
         """
         followed_models = (
             [
@@ -599,12 +599,15 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        return [
-            reached
-            for path in self._lookup_paths(model)
-            # The first model is reached through one foreign key only.
-            for reached in _models_reached_by_foreign_keys(model, path)[1:]
-        ]
+        # Paths sharing a prefix reach the models along it more than once.
+        return list(
+            dict.fromkeys(
+                reached
+                for path in self._lookup_paths(model)
+                # The first model is reached through one foreign key only.
+                for reached in _models_reached_by_foreign_keys(model, path)[1:]
+            )
+        )
 
     def _lookup_path_foreign_keys(
         self, model: type[Model]
