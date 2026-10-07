@@ -233,7 +233,7 @@ def sync_changed_relation(
     """Replace, once the transaction commits, the groups given links.
 
     Those are the group of the instance, and the groups of the registered rows
-    that ``pk_set`` names when the links were added from the reverse side.
+    that ``pk_set`` names when the links changed from the reverse side.
     """
     if action not in _CHANGING_ACTIONS or not _signals_enabled():
         return
