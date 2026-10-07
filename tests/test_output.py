@@ -511,6 +511,32 @@ def test_run_instance_hands_the_documents_of_an_instance_its_queryset_keeps() ->
     ]
 
 
+@pytest.mark.django_db
+def test_run_instance_extracts_the_instance_as_stored_not_its_unsaved_changes() -> None:
+    # The output mirrors the database: a rename still in memory, never saved,
+    # must not reach it, or it would hold a name no reader of the table sees.
+    lighting = Category.objects.create(name="Lighting")
+    rag.register(Category, fields=["name"])
+    lighting.name = "Lamps"
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
 def _create_lighting_with_two_lamps() -> Category:
     """Create the Lighting category with its Desk lamp and Floor lamp products."""
     lighting = Category.objects.create(name="Lighting")
