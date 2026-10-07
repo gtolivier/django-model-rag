@@ -541,7 +541,7 @@ class Registry:
         self._require_registered(model)
         senders = self._delete_senders(model)
         del self._registrations[model]
-        self._dependencies.pop(model, None)
+        del self._dependencies[model]
         # A sender another registered model still listens to keeps its listener.
         kept = {
             sender
@@ -588,7 +588,8 @@ class Registry:
         """List the models ``model`` reads through foreign keys, one or a chain.
 
         Those are the models of the foreign keys it follows, and the models
-        its lookup paths reach through their leading foreign keys. Each is
+        its lookup paths and dependencies reach through their leading foreign
+        keys. Each is
         paired with the lookup, from ``model``, that reaches it.
 
         Raises:
@@ -599,17 +600,20 @@ class Registry:
             for relation in self._followed_relations(model)
             if isinstance(relation, ForeignKey)
         ]
-        # A dependency ends on a relation: a field after it makes it a lookup path.
-        dependency_paths = [
-            f"{dependency}{LOOKUP_SEP}pk" for dependency in self._dependencies[model]
-        ]
         read_through_paths = [
             reached
-            for path in [*self._lookup_paths(model), *dependency_paths]
+            for path in [*self._lookup_paths(model), *self._dependency_paths(model)]
             for reached in _models_reached_by_foreign_keys(model, path)
         ]
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
         return list(dict.fromkeys(followed + read_through_paths))
+
+    def _dependency_paths(self, model: type[Model]) -> list[str]:
+        """List the lookup paths through the dependencies ``model`` declares."""
+        # A dependency ends on a relation: a field after it makes it a lookup path.
+        return [
+            f"{dependency}{LOOKUP_SEP}pk" for dependency in self._dependencies[model]
+        ]
 
     def _lookup_paths(self, model: type[Model]) -> list[str]:
         """List the lookup paths ``model`` declares in fields and single_fields.
