@@ -16,6 +16,7 @@ from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
+_POST_ADD = "post_add"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
@@ -218,6 +219,16 @@ def sync_saved_instance(
 
     _schedule_follower_replacements(
         followers_at_save, _followed_source_key(sender, instance)
+    )
+
+
+def sync_changed_relation(instance: Model, action: str, **kwargs: Any) -> None:
+    """Replace, once the transaction commits, the group of an instance given links."""
+    if action != _POST_ADD or not _signals_enabled():
+        return
+
+    _schedule_commit_callbacks(
+        _registered_models(type(instance)), instance, _group_replacer
     )
 
 
