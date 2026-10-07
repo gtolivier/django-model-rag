@@ -9,7 +9,6 @@ from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db.models import (
     Field,
-    ForeignKey,
     ForeignObject,
     ForeignObjectRel,
     Model,
@@ -793,7 +792,7 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
-            if isinstance(relation, ForeignKey)
+            if isinstance(relation, ForeignObject)
         ]
         read_through_paths = [
             reached
