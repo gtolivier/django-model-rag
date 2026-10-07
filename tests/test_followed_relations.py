@@ -107,6 +107,26 @@ def test_run_instance_appends_the_followed_related_text_after_the_own_fields() -
 
 
 @pytest.mark.django_db
+def test_run_instance_reads_the_followed_foreign_key_with_its_reload_in_one_query(
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    # The product is fetched afresh, without its category cached: the reload
+    # through get_queryset() both tells whether the instance is kept and joins
+    # the category, where a separate check, or the category read apart, would
+    # show as more than one query.
+    category = Category.objects.create(name="Furniture")
+    product = Product.objects.get(pk=_create_chair(category).pk)
+    rag.register(Product, follow=["category"])
+
+    with django_assert_num_queries(1):
+        documents = run_instance_documents(product)
+
+    assert [document.text for document in documents] == [
+        "Chair\n\nAdjustable.\n\nNew\n\nFurniture"
+    ]
+
+
+@pytest.mark.django_db
 def test_followed_foreign_key_appends_the_related_text_after_the_declared_fields() -> (
     None
 ):
