@@ -297,9 +297,21 @@ def _pks_pointing_to(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
-    return _is_followed_through_reverse_relations(
-        sender
-    ) or _is_followed_through_foreign_keys(sender)
+    return (
+        _is_followed_through_reverse_relations(sender)
+        or _is_followed_through_foreign_keys(sender)
+        or _is_followed_through_deep_lookups(sender)
+    )
+
+
+def _is_followed_through_deep_lookups(sender: type[Model]) -> bool:
+    """Return whether a registered model reads ``sender`` by a foreign key chain."""
+    followed_models = _models_of_the_row(sender)
+    return any(
+        reached_model in followed_models
+        for registered_model in rag.registered_models()
+        for _lookup, reached_model in rag.deep_lookup_models(registered_model)
+    )
 
 
 def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
