@@ -587,8 +587,8 @@ reference.
   - **Fast delete**: `post_delete` is connected to the followed model only
     while a registered model follows it; unregistering the last one gives
     its fast delete back. A reverse many-to-many in `follow` connects
-    nothing and sends nothing (11d); nor does the reverse of a multi-column
-    `ForeignObject`, where no single value names the parent.
+    nothing and sends nothing (11d). The reverse of a multi-column
+    `ForeignObject`, left out here, is followed since 11c-bis.
   - **Several children of one parent** saved in one transaction replace its
     group once each: batching waits for 12b.
   - **Left for later**, from the review: each save of any model checks, in
@@ -672,6 +672,24 @@ reference.
     a path of several links that crosses a reverse relation (first link
     included), a path given twice, and `depends_on` while models are still
     loading. Every check runs before anything is registered.
+- [x] **11c-bis. Resync through multi-column `ForeignObject` relations.**
+  A `ForeignObject` over several columns (`Seminar.venue`, by
+  `venue_city` and `venue_name`) is followed like a foreign key, in
+  `follow`, in a lookup path (`"venue__name"`, or later in a path:
+  `"seminar__venue__name"`) and in `depends_on`, forward or reverse.
+  Registration already accepted it, but nothing resynced through it.
+  Decided in this feature, after the review of 11c:
+  - **Matched on every column**: a saved or deleted seminar resyncs the
+    venue its columns name together, never another venue that shares
+    one of them; a move resyncs both venues. A seminar whose columns name
+    no venue resyncs nothing. A forward path already joined through the
+    relation, so only the check that stopped at anything but a
+    `ForeignKey` changed.
+  - **Prefetch**: a reverse multi-column relation in `follow` is
+    prefetched by all its target columns.
+  - **Left out**: deleting a venue that seminars follow is not tested
+    (the test bench's relation cascades); a partly null set of columns
+    is not tested; a `CompositePrimaryKey` is not covered.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.

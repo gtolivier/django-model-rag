@@ -540,15 +540,13 @@ loading a fixture. Changes the ORM signals do not see:
 `QuerySet.update()`, `bulk_create()`, `bulk_update()`, raw SQL. A change to
 a related object whose text a registered model reads by any other way than
 those above leaves that model's documents stale until they are saved again:
-a many-to-many in `follow` or in a lookup path (forward or reverse), the
-reverse of a multi-column `ForeignObject` — and, in `depends_on`, such a
-`ForeignObject` either way, which registration accepts though nothing
-resyncs through it — a path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say), or whatever a custom
-extractor reads without declaring it in `depends_on`. Many-to-many
-relations are listed in the [roadmap](ROADMAP.md) as feature 11d. For all
-of these, run `sync_model_rag`, or sync the
-instances concerned from a receiver of your own: in a
-`transaction.on_commit` callback, call
+a many-to-many in `follow` or in a lookup path (forward or reverse), a
+path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say),
+or whatever a custom extractor reads without declaring it in
+`depends_on`. Many-to-many relations are listed in the
+[roadmap](ROADMAP.md) as feature 11d. For all of these, run
+`sync_model_rag`, or sync the instances concerned from a receiver of your
+own: in a `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
 of them, which reads them at the commit and sends them in batches — or
 `run_instance(instance)` for a single one. `run_instance` extracts the
