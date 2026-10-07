@@ -475,6 +475,19 @@ def _models_reached_by_foreign_keys(
     return reached
 
 
+def _dependency_lookup_path(
+    dependency: str, relations: "dict[str, Field[Any, Any] | ForeignObjectRel]"
+) -> str:
+    """Turn ``dependency``, a ``depends_on`` path, into a lookup path.
+
+    ``relations`` are its model's relations, by accessor.
+    """
+    # A dependency names its first relation by accessor, a lookup path by query
+    # name; and it ends on a relation, so a field after it makes it a lookup path.
+    first, *rest = dependency.split(LOOKUP_SEP)
+    return LOOKUP_SEP.join([query_name(relations[first]), *rest, "pk"])
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -729,16 +742,16 @@ class Registry:
     def _dependency_paths(self, model: type[Model]) -> list[str]:
         """List the lookup paths through the dependencies ``model`` declares."""
         dependencies = self._dependencies[model]
+        # Relations are only read when something is depended on: models may
+        # still be loading otherwise.
         if not dependencies:
             return []
+
         relations = relations_by_accessor(model)
-        # A dependency ends on a relation: a field after it makes it a lookup
-        # path. It names its first relation by accessor, a lookup path by query name.
-        paths = []
-        for dependency in dependencies:
-            first, *rest = dependency.split(LOOKUP_SEP)
-            paths.append(LOOKUP_SEP.join([query_name(relations[first]), *rest, "pk"]))
-        return paths
+        return [
+            _dependency_lookup_path(dependency, relations)
+            for dependency in dependencies
+        ]
 
     def _dependency_relations(
         self, model: type[Model]
