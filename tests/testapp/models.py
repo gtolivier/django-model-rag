@@ -275,6 +275,17 @@ class Course(models.Model):
     topics = models.ManyToManyField(Topic, related_name="courses")
 
 
+# --- A multi-table child of a model with a many-to-many -----------------
+# A MasterClass is a Course with an instructor of its own, in a table of its
+# own: it inherits the Course's many-to-many ``topics``, whose links name its
+# Course row, yet Django sends m2m_changed with the MasterClass, not a Course,
+# as its instance.
+
+
+class MasterClass(Course):
+    instructor = models.CharField(max_length=200)
+
+
 # --- A reverse relation without a related_name --------------------------
 # A Remark points to a Note through a foreign key without related_name: the
 # Note reaches its Remarks by the default accessor ``remark_set``, while the

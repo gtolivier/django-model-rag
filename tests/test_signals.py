@@ -41,6 +41,7 @@ from tests.testapp.models import (
     FeaturedProduct,
     Guild,
     Lesson,
+    MasterClass,
     Meetup,
     Note,
     Notice,
@@ -3708,6 +3709,64 @@ def test_clearing_the_courses_of_a_topic_through_a_proxy_replaces_the_courses_gr
                 source_model="course",
                 source_pk=joinery.pk,
                 title="Joinery",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_it_held(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither Course nor MasterClass is registered.
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. The
+    # master class covers two topics, so that the clear removes more than one
+    # link; one of them is covered by another course too, so that its group
+    # keeps that course.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+    masterclass.topics.add(woodworking, carving)
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+
+    # Cleared from the child's side: Django sends m2m_changed with the
+    # MasterClass as its instance, not a Course, while the links name its
+    # Course row, and no primary keys at all. No row is saved again: the clear
+    # deletes only the links of the master class.
+    with django_capture_on_commit_callbacks(execute=True):
+        masterclass.topics.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both topics as committed, each without the master class's
+    # title: the one covered by another course keeps that course's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+                title="Woodworking",
+            ),
+        ],
+        f"testapp.topic:{carving.pk}": [
+            NormalizedDocument(
+                text="Carving\n\nKnives and gouges.\n\nWhittling",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=carving.pk,
+                title="Carving",
             ),
         ],
     }
