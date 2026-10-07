@@ -794,11 +794,12 @@ class Registry:
         ]
 
     def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
-        """List the models ``model`` reads through foreign keys, one or a chain.
+        """List the models ``model`` reads through forward relations, one or a chain.
 
-        Those are the models of the foreign keys it follows, and the models
-        its lookup paths and dependencies reach through their leading foreign
-        keys. Each is paired with the lookup, from ``model``, that reaches it.
+        Those are the models of the foreign keys and forward many-to-many
+        relations it follows, and the models its lookup paths and dependencies
+        reach through their leading foreign keys. Each is paired with the
+        lookup, from ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
