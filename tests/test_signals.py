@@ -3140,6 +3140,61 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
 
 
 @pytest.mark.django_db
+def test_saving_a_venue_unchanged_replaces_each_of_its_following_seminars_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, following its venue through the
+    # multi-column ForeignObject ``venue``: Venue itself is not.
+    rag.register(Seminar, fields=["title"], follow=["venue"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's save below is observed.
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    rigging = Seminar.objects.create(
+        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The save changes neither column the seminars name the venue by: the
+        # seminars that named it before the save are those that name it after.
+        hall.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding each seminar's group once, not one batch for the
+    # seminars found before the save and another for those found after it.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.seminar:{acoustics.pk}": [
+                NormalizedDocument(
+                    text="Acoustics\n\nHalle Tony Garnier\n\nLyon",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=acoustics.pk,
+                    title="Acoustics",
+                ),
+            ],
+            f"testapp.seminar:{rigging.pk}": [
+                NormalizedDocument(
+                    text="Rigging\n\nHalle Tony Garnier\n\nLyon",
+                    source_app_label="testapp",
+                    source_model="seminar",
+                    source_pk=rigging.pk,
+                    title="Rigging",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_renaming_a_venue_followed_by_multi_column_replaces_the_seminars_naming_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
