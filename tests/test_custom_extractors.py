@@ -919,6 +919,15 @@ def test_second_extractor_for_a_model_fails_and_keeps_the_first() -> None:
     assert document.text == "Everything filed under Tools."
 
 
+def test_extractor_for_a_registered_model_fails_registered_before_depends_on() -> None:
+    rag.register_extractor(Category)(CategoryExtractor)
+
+    with pytest.raises(AlreadyRegistered):
+        rag.register_extractor(Category, depends_on=["no_such_field"])(
+            CategoryExtractor
+        )
+
+
 @pytest.mark.django_db
 def test_unregistered_model_with_an_extractor_produces_no_document() -> None:
     Category.objects.create(name="Tools")
