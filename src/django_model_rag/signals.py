@@ -17,6 +17,9 @@ from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
+_BEFORE_CLEAR = "pre_clear"
+# The instance carries the keys of the rows its links reach, from before a clear.
+_CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
@@ -235,17 +238,53 @@ def sync_changed_relation(
     Those are the group of the instance, and the groups of the registered rows
     that ``pk_set`` names when the links changed from the reverse side.
     """
-    if action not in _CHANGING_ACTIONS or not _signals_enabled():
+    if not _signals_enabled():
+        return
+
+    if action == _BEFORE_CLEAR:
+        _remember_cleared_pks(kwargs["sender"], instance, model, reverse)
+        return
+
+    if action not in _CHANGING_ACTIONS:
         return
 
     _schedule_commit_callbacks(
         _registered_models(type(instance)), instance, _group_replacer
     )
     if reverse and model is not None and rag.is_registered(model):
+        # Only a clear leaves keys behind, found before it: pk_set is None then.
+        pk_set = (pk_set or set()) | instance.__dict__.pop(
+            _CLEARED_PKS_ATTRIBUTE, set()
+        )
         _schedule_follower_replacements(
-            [(model, pk) for pk in pk_set or ()],
+            [(model, pk) for pk in pk_set],
             _followed_source_key(type(instance), instance),
         )
+
+
+def _remember_cleared_pks(
+    through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
+) -> None:
+    """Keep the keys of the registered rows a reverse clear is about to unlink.
+
+    Django sends no primary keys with the clear: they can only be found before it.
+    """
+    if not (reverse and model is not None and rag.is_registered(model)):
+        return
+
+    fields = {
+        field.related_model: field
+        for field in through._meta.fields
+        if field.remote_field is not None
+    }
+    linked_rows = through._base_manager.filter(
+        **{fields[type(instance)].name: instance.pk}
+    )
+    setattr(
+        instance,
+        _CLEARED_PKS_ATTRIBUTE,
+        set(linked_rows.values_list(fields[model].attname, flat=True)),
+    )
 
 
 def _replace_followers_as_committed(
