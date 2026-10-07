@@ -189,6 +189,10 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
         ImproperlyConfigured: a ``depends_on`` name is not a relation, or is
             a many-to-many (forward or reverse).
     """
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported while they load
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
     accessors = relations_by_accessor(model)
     for name in names:
         relation = accessors.get(name.split(LOOKUP_SEP)[0])
@@ -197,6 +201,9 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
             raise ImproperlyConfigured(message)
         if relation.many_to_many:
             message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
+            raise ImproperlyConfigured(message)
+        if relation.related_model is None or isinstance(relation, GenericRelation):
+            message = f"{model.__name__}: depends_on {name!r} is a generic relation"
             raise ImproperlyConfigured(message)
 
 
