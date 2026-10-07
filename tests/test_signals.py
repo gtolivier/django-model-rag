@@ -1307,6 +1307,63 @@ def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_p
     }
 
 
+@pytest.mark.django_db
+def test_saving_a_category_a_custom_extractor_depends_on_two_links_deep_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, with a custom extractor reading its
+    # product's category's name: depends_on names the path through two foreign
+    # keys, whose last link's saves change its documents. Neither Product nor
+    # Category is registered.
+    @rag.register_extractor(Offer, depends_on=["product__category"])
+    class OfferExtractor(BaseExtractor[Offer]):
+        def extract(self, instance: Offer) -> NormalizedDocument:
+            return self.build_document(
+                instance,
+                text=f"{instance.title}: {instance.product.category.name}",
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+    rake = Product.objects.create(
+        name="Rake",
+        description="Wooden.",
+        price="14.50",
+        category=garden,
+    )
+    spring = Offer.objects.create(title="Spring sale", product=lamp)
+    # An offer of a product in another category: the save below does not
+    # change its group.
+    Offer.objects.create(title="Autumn sale", product=rake)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The group of the offer of a product in the saved category,
+    # with the category's new name.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{spring.pk}": [
+            NormalizedDocument(
+                text="Spring sale: Lamps",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=spring.pk,
+            ),
+        ],
+    }
+
+
 @pytest.mark.django_db(transaction=True)
 def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row() -> (
     None
