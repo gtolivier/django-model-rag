@@ -578,9 +578,18 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
+        followed = self._followed_relations(model)
+        dependencies = self._dependencies.get(model, ())
+        if dependencies:
+            relations = relations_by_accessor(model)
+            followed += [
+                relations[dependency]
+                for dependency in dependencies
+                if dependency in relations
+            ]
         return [
             relation
-            for relation in self._followed_relations(model)
+            for relation in followed
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
