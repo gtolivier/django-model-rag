@@ -2,7 +2,7 @@ from collections.abc import Iterator, Mapping
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from django.db.models import QuerySet
+from django.db.models import Model, QuerySet
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import (
@@ -12,7 +12,15 @@ from django_model_rag import (
     rag,
 )
 from tests.recording import PRUNE_KEYS_QUERY, run_documents, run_instance_documents
-from tests.testapp.models import AccordionItem, Category, Page, Product, TextPlugin
+from tests.testapp.models import (
+    AccordionItem,
+    Category,
+    Course,
+    Page,
+    Product,
+    TextPlugin,
+    Topic,
+)
 
 
 class CategoryExtractor(BaseExtractor[Category]):
@@ -622,6 +630,27 @@ def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
     ):
         rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginExtractor)
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        pytest.param(Course, "topics", id="forward"),
+        pytest.param(Topic, "courses", id="reverse"),
+    ],
+)
+def test_depending_on_a_many_to_many_fails_at_registration(
+    model: type[Model], name: str
+) -> None:
+    class AnyModelExtractor(BaseExtractor[Model]):
+        def extract(self, instance: Model) -> NormalizedDocument:
+            return self.build_document(instance, text=str(instance))
+
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
 
 
 @pytest.mark.django_db
