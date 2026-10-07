@@ -1906,6 +1906,52 @@ def test_adding_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_top
 
 
 @pytest.mark.django_db
+def test_saving_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, with a custom extractor reading the titles
+    # of its courses: depends_on names its reverse many-to-many ``courses``,
+    # whose saves change its documents. Course itself is not registered.
+    @rag.register_extractor(Topic, depends_on=["courses"])
+    class TopicExtractor(BaseExtractor[Topic]):
+        def extract(self, instance: Topic) -> NormalizedDocument:
+            titles = [course.title for course in instance.courses.order_by("pk")]
+            return self.build_document(
+                instance, text=f"{instance.title}: {', '.join(titles)}"
+            )
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and of the add never run, so only the course's save below
+    # is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.title = "Joinery basics"
+        basics.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Topic's group, with the course's new title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: Joinery basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
