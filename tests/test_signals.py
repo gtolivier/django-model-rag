@@ -4837,12 +4837,13 @@ def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logg
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the categories' saves below are observed.
     lighting = Category.objects.create(name="Lighting")
-    _create_a_plain_desk_lamp(lighting)
+    desk_lamp = _create_a_plain_desk_lamp(lighting)
     tools = Category.objects.create(name="Tools")
     hammer = _create_a_hammer(tools)
 
     # The saves themselves go through: their callbacks are captured here, and
-    # run below as the commit would run them, once the database fails.
+    # run below as the commit would run them, once the database fails. The
+    # followers each category had before its save are found by then.
     with django_capture_on_commit_callbacks() as callbacks:
         lighting.name = "Lamps"
         lighting.save()
@@ -4880,8 +4881,21 @@ def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logg
     assert f"testapp.category:{lighting.pk}" in record.getMessage()
     assert record.exc_info is not None
     assert record.exc_info[1] is lookup_error
-    # The other category's follower still reaches an output.
+    # The follower the failing category had before its save, found then, still
+    # reaches an output, and so does the other category's follower.
     assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{desk_lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=desk_lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{desk_lamp.pk}/",
+                ),
+            ],
+        },
         {
             f"testapp.product:{hammer.pk}": [
                 NormalizedDocument(
@@ -4893,5 +4907,5 @@ def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logg
                     url=f"/products/{hammer.pk}/",
                 ),
             ],
-        }
+        },
     ]
