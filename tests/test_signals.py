@@ -3661,6 +3661,28 @@ def test_adding_a_topic_to_a_course_following_its_topics_with_signals_off_sends_
     assert _replaced(built_outputs) == []
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_topic_added_to_a_course_following_it_with_no_output_writes_no_link() -> None:
+    # Created before Course is registered: with no MODEL_RAG_OUTPUT, their own
+    # saves would fail otherwise.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # No transaction around the add (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the add must fail before its
+    # INSERT of the join row does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        basics.topics.add(woodworking)
+
+    assert not basics.topics.exists()
+
+
 @pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
