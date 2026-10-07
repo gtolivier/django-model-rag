@@ -892,6 +892,57 @@ def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group
 
 
 @pytest.mark.django_db
+def test_deleting_a_category_whose_following_products_cascade_sends_only_their_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key, CASCADE on delete: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's delete below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp_pk = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    ).pk
+    bulb_pk = Product.objects.create(
+        name="Bulb",
+        description="A bulb for the lamp.",
+        price="5.00",
+        category=lighting,
+    ).pk
+
+    # The products are deleted with the category by cascade: they are found as
+    # its followers before the delete, yet no longer exist at the commit.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The products' empty groups, merged across replace calls: whether they
+    # come in one call or one per product is not what this test is about.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp_pk}": [],
+        f"testapp.product:{bulb_pk}": [],
+    }
+    # Each group sent once: no replacement of a product's group follows its
+    # empty one.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [f"testapp.product:{lamp_pk}", f"testapp.product:{bulb_pk}"]
+    )
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
