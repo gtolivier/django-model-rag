@@ -239,14 +239,24 @@ def _require_relation(
     relation = accessors.get(first)
     if relation is None:
         raise _not_a_relation(model, name)
-    related = _require_single_valued(model, name, relation)
+    # a forward many-to-many is a dependency only as a one-link path
+    related = _require_single_valued(
+        model,
+        name,
+        relation,
+        many_to_many_allowed=not rest and not isinstance(relation, ForeignObjectRel),
+    )
     if rest and isinstance(relation, ForeignObjectRel):
         raise _reverse_relation_crossed(model, name, first)
     _require_forward_relations(model, name, related, rest)
 
 
 def _require_single_valued(
-    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+    model: type[Model],
+    name: str,
+    relation: "Field[Any, Any] | ForeignObjectRel",
+    *,
+    many_to_many_allowed: bool = False,
 ) -> type[Model]:
     """Return the model ``relation``, a link of ``model``'s ``depends_on``
     path ``name``, points to.
@@ -259,7 +269,7 @@ def _require_single_valued(
     # and this module is imported while they load
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
-    if relation.many_to_many:
+    if relation.many_to_many and not many_to_many_allowed:
         message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
         raise ImproperlyConfigured(message)
     related = relation.related_model
@@ -838,7 +848,14 @@ class Registry:
             for path in self._lookup_paths(model)
             for reached in _models_reached_by_foreign_keys(model, path)
         ]
-        depended_on = list(self._dependencies[model].foreign_key_lookups)
+        depended_on = [
+            *self._dependencies[model].foreign_key_lookups,
+            *(
+                (relation.name, relation.related_model)
+                for relation in self._dependencies[model].relations
+                if isinstance(relation, ManyToManyField)
+            ),
+        ]
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
         return list(dict.fromkeys(followed + read_through_paths + depended_on))
 
