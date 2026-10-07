@@ -543,7 +543,10 @@ those above leaves that model's documents stale until they are saved again:
 a many-to-many in `follow` or in a lookup path (forward or reverse), a
 path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say),
 or whatever a custom extractor reads without declaring it in
-`depends_on`. Many-to-many relations are listed in the
+`depends_on`. A row whose followers point to it by another column than its
+primary key (a `to_field`, or the columns of a multi-column `ForeignObject`)
+and that changes that column leaves them stale too: they no longer point to
+it once it is saved. Many-to-many relations are listed in the
 [roadmap](ROADMAP.md) as feature 11d. For all of these, run
 `sync_model_rag`, or sync the instances concerned from a receiver of your
 own: in a `transaction.on_commit` callback, call

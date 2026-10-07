@@ -686,10 +686,19 @@ reference.
     relation, so only the check that stopped at anything but a
     `ForeignKey` changed.
   - **Prefetch**: a reverse multi-column relation in `follow` is
-    prefetched by all its target columns.
+    prefetched by all its target columns, and the children load every
+    column they are matched by.
+  - **`GenericRelation` still not followed**: it is a `ForeignObject`
+    too, but one-to-many; only a forward many-to-one or one-to-one link
+    counts as a foreign key, so a photo following its tags is not resynced
+    and `Tag` keeps Django's fast delete.
   - **Left out**: deleting a venue that seminars follow is not tested
     (the test bench's relation cascades); a partly null set of columns
-    is not tested; a `CompositePrimaryKey` is not covered.
+    is not tested; a `CompositePrimaryKey` is not covered. Renaming a
+    venue (changing a column its seminars name it by) resyncs none of
+    them: they are looked up after the save, by the new values, and no
+    longer match — the same holds for a `to_field` without a database
+    constraint. The query count of the prefetch is not pinned by a test.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.
