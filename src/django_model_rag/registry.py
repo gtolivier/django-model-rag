@@ -703,8 +703,7 @@ class Registry:
 
         Those are the models of the foreign keys it follows, and the models
         its lookup paths and dependencies reach through their leading foreign
-        keys. Each is
-        paired with the lookup, from ``model``, that reaches it.
+        keys. Each is paired with the lookup, from ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
