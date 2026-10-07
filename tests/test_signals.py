@@ -940,6 +940,39 @@ def test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_not
 
 
 @pytest.mark.django_db
+def test_saving_a_category_followed_by_foreign_key_looks_its_followers_up_once(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    lighting = Category.objects.create(name="Lighting")
+    _create_a_plain_desk_lamp(lighting)
+
+    # The commit callbacks are not run: only the save itself is counted.
+    with (
+        django_capture_on_commit_callbacks(execute=False),
+        django_assert_num_queries(2) as queries,
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+
+    # The save's UPDATE and one lookup of the products following the
+    # category: the lookup before the save takes the place of the one after
+    # it, and the category's row as committed is not loaded for a link to its
+    # primary key.
+    statements = _statements(queries)
+    assert sorted(statements) == ["SELECT", "UPDATE"]
+    lookup = queries.captured_queries[statements.index("SELECT")]["sql"]
+    assert 'FROM "testapp_product"' in lookup
+
+
+@pytest.mark.django_db
 def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
