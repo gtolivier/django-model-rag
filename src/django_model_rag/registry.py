@@ -544,15 +544,20 @@ class Registry:
         """List the senders whose deletions change the group of ``model``.
 
         They are ``model`` and its proxies, and the models of the reverse and
-        forward foreign keys ``model`` follows and their proxies.
+        forward foreign keys ``model`` follows, the models its lookup paths reach
+        two links deep, and their proxies.
         """
-        followed_models = [
-            relation.related_model
-            for relation in self.followed_reverse_relations(model)
-        ] + [
-            foreign_key.related_model
-            for foreign_key in self.followed_forward_foreign_keys(model)
-        ]
+        followed_models = (
+            [
+                relation.related_model
+                for relation in self.followed_reverse_relations(model)
+            ]
+            + [
+                foreign_key.related_model
+                for foreign_key in self.followed_forward_foreign_keys(model)
+            ]
+            + [reached for _, reached in self.deep_lookup_models(model)]
+        )
         return _model_and_proxies(model) + [
             sender
             for followed_model in followed_models
