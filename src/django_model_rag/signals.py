@@ -306,8 +306,12 @@ def _pks_pointing_to(
     # The foreign key holds the value of the column it targets, not always the
     # primary key.
     target_field = foreign_key.foreign_related_fields[0]
+    target_value = getattr(instance, target_field.attname)
+    if target_value is None:
+        # A null foreign key points to no row, not even to a null target value.
+        return []
     pointing_rows = registered_model._base_manager.filter(
-        **{foreign_key.attname: getattr(instance, target_field.attname)}
+        **{foreign_key.attname: target_value}
     )
     return list(pointing_rows.values_list("pk", flat=True))
 
