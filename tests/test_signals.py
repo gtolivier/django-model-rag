@@ -3451,6 +3451,49 @@ def test_adding_a_course_to_a_topic_following_its_courses_replaces_the_topics_gr
 
 
 @pytest.mark.django_db
+def test_adding_a_course_to_a_topic_through_a_proxy_replaces_the_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Topic is registered, following its courses by the reverse
+    # many-to-many ``courses``: neither Course nor TopicProxy is.
+    rag.register(Topic, follow=["courses"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # The same Topic's row, read under the proxy's class.
+    proxy_woodworking = TopicProxy.objects.get(pk=woodworking.pk)
+
+    # Added from the proxy's side: Django sends m2m_changed with the proxy
+    # instance as its instance, not a Topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        proxy_woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Topic's group as committed: its own title and summary, then the added
+    # course's title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_two_topics_to_a_course_replaces_the_group_of_each_topic_following_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
