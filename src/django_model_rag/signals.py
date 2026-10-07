@@ -227,6 +227,14 @@ def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
         for registered_model in rag.registered_models()
         for foreign_key in _followed_foreign_keys(registered_model, sender)
         for follower_pk in _pks_pointing_to(registered_model, foreign_key, instance)
+    ] + [
+        (registered_model, follower_pk)
+        for registered_model in rag.registered_models()
+        for lookup, reached_model in rag.deep_lookup_models(registered_model)
+        if reached_model in _models_of_the_row(sender)
+        for follower_pk in registered_model._base_manager.filter(
+            **{f"{lookup}__pk": _group_pk(instance, reached_model)}
+        ).values_list("pk", flat=True)
     ]
 
 

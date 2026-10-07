@@ -566,6 +566,32 @@ class Registry:
         ] + self._lookup_path_foreign_keys(model)
         return list(dict.fromkeys(foreign_keys))
 
+    def deep_lookup_models(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+        """List the models ``model`` reads through two foreign keys or more.
+
+        Each is paired with the lookup, from ``model``, that reaches it.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        extractor = self.new_extractor(model)
+        if not isinstance(extractor, DeclaredFieldsExtractor):
+            return []
+
+        reached: list[tuple[str, type[Model]]] = []
+        for path in [*extractor.fields, *extractor.single_fields]:
+            names: list[str] = []
+            for link in path_links(model, path):
+                related_model = link.relation.related_model
+                if not isinstance(link.relation, ForeignKey) or not isinstance(
+                    related_model, type
+                ):
+                    break
+                names.append(link.name)
+                if len(names) > 1:
+                    reached.append((LOOKUP_SEP.join(names), related_model))
+        return reached
+
     def _lookup_path_foreign_keys(
         self, model: type[Model]
     ) -> list["ForeignKey[Any, Any]"]:
