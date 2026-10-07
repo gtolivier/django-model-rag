@@ -253,6 +253,19 @@ class Workshop(models.Model):
     )
 
 
+# --- A foreign key to a model with an optional relation -----------------
+# A Session points to a Workshop, which may point to a Topic through its
+# SET_NULL foreign key: a lookup path from a Session reaches the Topic two
+# links deep, the last one nulled when the Topic is deleted.
+
+
+class Session(models.Model):
+    title = models.CharField(max_length=200)
+    workshop = models.ForeignKey(
+        Workshop, related_name="sessions", on_delete=models.CASCADE
+    )
+
+
 # --- A many-to-many relation --------------------------------------------
 # A Course covers several Topics, and a Topic may belong to several Courses.
 

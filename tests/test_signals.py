@@ -45,6 +45,7 @@ from tests.testapp.models import (
     Product,
     Review,
     Seminar,
+    Session,
     Shelf,
     Showroom,
     Supplier,
@@ -1313,6 +1314,59 @@ def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group
                     source_model="workshop",
                     source_pk=pottery.pk,
                     title="Pottery",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_topic_read_two_links_deep_through_set_null_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Session is registered, reading its workshop's topic's title
+    # through a lookup path two links deep, the last one SET_NULL on delete,
+    # with no follow: neither Workshop nor Topic is registered, so the topic
+    # reaches the session only through the path.
+    rag.register(Session, fields=["title", "workshop__topic__title"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed.
+    woodworking = Topic.objects.create(
+        summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+    glazing = Topic.objects.create(
+        summary="Colours and kilns.", title="Glazing", slug="glazing"
+    )
+    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    ceramics = Workshop.objects.create(title="Ceramics", topic=glazing)
+    morning = Session.objects.create(title="Morning", workshop=pottery)
+    Session.objects.create(title="Evening", workshop=ceramics)
+
+    # The delete sets the workshop's foreign key to null before the topic's
+    # row goes: by post_delete, the path from the session no longer reaches
+    # the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The session's group as committed: the topic's title is gone, only the
+    # session's own title is left. The session of a workshop on another topic
+    # is not sent.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.session:{morning.pk}": [
+                NormalizedDocument(
+                    text="Morning",
+                    source_app_label="testapp",
+                    source_model="session",
+                    source_pk=morning.pk,
+                    title="Morning",
                 ),
             ],
         }
