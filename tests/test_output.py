@@ -584,6 +584,37 @@ def test_run_instance_hands_an_empty_group_for_an_instance_whose_row_was_deleted
     assert output.replaced == [{f"testapp.category:{lighting.pk}": []}]
 
 
+@pytest.mark.django_db(databases=["default", "other"])
+def test_run_instance_reloads_the_instance_from_the_database_it_was_loaded_from() -> (
+    None
+):
+    # The instance was loaded from "other": it must be reloaded there, not from
+    # the router's default. Default holds a category under the same primary key
+    # but another name: a reload from default would hand Desks' document under
+    # lighting's key, or an empty group if default held nothing.
+    stored = Category.objects.using("other").create(name="Lighting")
+    Category.objects.create(pk=stored.pk, name="Desks")
+    rag.register(Category, fields=["name"])
+    lighting = Category.objects.using("other").get(pk=stored.pk)
+
+    output = RecordingOutput()
+    SyncPipeline(output).run_instance(lighting)
+
+    assert output.replaced == [
+        {
+            f"testapp.category:{lighting.pk}": [
+                NormalizedDocument(
+                    text="Lighting",
+                    source_app_label="testapp",
+                    source_model="category",
+                    source_pk=lighting.pk,
+                    title="Lighting",
+                ),
+            ],
+        }
+    ]
+
+
 def _create_lighting_with_two_lamps() -> Category:
     """Create the Lighting category with its Desk lamp and Floor lamp products."""
     lighting = Category.objects.create(name="Lighting")
