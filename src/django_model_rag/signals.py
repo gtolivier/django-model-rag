@@ -218,14 +218,19 @@ def _replace_followers_as_committed(
 
     Rows attached after the save, in the same transaction, follow it too.
     """
-    followers = (
-        _reverse_followers(sender, instance)
-        + _forward_followers(sender, instance)
-        + previous_followers
-    )
-    for replace_groups in _follower_replacers(
-        followers, _followed_source_key(sender, instance)
-    ):
+    followed_source_key = _followed_source_key(sender, instance)
+    try:
+        followers = (
+            _reverse_followers(sender, instance)
+            + _forward_followers(sender, instance)
+            + previous_followers
+        )
+    except Exception:
+        # An error escaping a commit callback would break the commit.
+        logger.exception("Looking up the followers of %s failed", followed_source_key)
+        return
+
+    for replace_groups in _follower_replacers(followers, followed_source_key):
         replace_groups()
 
 
