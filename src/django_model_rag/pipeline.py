@@ -265,9 +265,10 @@ def _reloaded_groups(
         TypeError: extract() returned a document of another source.
     """
     reloaded = _reloaded_by_hook(pks, kept)
+    to_python = kept.model._meta.pk.to_python
     return {
         model_source_key(kept.model, pk): _reloaded_documents(
-            reloaded.get(pk), extractor
+            reloaded.get(to_python(pk)), extractor
         )
         for pk in pks
     }
