@@ -182,20 +182,12 @@ def _require_related_text(
 
 
 def _require_relations(model: type[Model], names: FieldNames) -> None:
-    """Fail unless each of ``names`` starts with a relation accessor of ``model``
-    that is neither a many-to-many nor generic, and crosses no reverse relation
-    past it.
+    """Fail unless ``names`` names, once each, ``depends_on`` paths of ``model``.
 
     Raises:
-        ImproperlyConfigured: a ``depends_on`` name is not a relation, is a
-            many-to-many (forward or reverse), is a generic foreign key or
-            generic relation, or crosses a reverse relation past its first link,
-            or a name is given twice.
+        ImproperlyConfigured: a name is given twice, or is not a path
+            :func:`_require_relation` accepts.
     """
-    # imported here: contenttypes' models cannot load before the apps are ready,
-    # and this module is imported while they load
-    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
-
     accessors = relations_by_accessor(model)
     seen: set[str] = set()
     for name in names:
@@ -203,18 +195,39 @@ def _require_relations(model: type[Model], names: FieldNames) -> None:
             message = f"{model.__name__}: depends_on {name!r} is given twice"
             raise ImproperlyConfigured(message)
         seen.add(name)
-        first, *rest = name.split(LOOKUP_SEP)
-        relation = accessors.get(first)
-        if relation is None:
-            message = f"{model.__name__}: depends_on {name!r} is not a relation"
-            raise ImproperlyConfigured(message)
-        if relation.many_to_many:
-            message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
-            raise ImproperlyConfigured(message)
-        if relation.related_model is None or isinstance(relation, GenericRelation):
-            message = f"{model.__name__}: depends_on {name!r} is a generic relation"
-            raise ImproperlyConfigured(message)
-        _require_no_later_reverse_relation(model, name, relation.related_model, rest)
+        _require_relation(model, name, accessors)
+
+
+def _require_relation(
+    model: type[Model],
+    name: str,
+    accessors: "dict[str, Field[Any, Any] | ForeignObjectRel]",
+) -> None:
+    """Fail unless ``name`` starts with one of ``model``'s relation
+    ``accessors`` that is neither a many-to-many nor generic, and crosses no
+    reverse relation past it.
+
+    Raises:
+        ImproperlyConfigured: the ``depends_on`` name is not a relation, is a
+            many-to-many (forward or reverse), is a generic foreign key or
+            generic relation, or crosses a reverse relation past its first link.
+    """
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported while they load
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
+    first, *rest = name.split(LOOKUP_SEP)
+    relation = accessors.get(first)
+    if relation is None:
+        message = f"{model.__name__}: depends_on {name!r} is not a relation"
+        raise ImproperlyConfigured(message)
+    if relation.many_to_many:
+        message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
+        raise ImproperlyConfigured(message)
+    if relation.related_model is None or isinstance(relation, GenericRelation):
+        message = f"{model.__name__}: depends_on {name!r} is a generic relation"
+        raise ImproperlyConfigured(message)
+    _require_no_later_reverse_relation(model, name, relation.related_model, rest)
 
 
 def _require_no_later_reverse_relation(
