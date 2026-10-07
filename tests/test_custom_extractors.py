@@ -17,7 +17,9 @@ from tests.testapp.models import (
     Category,
     Course,
     Page,
+    Photo,
     Product,
+    Tag,
     TextPlugin,
     Topic,
 )
@@ -640,6 +642,29 @@ def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
     ],
 )
 def test_depending_on_a_many_to_many_fails_at_registration(
+    model: type[Model], name: str
+) -> None:
+    class AnyModelExtractor(BaseExtractor[Model]):
+        def extract(self, instance: Model) -> NormalizedDocument:
+            return self.build_document(instance, text=str(instance))
+
+    with pytest.raises(
+        ImproperlyConfigured,
+        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
+    ):
+        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
+
+
+@pytest.mark.parametrize(
+    ("model", "name"),
+    [
+        # Tag.content_object may point to an instance of any model: there is
+        # no single model whose changes to listen to.
+        pytest.param(Tag, "content_object", id="generic-foreign-key"),
+        pytest.param(Photo, "tags", id="generic-relation"),
+    ],
+)
+def test_depending_on_a_generic_relation_fails_at_registration(
     model: type[Model], name: str
 ) -> None:
     class AnyModelExtractor(BaseExtractor[Model]):
