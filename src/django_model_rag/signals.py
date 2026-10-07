@@ -18,7 +18,7 @@ from django_model_rag.registry import concrete_model_of, rag
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
 _BEFORE_CLEAR = "pre_clear"
-_BEFORE_ADD = "pre_add"
+_BEFORE_WRITE = frozenset({"pre_add", "pre_remove"})
 # The instance carries the keys of the rows its links reach, from before a clear.
 _CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
@@ -246,8 +246,8 @@ def sync_changed_relation(
         _remember_cleared_pks(through, instance, model)
         return
 
-    if action == _BEFORE_ADD:
-        _check_output_before_add(through, instance, model)
+    if action in _BEFORE_WRITE:
+        _check_output_before_write(through, instance, model)
         return
 
     if action not in _CHANGING_ACTIONS:
@@ -269,13 +269,13 @@ def sync_changed_relation(
         )
 
 
-def _check_output_before_add(
+def _check_output_before_write(
     through: type[Model], instance: Model, model: type[Model] | None
 ) -> None:
-    """Fail before the join rows are written if the add would sync a bad output.
+    """Fail before the join rows are written or deleted if the sync would fail.
 
     In autocommit the join rows are committed as soon as they are written:
-    after the add, a failing check would come too late to keep them out.
+    after the change, a failing check would come too late to undo it.
     """
     if _registered_models_following(type(instance), through) or (
         _reaches_registered_rows(model, through)
