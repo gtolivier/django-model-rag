@@ -12,7 +12,7 @@ from django.db.models import ForeignObjectRel, Model
 from django_model_rag.documents import model_source_key
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
-from django_model_rag.registry import rag
+from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 # The instance carries its followers from before the save to after it.
@@ -39,21 +39,14 @@ def _committed_instance(model: type[Model], pk: Any) -> Model | None:
         return None
 
 
-def _concrete_model(sender: type[Model]) -> type[Model]:
-    """Return the model whose table holds the rows of ``sender``."""
-    # A proxy sends signals under its own sender: it is its concrete model. The
-    # fallback only satisfies the stubs: Django sets it on every model class.
-    return sender._meta.concrete_model or sender
-
-
 def _followed_source_key(sender: type[Model], instance: Model) -> str:
     """Return the source key a failure to resync the followers of ``instance`` logs."""
-    return model_source_key(_concrete_model(sender), instance.pk)
+    return model_source_key(concrete_model_of(sender), instance.pk)
 
 
 def _models_of_the_row(sender: type[Model]) -> tuple[type[Model], ...]:
     """Return the models a row of ``sender`` is a row of, nearest first."""
-    concrete_model = _concrete_model(sender)
+    concrete_model = concrete_model_of(sender)
     # A multi-table child is a row of each of its parents too.
     return (concrete_model, *concrete_model._meta.get_parent_list())
 
@@ -259,7 +252,7 @@ def _followed_foreign_key_lookups(
         (lookup, reached_model)
         for lookup, reached_model in rag.foreign_key_lookups(registered_model)
         # A foreign key may name a proxy: it reaches its concrete model's rows.
-        if _concrete_model(reached_model) in followed_models
+        if concrete_model_of(reached_model) in followed_models
     ]
 
 

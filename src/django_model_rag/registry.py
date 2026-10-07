@@ -333,6 +333,13 @@ def _delete_uid(model: type[Model]) -> str:
     return f"django_model_rag.sync_delete.{model._meta.label}"
 
 
+def concrete_model_of(model: type[Model]) -> type[Model]:
+    """Return the model whose table holds the rows of ``model``."""
+    # A proxy sends signals under its own sender: it is its concrete model. The
+    # fallback only satisfies the stubs: Django sets it on every model class.
+    return model._meta.concrete_model or model
+
+
 def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
     """Return ``model`` and its proxies, which Django deletes under their own."""
     # Not apps.get_models(): a model is registered while the apps still load.
@@ -556,9 +563,7 @@ class Registry:
             for followed_model in followed_models
             # A foreign key may name a proxy: Django deletes the concrete model's
             # rows under the concrete model, or under any of its proxies.
-            for sender in _model_and_proxies(
-                followed_model._meta.concrete_model or followed_model
-            )
+            for sender in _model_and_proxies(concrete_model_of(followed_model))
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
