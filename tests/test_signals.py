@@ -1230,6 +1230,53 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
 
 
 @pytest.mark.django_db
+def test_an_output_failing_on_the_followers_of_a_category_proxy_logs_the_category(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: neither Category nor its proxy is.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the proxy's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.product:{lamp.pk}"},
+    }
+
+    # Django sends post_save with the proxy as its sender, not Category. An
+    # error escaping the commit callbacks would fail the test: the commit
+    # itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lamps = CategoryProxy.objects.get(pk=lighting.pk)
+        lamps.name = "Lamps"
+        lamps.save()
+
+    [record] = _package_log_records(caplog)
+    # The record names the row saved by its concrete model's key, the one its
+    # source keys use, not by the proxy's.
+    assert record.getMessage() == (
+        f"Syncing testapp.product instances that follow "
+        f"testapp.category:{lighting.pk} failed"
+    )
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_through_set_null_replaces_the_workshops_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
