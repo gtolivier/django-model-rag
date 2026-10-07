@@ -3,7 +3,7 @@
 import logging
 from collections.abc import Callable
 from functools import partial
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeGuard
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
@@ -251,7 +251,7 @@ def sync_changed_relation(
     _schedule_commit_callbacks(
         _registered_models(type(instance)), instance, _group_replacer
     )
-    if reverse and model is not None and rag.is_registered(model):
+    if _unlinks_registered_rows(model, reverse):
         # Only a clear leaves keys behind, found before it: pk_set is None then.
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
@@ -262,6 +262,13 @@ def sync_changed_relation(
         )
 
 
+def _unlinks_registered_rows(
+    model: type[Model] | None, reverse: bool
+) -> TypeGuard[type[Model]]:
+    """Return whether a links change from the reverse side reaches registered rows."""
+    return reverse and model is not None and rag.is_registered(model)
+
+
 def _remember_cleared_pks(
     through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
 ) -> None:
@@ -269,21 +276,21 @@ def _remember_cleared_pks(
 
     Django sends no primary keys with the clear: they can only be found before it.
     """
-    if not (reverse and model is not None and rag.is_registered(model)):
+    if not _unlinks_registered_rows(model, reverse):
         return
 
-    fields = {
+    foreign_key_to = {
         field.related_model: field
         for field in through._meta.fields
         if field.remote_field is not None
     }
-    linked_rows = through._base_manager.filter(
-        **{fields[type(instance)].name: instance.pk}
+    links = through._base_manager.filter(
+        **{foreign_key_to[type(instance)].name: instance.pk}
     )
     setattr(
         instance,
         _CLEARED_PKS_ATTRIBUTE,
-        set(linked_rows.values_list(fields[model].attname, flat=True)),
+        set(links.values_list(foreign_key_to[model].attname, flat=True)),
     )
 
 
