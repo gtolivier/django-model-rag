@@ -53,8 +53,10 @@ flowchart LR
 You register your models once, each with the extractor that turns an
 instance into documents — built from `fields`, `follow`… or written by you.
 Three things then run the pipeline: the `sync_model_rag` command, over whole
-models; the signals, for each instance saved or deleted, once its
-transaction commits; and your own code. The pipeline hands the documents to
+models; the signals, once a transaction commits, for each instance saved and
+for the instances that read a saved or deleted one; and your own code. A
+deleted instance needs no pipeline: the signals send its empty group straight
+to the output. The pipeline hands the documents to
 an output that you supply, grouped by the instance they come from: each
 group replaces what the output held for that instance. The package stores
 nothing itself.
