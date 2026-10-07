@@ -2943,6 +2943,37 @@ def test_a_forward_followed_topic_is_listened_to_only_while_followed() -> None:
         assert not post_delete.has_listeners(sender)
 
 
+def test_a_topic_custom_extractors_depend_on_is_listened_to_only_while_needed() -> None:
+    # Two registered models have a custom extractor depending on Topic through
+    # their own foreign key; neither Topic nor its proxy is registered.
+    @rag.register_extractor(Workshop, depends_on=["topic"])
+    class WorkshopExtractor(BaseExtractor[Workshop]):
+        def extract(self, instance: Workshop) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.title)
+
+    @rag.register_extractor(Lesson, depends_on=["topic"])
+    class LessonExtractor(BaseExtractor[Lesson]):
+        def extract(self, instance: Lesson) -> NormalizedDocument:
+            return self.build_document(instance, text=instance.title)
+
+    rag.unregister(Workshop)
+
+    # Lesson still depends on Topic: its deletes, through Topic or its proxy,
+    # are still listened to.
+    for sender in (Topic, TopicProxy):
+        assert pre_delete.has_listeners(sender)
+        assert post_delete.has_listeners(sender)
+
+    rag.unregister(Lesson)
+
+    # Django's deletion Collector fast-deletes only a model with no pre_delete
+    # and no post_delete listener: once no registered model depends on Topic,
+    # nothing is left listening to its deletes, through Topic or its proxy.
+    for sender in (Topic, TopicProxy):
+        assert not pre_delete.has_listeners(sender)
+        assert not post_delete.has_listeners(sender)
+
+
 @pytest.mark.django_db
 def test_each_commit_builds_a_new_output_with_the_configured_options(
     settings: Settings,
