@@ -2979,40 +2979,44 @@ def test_saving_a_followed_instance_with_no_follower_defers_nothing_to_the_commi
 
 
 @pytest.mark.django_db
-def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
+def test_saving_a_course_followed_by_reverse_many_to_many_replaces_the_topics_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
-    # A working output, so that only the kind of relation can keep the save
-    # and the delete from sending anything.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     # Only the Topic is registered, following its courses by the reverse
     # many-to-many ``courses``: Course itself is not.
     rag.register(Topic, follow=["courses"])
 
-    # Created outside the captured callbacks: the commit callback of the
-    # Topic's own save never runs, so only the course's saves and delete below
-    # are observed.
-    joinery = Topic.objects.create(
-        summary="Joining wood.", title="Joinery", slug="joinery"
-    )
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the course's save below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
 
-    # The commit callbacks run, and an error escaping them would fail the test.
     with django_capture_on_commit_callbacks(execute=True):
-        course = Course.objects.create(title="Woodworking basics")
-        course.topics.add(joinery)
-        course.title = "Woodworking for beginners"
-        course.save()
-        course.delete()
+        basics.title = "Furniture making"
+        basics.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
 
-    # A Course row holds no key of a Topic: its saves and deletes send nothing
-    # for the Topic.
-    assert _replaced(built_outputs) == []
-    # Django's deletion Collector fast-deletes a model with no post_delete
-    # listener: nothing listens to Course's deletes.
-    assert not post_delete.has_listeners(Course)
+    # The Topic's group, with the course's new title after the Topic's own
+    # title and summary.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nFurniture making",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
