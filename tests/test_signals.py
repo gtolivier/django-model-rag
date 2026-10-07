@@ -763,6 +763,25 @@ def test_saving_a_category_both_followed_and_read_by_a_path_replaces_each_group_
     ]
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_category_read_two_links_deep_saved_with_no_output_writes_no_row() -> None:
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, so the category reaches the offer
+    # only through the path.
+    rag.register(Offer, fields=["title", "product__category__name"])
+
+    # No transaction around the save (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the save must fail before its
+    # INSERT does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        Category.objects.create(name="Lighting")
+
+    assert not Category.objects.exists()
+
+
 @pytest.mark.django_db
 def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
     settings: Settings,
