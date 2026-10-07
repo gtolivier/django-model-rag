@@ -263,6 +263,15 @@ def _require_single_valued(
     return related
 
 
+def _is_generic_relation(relation: object) -> bool:
+    """Return whether ``relation`` is a generic relation."""
+    # imported here: contenttypes' models cannot load before the apps are ready,
+    # and this module is imported while they load
+    from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
+
+    return isinstance(relation, GenericRelation)
+
+
 def _require_forward_relations(
     model: type[Model], name: str, related: type[Model], segments: list[str]
 ) -> None:
@@ -787,7 +796,9 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
+            # A generic relation is a ForeignObject, but not followed by the signals.
             if isinstance(relation, ForeignObject)
+            and not _is_generic_relation(relation)
         ]
         read_through_paths = [
             reached
