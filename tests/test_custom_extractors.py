@@ -26,7 +26,6 @@ from tests.testapp.models import (
     Product,
     Tag,
     TextPlugin,
-    Topic,
 )
 
 
@@ -660,22 +659,6 @@ def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
         match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
     ):
         rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
-
-
-@pytest.mark.parametrize(
-    ("model", "name"),
-    [
-        pytest.param(Topic, "courses", id="reverse"),
-    ],
-)
-def test_depending_on_a_many_to_many_fails_at_registration(
-    model: type[Model], name: str
-) -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
 
 
 @pytest.mark.parametrize(
