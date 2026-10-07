@@ -3883,6 +3883,35 @@ def test_a_topic_removed_from_a_course_following_it_with_no_output_keeps_the_lin
     assert list(basics.topics.all()) == [woodworking]
 
 
+@pytest.mark.django_db(transaction=True)
+def test_the_topics_of_a_course_following_them_cleared_with_no_output_stay_linked() -> (
+    None
+):
+    # Created and linked before Course is registered: with no MODEL_RAG_OUTPUT,
+    # their own saves and the add would fail otherwise. The course covers two
+    # topics, so that the clear would delete more than one link.
+    woodworking = _create_the_woodworking_topic()
+    carving = Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # No transaction around the clear (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the clear must fail before its
+    # DELETE of the join rows does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        basics.topics.clear()
+
+    assert set(basics.topics.all()) == {woodworking, carving}
+
+
 @pytest.mark.django_db
 def test_an_output_failing_on_a_course_added_to_a_topic_logs_the_course_and_the_topic(
     settings: Settings,
