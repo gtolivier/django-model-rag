@@ -513,8 +513,9 @@ class Registry:
     ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
 
-        ``depends_on`` names the foreign keys, or lookup paths through them,
-        whose saves change the documents of ``model``.
+        ``depends_on`` names the foreign keys, reverse foreign keys, or lookup
+        paths through foreign keys, whose saves change the documents of
+        ``model``.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -573,23 +574,17 @@ class Registry:
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
-        """List the reverse foreign keys ``model`` follows.
+        """List the reverse foreign keys ``model`` follows or depends on.
 
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        followed = self._followed_relations(model)
-        dependencies = self._dependencies.get(model, ())
-        if dependencies:
-            relations = relations_by_accessor(model)
-            followed += [
-                relations[dependency]
-                for dependency in dependencies
-                if dependency in relations
-            ]
         return [
             relation
-            for relation in followed
+            for relation in [
+                *self._followed_relations(model),
+                *self._dependency_relations(model),
+            ]
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
@@ -622,6 +617,26 @@ class Registry:
         # A dependency ends on a relation: a field after it makes it a lookup path.
         return [
             f"{dependency}{LOOKUP_SEP}pk" for dependency in self._dependencies[model]
+        ]
+
+    def _dependency_relations(
+        self, model: type[Model]
+    ) -> "list[Field[Any, Any] | ForeignObjectRel]":
+        """List the relations, forward or reverse, ``model`` names as dependencies.
+
+        A dependency that is a lookup path through relations is not one.
+        """
+        dependencies = self._dependencies[model]
+        # Relations are only read when something is depended on: models may
+        # still be loading otherwise.
+        if not dependencies:
+            return []
+
+        relations = relations_by_accessor(model)
+        return [
+            relations[dependency]
+            for dependency in dependencies
+            if dependency in relations
         ]
 
     def _lookup_paths(self, model: type[Model]) -> list[str]:
