@@ -235,7 +235,7 @@ def sync_changed_relation(
     """Replace, once the transaction commits, the groups given links.
 
     Those are the group of the instance, and the groups of the registered rows
-    that ``pk_set`` names when the links changed from the reverse side.
+    that ``pk_set`` names, from either side of the links.
     """
     if not _signals_enabled():
         return
@@ -250,7 +250,7 @@ def sync_changed_relation(
     _schedule_commit_callbacks(
         _registered_models(type(instance)), instance, _group_replacer
     )
-    if _unlinks_registered_rows(model):
+    if _reaches_registered_rows(model):
         # Only a clear leaves keys behind, found before it: pk_set is None then.
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
@@ -261,7 +261,7 @@ def sync_changed_relation(
         )
 
 
-def _unlinks_registered_rows(model: type[Model] | None) -> TypeGuard[type[Model]]:
+def _reaches_registered_rows(model: type[Model] | None) -> TypeGuard[type[Model]]:
     """Return whether a links change reaches registered rows."""
     return model is not None and rag.is_registered(model)
 
@@ -273,7 +273,7 @@ def _remember_cleared_pks(
 
     Django sends no primary keys with the clear: they can only be found before it.
     """
-    if not _unlinks_registered_rows(model):
+    if not _reaches_registered_rows(model):
         return
 
     foreign_key_to = {
