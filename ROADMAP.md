@@ -708,9 +708,11 @@ reference.
   - **Before the save**: `pre_save` looks up the followers reaching the row
     through foreign keys, by its primary key — the database still holds
     the old columns, so the row as committed is not loaded for them.
-  - **At the commit**: a commit callback looks up the followers the row
-    has then, reverse and forward, and replaces their groups along with
-    those of the followers found before the save. A row attached to it
+  - **At the commit**: a commit callback looks up the followers reaching
+    the row through foreign keys then, and replaces their groups along with
+    those of the followers found before the save and of those the row
+    points to as saved — taken at `post_save`, so that a change left unsaved
+    in memory afterwards is not followed. A row attached to it
     after the save by a write that sends no signal is resynced; so is one
     detached from it that way, through the list found before the save. A
     creation keeps the lookup at the save: nothing reaches the row through
@@ -718,8 +720,8 @@ reference.
   - **Same query count at the save**; the commit adds one lookup. A lookup
     failing at the commit is logged on the package logger with the saved
     row's key, does not escape the callback, and the other commit
-    callbacks still run; the followers found before the save are then not
-    replaced either.
+    callbacks still run; the followers found before the save and at
+    `post_save` are still replaced.
   - **Pinned**: syncing rows that follow a reverse multi-column relation
     runs as many queries for three children as for one — over two integer
     columns, with the new test-bench pair `Room` / `Booking`.
