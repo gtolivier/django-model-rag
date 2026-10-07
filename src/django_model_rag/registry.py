@@ -693,14 +693,16 @@ class Registry:
         one-to-ones.
 
         Raises:
-            AlreadyRegistered: ``model`` is already registered.
+            AlreadyRegistered: ``model`` is already registered, checked
+                before ``depends_on``.
             ImproperlyConfigured: the decorated class does not derive from
                 ``BaseExtractor``, or does not implement ``extract``;
                 ``depends_on`` is not a list or a tuple, or is given while
-                models are loading; a name in ``depends_on`` is given twice;
-                a link of it is not a relation, is a many-to-many (forward
-                or reverse), a generic foreign key or a generic relation; or
-                a path of several links crosses a reverse relation.
+                models are loading; an item of ``depends_on`` is not a string,
+                or a name in it is given twice; a link of it is not a
+                relation, is a many-to-many (forward or reverse), a generic
+                foreign key or a generic relation; or a path of several links
+                crosses a reverse relation.
         """
 
         def decorator(

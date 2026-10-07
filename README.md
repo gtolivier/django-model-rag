@@ -491,11 +491,12 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   of the registered instances that reach it, as for `follow` and lookup
   paths above; one that the extractor's `get_queryset()` filters out gets
   an empty group. Errors are raised at registration, with
-  `ImproperlyConfigured`: `depends_on` that is not a list or a tuple, a link
-  that is not a relation, a many-to-many (forward or reverse), a generic
+  `ImproperlyConfigured`: `depends_on` that is not a list or a tuple, an item
+  that is not a string, a link that is not a relation, a many-to-many (forward or reverse), a generic
   foreign key or `GenericRelation`, a path of several links that crosses a
   reverse relation, a path given twice, and `depends_on` while models are
-  still loading.
+  still loading. Registering a model that is already registered raises
+  `AlreadyRegistered` first, whatever `depends_on` holds.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
