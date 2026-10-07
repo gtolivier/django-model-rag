@@ -34,10 +34,12 @@ from tests.testapp.models import (
     Citation,
     ClearanceProduct,
     Course,
+    Craftsman,
     Depot,
     Excerpt,
     Exhibit,
     FeaturedProduct,
+    Guild,
     Lesson,
     Meetup,
     Note,
@@ -3504,6 +3506,54 @@ def test_adding_two_topics_to_a_course_replaces_the_group_of_each_topic_followin
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_code(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Guild is registered, following its members through its own
+    # many-to-many ``members``: Craftsman itself is not.
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed. A
+    # guild's code, a slug, can never equal its integer primary key.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    north = Guild.objects.create(name="North guild", code="north")
+    # A guild the craftsman already belongs to: the add below does not change
+    # its group.
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(carpenter)
+
+    # Added from the craftsman's side: Django sends m2m_changed with the
+    # craftsman as its instance, and names the guild by the column
+    # Membership.guild points to, its code, not by its primary key. Neither row
+    # is saved again: the add writes only the membership between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        carpenter.guilds.add(north)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Guild's group as committed: its name, then its new member's
+    # name. No group of the guild the craftsman already belonged to.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.guild:{north.pk}": [
+                NormalizedDocument(
+                    text="North guild\n\nCarpenter",
+                    source_app_label="testapp",
+                    source_model="guild",
+                    source_pk=north.pk,
+                    title="North guild",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
