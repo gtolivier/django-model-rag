@@ -33,7 +33,7 @@ flowchart LR
     subgraph package["django-model-rag"]
         registry["rag<br/>one extractor per model"]
         command["sync_model_rag"]
-        signals["Signals<br/>at the commit"]
+        signals["Signals<br/>look up and check at the save or delete,<br/>send at the commit"]
         pipeline["SyncPipeline<br/>reads the instances<br/>run() · run_queryset() · run_instance()"]
     end
 
@@ -47,7 +47,7 @@ flowchart LR
     registry -->|"get_queryset(), extract()"| pipeline
     pipeline -->|"NormalizedDocuments,<br/>one group per source_key"| output
     signals -.->|"a delete: an empty group"| output
-    setting -.->|"configured_output(),<br/>for the command and the signals"| output
+    setting -.->|"configured_output()"| output
 ```
 
 You register your models once, each with the extractor that turns an
@@ -342,14 +342,15 @@ sequenceDiagram
     participant E as Extractor
     participant DB as Database
     participant O as Output
-    loop each model, in registration order
+    loop each model given, or each registered one in registration order
         P->>E: get_queryset(queryset)
         loop each chunk of 1000 instances, in primary key order
             DB-->>P: instances
             P->>E: extract(instance), for each instance
             P->>O: replace(groups), an empty one for an instance without documents
         end
-        P->>DB: read again the primary keys get_queryset() keeps
+        P->>E: get_queryset(queryset), again
+        DB-->>P: the primary keys it keeps
         P->>O: prune(model_label, kept_keys)
     end
 ```
@@ -603,18 +604,21 @@ sequenceDiagram
     participant P as SyncPipeline
     participant O as Output
     App->>S: pre_save
-    S->>DB: followers before the save (an existing row of a followed model)
+    S->>DB: followers before the save (a row of a followed model with a primary key)
     Note right of S: checks MODEL_RAG_OUTPUT: a bad setting raises before any write
     App->>DB: INSERT or UPDATE
     App->>S: post_save
     S->>S: on_commit: the instance's group, its followers' groups
     alt the transaction commits
         App->>DB: COMMIT
+        loop each registered model the row belongs to (its own, a parent's)
+            S->>DB: does the row still exist?
+            S->>P: run_instance(instance), unless deleted since the save
+            P->>DB: reload it through get_queryset()
+            P->>O: replace(the instance's group)
+        end
         S->>DB: followers reaching the row now (after an update)
-        S->>P: run_instance(instance)
-        P->>DB: reload it through get_queryset()
-        P->>O: replace(the instance's group)
-        S->>P: run_queryset(followers), one batch per follower model
+        S->>P: run_queryset(followers), in batches of 500 per follower model
         P->>O: replace(the followers' groups)
     else it rolls back
         App->>DB: ROLLBACK
@@ -636,12 +640,19 @@ sequenceDiagram
     S->>DB: followers reaching the row, before a SET_NULL clears their foreign key
     App->>DB: DELETE
     App->>S: post_delete
-    Note right of S: checks MODEL_RAG_OUTPUT
+    Note right of S: checks MODEL_RAG_OUTPUT, if there is a group or a follower to send
     S->>S: on_commit: an empty group, the followers' groups
-    App->>DB: COMMIT
-    S->>O: replace(an empty group), without the extractor
-    S->>P: run_queryset(followers), one batch per follower model
-    P->>O: replace(the followers' groups)
+    alt the transaction commits
+        App->>DB: COMMIT
+        opt the row, or a parent of it, is registered: the nearest one only
+            S->>O: replace(an empty group), without the extractor
+        end
+        S->>P: run_queryset(followers), in batches of 500 per follower model
+        P->>O: replace(the followers' groups)
+    else it rolls back
+        App->>DB: ROLLBACK
+        Note over S,O: nothing is sent
+    end
 ```
 
 **Proxies and multi-table inheritance.** Saving or deleting through a proxy
