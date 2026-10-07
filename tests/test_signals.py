@@ -3193,6 +3193,58 @@ def test_removing_a_topic_from_a_course_following_its_topics_replaces_the_course
 
 
 @pytest.mark.django_db
+def test_removing_a_course_from_a_topic_replaces_the_group_of_the_course_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed.
+    # The course covers two topics, so that its group keeps the one left.
+    woodworking = _create_the_woodworking_topic()
+    carving = Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    # A course still covering the topic after the remove below: its group does
+    # not change.
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+
+    # Removed from the reverse side: Django sends m2m_changed with the topic as
+    # its instance, and the course among the primary keys it names. Neither row
+    # is saved again: the remove deletes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.remove(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The removed Course's group as committed: the topic's text is gone, only
+    # the Course's own title and the other topic's text are left. No group of
+    # the course still covering the topic.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
