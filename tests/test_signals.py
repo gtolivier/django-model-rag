@@ -699,6 +699,71 @@ def test_saving_a_product_in_the_middle_of_a_lookup_path_replaces_the_group_read
 
 
 @pytest.mark.django_db
+def test_saving_a_category_both_followed_and_read_by_a_path_replaces_each_group_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reaching its category twice: through
+    # follow=["category"] and through the lookup path "category__name".
+    # Category itself is not registered.
+    rag.register(Product, fields=["name", "category__name"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    lamp = Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+    bulb = Product.objects.create(
+        name="Bulb",
+        description="A bulb for the lamp.",
+        price="5.00",
+        category=lighting,
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The two declarations reaching the same category resync each product once:
+    # one replace call holding each product's group, not one call per
+    # declaration. Each text holds the category's new name twice, once read
+    # through the path and once through the followed relation.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.product:{lamp.pk}": [
+                NormalizedDocument(
+                    text="Desk lamp\n\nLamps\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=lamp.pk,
+                    title="Desk lamp",
+                    url=f"/products/{lamp.pk}/",
+                ),
+            ],
+            f"testapp.product:{bulb.pk}": [
+                NormalizedDocument(
+                    text="Bulb\n\nLamps\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="product",
+                    source_pk=bulb.pk,
+                    title="Bulb",
+                    url=f"/products/{bulb.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
