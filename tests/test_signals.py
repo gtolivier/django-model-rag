@@ -123,10 +123,32 @@ def _register_pages_following_their_plugins() -> None:
     rag.register(Page, follow=["text_plugins"])
 
 
+def _register_plugins_by_their_page_title() -> None:
+    """Register only TextPlugin, with a custom extractor reading its page's title
+    before its body: depends_on names the page, whose saves change its
+    documents. Page itself is not registered."""
+
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+
 def _register_venues_following_their_seminars() -> None:
     """Register only Venue, by its name, following its seminars by the reverse of
     the multi-column ForeignObject ``venue``: Seminar itself is not."""
     rag.register(Venue, fields=["name"], follow=["seminars"])
+
+
+def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
+    """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
+    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    acoustics = Seminar.objects.create(
+        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    return hall, acoustics
 
 
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
@@ -164,6 +186,16 @@ def _create_a_bulb(category: Category) -> Product:
         name="Bulb",
         description="A bulb for the lamp.",
         price="5.00",
+        category=category,
+    )
+
+
+def _create_a_hammer(category: Category) -> Product:
+    """Create a Hammer, a plain Product: a single row."""
+    return Product.objects.create(
+        name="Hammer",
+        description="A hammer for nails.",
+        price="15.00",
         category=category,
     )
 
@@ -1275,15 +1307,7 @@ def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the TextPlugin is registered, with a custom extractor reading its
-    # page's title: depends_on names the page, whose saves change its
-    # documents. Page itself is not registered.
-    @rag.register_extractor(TextPlugin, depends_on=["page"])
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(
-                instance, text=f"{instance.page.title}: {instance.body}"
-            )
+    _register_plugins_by_their_page_title()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the page's save below is observed.
@@ -1331,15 +1355,7 @@ def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the TextPlugin is registered, with a custom extractor reading its
-    # page's title: depends_on names the page, whose saves change its
-    # documents. Page itself is not registered.
-    @rag.register_extractor(TextPlugin, depends_on=["page"])
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(
-                instance, text=f"{instance.page.title}: {instance.body}"
-            )
+    _register_plugins_by_their_page_title()
 
     # Created outside the captured callbacks: its commit callbacks never run,
     # and it has no plugin yet.
@@ -1377,15 +1393,7 @@ def test_a_plugin_moved_by_update_after_its_page_save_is_replaced_at_the_commit(
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the TextPlugin is registered, with a custom extractor reading its
-    # page's title: depends_on names the page, whose saves change its
-    # documents. Page itself is not registered.
-    @rag.register_extractor(TextPlugin, depends_on=["page"])
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(
-                instance, text=f"{instance.page.title}: {instance.body}"
-            )
+    _register_plugins_by_their_page_title()
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The plugin starts on another page; the page it moves to has none.
@@ -1423,15 +1431,7 @@ def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_co
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the TextPlugin is registered, with a custom extractor reading its
-    # page's title: depends_on names the page, whose saves change its
-    # documents. Page itself is not registered.
-    @rag.register_extractor(TextPlugin, depends_on=["page"])
-    class TextPluginExtractor(BaseExtractor[TextPlugin]):
-        def extract(self, instance: TextPlugin) -> NormalizedDocument:
-            return self.build_document(
-                instance, text=f"{instance.page.title}: {instance.body}"
-            )
+    _register_plugins_by_their_page_title()
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The plugin starts on the saved page; the page it moves to has none.
@@ -1964,12 +1964,7 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
     lamp = _create_a_plain_desk_lamp(lighting)
     _create_a_bulb(lighting)
     tools = Category.objects.create(name="Tools")
-    hammer = Product.objects.create(
-        name="Hammer",
-        description="A hammer for nails.",
-        price="15.00",
-        category=tools,
-    )
+    hammer = _create_a_hammer(tools)
 
     settings.MODEL_RAG_OUTPUT = {
         "BACKEND": FAILING_ON_KEY_BACKEND,
@@ -3183,10 +3178,7 @@ def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_sem
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not read the hall.
     _create_the_transbordeur_and_its_seminar()
@@ -3235,10 +3227,7 @@ def test_saving_a_venue_a_custom_extractor_depends_on_by_multi_column_replaces_s
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not depend on the hall.
     _create_the_transbordeur_and_its_seminar()
@@ -3279,10 +3268,7 @@ def test_saving_a_venue_followed_by_a_multi_column_relation_replaces_its_seminar
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar does not follow the hall.
     _create_the_transbordeur_and_its_seminar()
@@ -3325,10 +3311,7 @@ def test_saving_a_venue_unchanged_replaces_each_of_its_following_seminars_once(
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     rigging = Seminar.objects.create(
         title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
     )
@@ -3380,10 +3363,7 @@ def test_renaming_a_venue_followed_by_multi_column_replaces_the_seminars_naming_
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's rename below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: the rename changes only the name column,
     # so the city column alone cannot tell its seminar from the hall's.
     _create_the_transbordeur_and_its_seminar()
@@ -3438,10 +3418,7 @@ def test_renaming_a_venue_a_custom_extractor_depends_on_replaces_the_seminars_na
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's rename below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     # Another venue of the same city: the rename changes only the name column,
     # so the city column alone cannot tell its seminar from the hall's.
     _create_the_transbordeur_and_its_seminar()
@@ -3486,10 +3463,7 @@ def test_saving_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its_t
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
     # Another venue of the same city: only both columns together name a venue,
     # so the talk of its seminar does not read the hall.
@@ -3536,10 +3510,7 @@ def test_renaming_a_venue_read_past_a_foreign_key_then_multi_column_replaces_its
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's rename below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
     keynote = Talk.objects.create(title="Keynote", seminar=acoustics)
     # Another venue of the same city: the rename changes only the name column,
     # so the city column alone cannot tell the talk of its seminar from the
@@ -4641,21 +4612,26 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     assert _replaced(built_outputs) == [{f"testapp.category:{tools_pk}": []}]
 
 
+def _selects_by(sql: str, params: Any, lookup: str, value: Any) -> bool:
+    """Whether ``sql`` is a SELECT whose ``lookup`` compares a column with ``value``.
+
+    The parameter compared is the lookup's own, found by counting the
+    placeholders before it: a query's other parameters (such as the constant
+    exists() selects) may hold the same value without being the lookup's.
+    """
+    if not sql.startswith("SELECT") or lookup not in sql:
+        return False
+    lookup_param_index = sql[: sql.index(lookup)].count("%s")
+    return bool(params[lookup_param_index] == value)
+
+
 # How a query on Category compares a row's primary key with a parameter.
 CATEGORY_PK_LOOKUP = '"testapp_category"."id" = %s'
 
 
 def _reads_category_row(sql: str, params: Any, pk: Any) -> bool:
-    """Whether ``sql`` is a SELECT looking up the Category row of primary key ``pk``.
-
-    The parameter compared is the lookup's own, found by counting the
-    placeholders before it: a query's other parameters (such as the constant
-    exists() selects) may hold the same value without reading that row.
-    """
-    if not sql.startswith("SELECT") or CATEGORY_PK_LOOKUP not in sql:
-        return False
-    lookup_param_index = sql[: sql.index(CATEGORY_PK_LOOKUP)].count("%s")
-    return bool(params[lookup_param_index] == pk)
+    """Whether ``sql`` is a SELECT looking up the Category row of primary key ``pk``."""
+    return _selects_by(sql, params, CATEGORY_PK_LOOKUP, pk)
 
 
 @pytest.mark.django_db
@@ -4730,15 +4706,9 @@ PRODUCT_CATEGORY_LOOKUP = '"testapp_product"."category_id" = %s'
 
 
 def _looks_up_products_of_category(sql: str, params: Any, category_pk: Any) -> bool:
-    """Whether ``sql`` is a SELECT looking up the Products of a Category.
-
-    The Category is the one of primary key ``category_pk``. The parameter
-    compared is the lookup's own, found by counting the placeholders before it.
-    """
-    if not sql.startswith("SELECT") or PRODUCT_CATEGORY_LOOKUP not in sql:
-        return False
-    lookup_param_index = sql[: sql.index(PRODUCT_CATEGORY_LOOKUP)].count("%s")
-    return bool(params[lookup_param_index] == category_pk)
+    """Whether ``sql`` is a SELECT looking up the Products of the Category of
+    primary key ``category_pk``."""
+    return _selects_by(sql, params, PRODUCT_CATEGORY_LOOKUP, category_pk)
 
 
 @pytest.mark.django_db
@@ -4759,12 +4729,7 @@ def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logg
     lighting = Category.objects.create(name="Lighting")
     _create_a_plain_desk_lamp(lighting)
     tools = Category.objects.create(name="Tools")
-    hammer = Product.objects.create(
-        name="Hammer",
-        description="A hammer for nails.",
-        price="15.00",
-        category=tools,
-    )
+    hammer = _create_a_hammer(tools)
 
     # The saves themselves go through: their callbacks are captured here, and
     # run below as the commit would run them, once the database fails.
