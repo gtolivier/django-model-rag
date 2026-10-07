@@ -2,6 +2,7 @@
 
 import inspect
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from django.apps import apps
@@ -495,6 +496,51 @@ def _dependency_lookup_path(
     return LOOKUP_SEP.join([query_name(relations[first]), *rest, "pk"])
 
 
+@dataclass(frozen=True)
+class _Dependencies:
+    """What a custom extractor's ``depends_on`` resolves to on its model."""
+
+    # quoted: Django's Field is generic for the type checker only
+    relations: "tuple[Field[Any, Any] | ForeignObjectRel, ...]" = ()
+    """The relations, forward or reverse, named as one-link dependencies."""
+    foreign_key_lookups: tuple[tuple[str, type[Model]], ...] = ()
+    """The models the dependencies reach through their leading foreign keys.
+
+    Each is paired with the lookup, from the model, that reaches it.
+    """
+
+
+_NO_DEPENDENCIES = _Dependencies()
+
+
+def _resolved_dependencies(model: type[Model], depends_on: FieldNames) -> _Dependencies:
+    """Resolve ``depends_on``, the dependencies ``model`` declares, once for all.
+
+    Its paths are walked when it is registered rather than on every save: a
+    model's dependencies never change while it is registered.
+    """
+    # Relations are only read when something is depended on: models may still
+    # be loading otherwise.
+    if not depends_on:
+        return _NO_DEPENDENCIES
+
+    relations = relations_by_accessor(model)
+    return _Dependencies(
+        relations=tuple(
+            relations[dependency]
+            for dependency in depends_on
+            if dependency in relations
+        ),
+        foreign_key_lookups=tuple(
+            reached
+            for dependency in depends_on
+            for reached in _models_reached_by_foreign_keys(
+                model, _dependency_lookup_path(dependency, relations)
+            )
+        ),
+    )
+
+
 class AlreadyRegistered(Exception):  # noqa: N818 - public name mirrors Django admin's AlreadyRegistered
     """A model is registered a second time."""
 
@@ -512,8 +558,8 @@ class Registry:
         # registration order across both kinds. It holds factories, not
         # extractors, so that no state an extractor keeps leaks between runs.
         self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
-        # The lookups a custom extractor reads through, declared by its model.
-        self._dependencies: dict[type[Model], tuple[str, ...]] = {}
+        # The relations a custom extractor reads through, declared by its model.
+        self._dependencies: dict[type[Model], _Dependencies] = {}
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -663,7 +709,7 @@ class Registry:
                 _require_models_ready(model, "resolve depends_on")
                 _require_relations(model, depends_on)
             self._require_unregistered(model)
-            self._add(model, extractor_class, tuple(depends_on))
+            self._add(model, extractor_class, _resolved_dependencies(model, depends_on))
             return extractor_class
 
         return decorator
@@ -718,7 +764,7 @@ class Registry:
             relation
             for relation in [
                 *self._followed_relations(model),
-                *self._dependency_relations(model),
+                *self._dependencies[model].relations,
             ]
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
@@ -740,45 +786,12 @@ class Registry:
         ]
         read_through_paths = [
             reached
-            for path in [*self._lookup_paths(model), *self._dependency_paths(model)]
+            for path in self._lookup_paths(model)
             for reached in _models_reached_by_foreign_keys(model, path)
         ]
+        depended_on = list(self._dependencies[model].foreign_key_lookups)
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
-        return list(dict.fromkeys(followed + read_through_paths))
-
-    def _dependency_paths(self, model: type[Model]) -> list[str]:
-        """List the lookup paths through the dependencies ``model`` declares."""
-        dependencies = self._dependencies[model]
-        # Relations are only read when something is depended on: models may
-        # still be loading otherwise.
-        if not dependencies:
-            return []
-
-        relations = relations_by_accessor(model)
-        return [
-            _dependency_lookup_path(dependency, relations)
-            for dependency in dependencies
-        ]
-
-    def _dependency_relations(
-        self, model: type[Model]
-    ) -> "list[Field[Any, Any] | ForeignObjectRel]":
-        """List the relations, forward or reverse, ``model`` names as dependencies.
-
-        A dependency that is a lookup path through relations is not one.
-        """
-        dependencies = self._dependencies[model]
-        # Relations are only read when something is depended on: models may
-        # still be loading otherwise.
-        if not dependencies:
-            return []
-
-        relations = relations_by_accessor(model)
-        return [
-            relations[dependency]
-            for dependency in dependencies
-            if dependency in relations
-        ]
+        return list(dict.fromkeys(followed + read_through_paths + depended_on))
 
     def _lookup_paths(self, model: type[Model]) -> list[str]:
         """List the lookup paths ``model`` declares in fields and single_fields.
@@ -812,7 +825,7 @@ class Registry:
         self,
         model: type[Model],
         factory: Callable[[], BaseExtractor[Any]],
-        depends_on: tuple[str, ...] = (),
+        dependencies: _Dependencies = _NO_DEPENDENCIES,
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
@@ -821,7 +834,7 @@ class Registry:
         )
 
         self._registrations[model] = factory
-        self._dependencies[model] = depends_on
+        self._dependencies[model] = dependencies
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):
