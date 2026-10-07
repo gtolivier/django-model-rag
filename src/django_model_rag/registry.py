@@ -579,6 +579,8 @@ class Registry:
             return []
 
         paths = list(extractor.fields)
+        if extractor.title_field is not None:
+            paths.append(extractor.title_field)
         if extractor.language_field is not None:
             paths.append(extractor.language_field)
         if extractor.url_field is not None:
