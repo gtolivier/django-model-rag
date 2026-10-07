@@ -938,3 +938,38 @@ class Seminar(models.Model):
 class Talk(models.Model):
     title = models.CharField(max_length=200)
     seminar = models.ForeignKey(Seminar, related_name="talks", on_delete=models.CASCADE)
+
+
+# --- A multi-column relation over integer columns -----------------------
+# A Booking points to a Room by two integer columns of its own, matched to the
+# Room's building and number, unique together, through a ForeignObject, like
+# a Seminar to its Venue but over integers rather than text. The Room reaches
+# its Bookings by the reverse relation ``bookings``, matched to it by both
+# columns.
+
+
+class Room(models.Model):
+    building = models.IntegerField()
+    number = models.IntegerField()
+    name = models.CharField(max_length=200)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["building", "number"],
+                name="testapp_room_building_number_unique",
+            )
+        ]
+
+
+class Booking(models.Model):
+    purpose = models.CharField(max_length=200)
+    room_building = models.IntegerField()
+    room_number = models.IntegerField()
+    room = models.ForeignObject(
+        Room,
+        on_delete=models.CASCADE,
+        from_fields=["room_building", "room_number"],
+        to_fields=["building", "number"],
+        related_name="bookings",
+    )
