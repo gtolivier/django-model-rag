@@ -3245,6 +3245,52 @@ def test_removing_a_course_from_a_topic_replaces_the_group_of_the_course_followi
 
 
 @pytest.mark.django_db
+def test_clearing_the_topics_of_a_course_following_them_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many ``topics``: Topic itself is not.
+    rag.register(Course, follow=["topics"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the clear below is observed. The
+    # course covers two topics, so that the clear removes more than one link.
+    woodworking = _create_the_woodworking_topic()
+    carving = Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
+    )
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+
+    # Neither row is saved again: the clear deletes only the links of the
+    # course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group as committed: no topic's text is left, only the
+    # Course's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
