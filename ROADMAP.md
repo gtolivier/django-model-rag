@@ -695,10 +695,34 @@ reference.
   - **Left out**: deleting a venue that seminars follow is not tested
     (the test bench's relation cascades); a partly null set of columns
     is not tested; a `CompositePrimaryKey` is not covered. Renaming a
-    venue (changing a column its seminars name it by) resyncs none of
-    them: they are looked up after the save, by the new values, and no
-    longer match — the same holds for a `to_field` without a database
-    constraint. The query count of the prefetch is not pinned by a test.
+    venue (changing a column its seminars name it by) and the query count
+    of the prefetch were left out too, then done in 11c-ter.
+- [x] **11c-ter. Followers looked up before the save and at the commit.**
+  Changing the columns that followers name a row by — a `to_field`, or the
+  columns of a multi-column `ForeignObject` (renaming a venue) — resynced
+  none of them: they were looked up after the save, by the new values. And
+  forward followers were looked up at `post_save`, so rows attached later
+  in the same transaction by a write that sends no signal (`bulk_create`,
+  `QuerySet.update()`) were missed ([#26](https://github.com/gtolivier/django-model-rag/issues/26)).
+  Decided in this feature, after the review of 11c-bis:
+  - **Before the save**: `pre_save` looks up the followers reaching the row
+    through foreign keys, by its primary key — the database still holds
+    the old columns, so the row as committed is not loaded for them.
+  - **At the commit**: a commit callback looks up the followers the row
+    has then, reverse and forward, and replaces their groups along with
+    those of the followers found before the save. A row attached to it
+    after the save by a write that sends no signal is resynced; so is one
+    detached from it that way, through the list found before the save. A
+    creation keeps the lookup at the save: nothing reaches the row through
+    a foreign key yet.
+  - **Same query count at the save**; the commit adds one lookup. A lookup
+    failing at the commit is logged on the package logger with the saved
+    row's key, does not escape the callback, and the other commit
+    callbacks still run; the followers found before the save are then not
+    replaced either.
+  - **Pinned**: syncing rows that follow a reverse multi-column relation
+    runs as many queries for three children as for one — over two integer
+    columns, with the new test-bench pair `Room` / `Booking`.
 - [ ] **11d. Resync through many-to-many relations.** A many-to-many in
   `follow` or in a lookup path, forward or reverse, with `m2m_changed`
   (add, remove, clear) on top of the saves and deletes of both ends.
