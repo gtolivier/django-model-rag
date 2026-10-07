@@ -258,7 +258,8 @@ def _followed_foreign_key_lookups(
     return [
         (lookup, reached_model)
         for lookup, reached_model in rag.foreign_key_lookups(registered_model)
-        if reached_model in followed_models
+        # A foreign key may name a proxy: it reaches its concrete model's rows.
+        if _concrete_model(reached_model) in followed_models
     ]
 
 
