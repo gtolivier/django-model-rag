@@ -227,6 +227,12 @@ def _require_relation(
     if relation.related_model is None or isinstance(relation, GenericRelation):
         message = f"{model.__name__}: depends_on {name!r} is a generic relation"
         raise ImproperlyConfigured(message)
+    if rest and relation.auto_created:
+        message = (
+            f"{model.__name__}: depends_on {name!r} crosses a reverse "
+            f"relation, {first!r}"
+        )
+        raise ImproperlyConfigured(message)
     _require_no_later_reverse_relation(model, name, relation.related_model, rest)
 
 
