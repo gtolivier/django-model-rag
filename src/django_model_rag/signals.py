@@ -18,7 +18,7 @@ from django_model_rag.registry import concrete_model_of, rag
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
 _BEFORE_CLEAR = "pre_clear"
-_BEFORE_WRITE = frozenset({"pre_add", "pre_remove"})
+_BEFORE_WRITE = frozenset({"pre_add", "pre_remove", _BEFORE_CLEAR})
 # The instance carries the keys of the rows its links reach, from before a clear.
 _CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
@@ -242,13 +242,10 @@ def sync_changed_relation(
         return
 
     through = kwargs["sender"]
-    if action == _BEFORE_CLEAR:
-        _check_output_before_write(through, instance, model)
-        _remember_cleared_pks(through, instance, model)
-        return
-
     if action in _BEFORE_WRITE:
         _check_output_before_write(through, instance, model)
+        if action == _BEFORE_CLEAR:
+            _remember_cleared_pks(through, instance, model)
         return
 
     if action not in _CHANGING_ACTIONS:
