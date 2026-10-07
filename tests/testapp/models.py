@@ -787,6 +787,19 @@ class CategoryProxy(Category):
         proxy = True
 
 
+# --- A foreign key to a proxy model -------------------------------------
+# A Banner points to a CategoryProxy, not to Category: its foreign key reaches
+# the Category's row, yet names the proxy as its model, while saving a plain
+# Category sends the save's signals with Category as their sender.
+
+
+class Banner(models.Model):
+    title = models.CharField(max_length=200)
+    category = models.ForeignKey(
+        CategoryProxy, related_name="banners", on_delete=models.CASCADE
+    )
+
+
 # --- A proxy of a followed model ----------------------------------------
 # A TextPluginProxy is a TextPlugin under another class: saving or deleting
 # one writes or deletes the TextPlugin's row, which its Page may follow, yet

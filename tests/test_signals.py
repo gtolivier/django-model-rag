@@ -25,6 +25,7 @@ from tests.recording import (
 )
 from tests.testapp.models import (
     Album,
+    Banner,
     Bin,
     BonusTrack,
     Bookmark,
@@ -905,6 +906,49 @@ def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_i
                     source_pk=lamp.pk,
                     title="Desk lamp",
                     url=f"/products/{lamp.pk}/",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_category_followed_by_a_foreign_key_to_its_proxy_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Banner is registered, following its category through its own
+    # foreign key, whose model is the proxy CategoryProxy: neither Category nor
+    # its proxy is.
+    rag.register(Banner, fields=["title"], follow=["category"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the category's save below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    banner = Banner.objects.create(title="Spring sale", category_id=lighting.pk)
+
+    # A plain Category, not its proxy: Django sends post_save with Category as
+    # its sender, while the Banner's foreign key names the proxy.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Banner's group, with the category's new name after the Banner's own
+    # title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.banner:{banner.pk}": [
+                NormalizedDocument(
+                    text="Spring sale\n\nLamps",
+                    source_app_label="testapp",
+                    source_model="banner",
+                    source_pk=banner.pk,
+                    title="Spring sale",
                 ),
             ],
         }
