@@ -220,8 +220,7 @@ def _require_relation(
     first, *rest = name.split(LOOKUP_SEP)
     relation = accessors.get(first)
     if relation is None:
-        message = f"{model.__name__}: depends_on {name!r} is not a relation"
-        raise ImproperlyConfigured(message)
+        raise _not_a_relation(model, name)
     if relation.many_to_many:
         message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
         raise ImproperlyConfigured(message)
@@ -230,14 +229,14 @@ def _require_relation(
         raise ImproperlyConfigured(message)
     if rest and relation.auto_created:
         raise _reverse_relation_crossed(model, name, first)
-    _require_no_later_reverse_relation(model, name, relation.related_model, rest)
+    _require_forward_relations(model, name, relation.related_model, rest)
 
 
-def _require_no_later_reverse_relation(
+def _require_forward_relations(
     model: type[Model], name: str, related: type[Model], segments: list[str]
 ) -> None:
-    """Fail if ``segments``, the rest of ``model``'s ``depends_on`` path ``name``
-    walked from ``related``, cross a reverse relation.
+    """Fail unless ``segments``, the rest of ``model``'s ``depends_on`` path
+    ``name`` walked from ``related``, are forward relations.
 
     The walk stops at the first segment whose related model is unknown.
 
@@ -248,13 +247,19 @@ def _require_no_later_reverse_relation(
     for segment in segments:
         step = relations_by_accessor(related).get(segment)
         if step is None:
-            message = f"{model.__name__}: depends_on {name!r} is not a relation"
-            raise ImproperlyConfigured(message)
+            raise _not_a_relation(model, name)
         if step.auto_created:
             raise _reverse_relation_crossed(model, name, segment)
         if step.related_model is None:
             return
         related = step.related_model
+
+
+def _not_a_relation(model: type[Model], name: str) -> ImproperlyConfigured:
+    """The error for a link of ``model``'s ``depends_on`` path ``name`` that
+    is not a relation."""
+    message = f"{model.__name__}: depends_on {name!r} is not a relation"
+    return ImproperlyConfigured(message)
 
 
 def _reverse_relation_crossed(
