@@ -224,8 +224,10 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
+        # The row as committed: a change left unsaved in memory is not followed.
+        committed_instance = _committed_instance(sender, instance.pk) or instance
         followers = (
-            _reverse_followers(sender, instance)
+            _reverse_followers(sender, committed_instance)
             + _forward_followers(sender, instance)
             + previous_followers
         )
