@@ -1024,6 +1024,35 @@ def test_saving_a_warehouse_followed_by_a_foreign_key_to_its_code_replaces_its_s
 
 
 @pytest.mark.django_db
+def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_depot(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Bin is registered, following its depot through its own nullable
+    # foreign key, which holds the Depot's code, not its primary key: Depot
+    # itself is not.
+    rag.register(Bin, follow=["depot"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the depot's save below is observed. The depot's
+    # code is null.
+    unnamed = Depot.objects.create(name="Unnamed depot", code=None)
+    # Its nullable foreign key is null: it points to no Depot, not even to the
+    # one whose code is null, as the database never joins NULL to NULL.
+    Bin.objects.create(depot=None, label="Spare parts")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        unnamed.name = "Overflow depot"
+        unnamed.save()
+
+    # No bin follows the depot: no group is replaced.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db
 def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_its_intro(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
