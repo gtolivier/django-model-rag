@@ -16,7 +16,7 @@ from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
-_POST_ADD = "post_add"
+_CHANGING_ACTIONS = frozenset({"post_add", "post_remove"})
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
@@ -235,7 +235,7 @@ def sync_changed_relation(
     Those are the group of the instance, and the groups of the registered rows
     that ``pk_set`` names when the links were added from the reverse side.
     """
-    if action != _POST_ADD or not _signals_enabled():
+    if action not in _CHANGING_ACTIONS or not _signals_enabled():
         return
 
     _schedule_commit_callbacks(
