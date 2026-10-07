@@ -1383,6 +1383,53 @@ def test_a_plugin_moved_by_update_after_its_page_save_is_replaced_at_the_commit(
 
 
 @pytest.mark.django_db
+def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the TextPlugin is registered, with a custom extractor reading its
+    # page's title: depends_on names the page, whose saves change its
+    # documents. Page itself is not registered.
+    @rag.register_extractor(TextPlugin, depends_on=["page"])
+    class TextPluginExtractor(BaseExtractor[TextPlugin]):
+        def extract(self, instance: TextPlugin) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The plugin starts on the saved page; the page it moves to has none.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    news = Page.objects.create(title="News", slug="news")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Our workshop"
+        about.save()
+        # Moved away from the page after the page's save, in the same
+        # transaction, by a write that sends no signal: only the page's save
+        # is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=news)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The plugin followed the page at its save, so its group is
+    # replaced at the commit, as committed: on the page it moved to.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="News: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
