@@ -205,12 +205,13 @@ def _require_relation(
 ) -> None:
     """Fail unless ``name`` starts with one of ``model``'s relation
     ``accessors`` that is neither a many-to-many nor generic, and crosses no
-    reverse relation past it.
+    reverse relation: a reverse relation is allowed only as a one-link path.
 
     Raises:
         ImproperlyConfigured: the ``depends_on`` name is not a relation, is a
             many-to-many (forward or reverse), is a generic foreign key or
-            generic relation, or crosses a reverse relation past its first link.
+            generic relation, or is a longer path that crosses a reverse
+            relation.
     """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported while they load
@@ -228,11 +229,7 @@ def _require_relation(
         message = f"{model.__name__}: depends_on {name!r} is a generic relation"
         raise ImproperlyConfigured(message)
     if rest and relation.auto_created:
-        message = (
-            f"{model.__name__}: depends_on {name!r} crosses a reverse "
-            f"relation, {first!r}"
-        )
-        raise ImproperlyConfigured(message)
+        raise _reverse_relation_crossed(model, name, first)
     _require_no_later_reverse_relation(model, name, relation.related_model, rest)
 
 
@@ -251,14 +248,21 @@ def _require_no_later_reverse_relation(
     for segment in segments:
         step = relations_by_accessor(related).get(segment)
         if step is not None and step.auto_created:
-            message = (
-                f"{model.__name__}: depends_on {name!r} crosses a reverse "
-                f"relation, {segment!r}"
-            )
-            raise ImproperlyConfigured(message)
+            raise _reverse_relation_crossed(model, name, segment)
         if step is None or step.related_model is None:
             return
         related = step.related_model
+
+
+def _reverse_relation_crossed(
+    model: type[Model], name: str, segment: str
+) -> ImproperlyConfigured:
+    """The error for ``model``'s ``depends_on`` path ``name`` crossing the
+    reverse relation ``segment``."""
+    message = (
+        f"{model.__name__}: depends_on {name!r} crosses a reverse relation, {segment!r}"
+    )
+    return ImproperlyConfigured(message)
 
 
 def _require_field_names(model: type[Model], names: object, argument: str) -> None:
