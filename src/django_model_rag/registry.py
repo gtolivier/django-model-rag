@@ -204,14 +204,15 @@ def _require_relation(
     accessors: "dict[str, Field[Any, Any] | ForeignObjectRel]",
 ) -> None:
     """Fail unless ``name`` starts with one of ``model``'s relation
-    ``accessors`` that is neither a many-to-many nor generic, and crosses no
-    reverse relation: a reverse relation is allowed only as a one-link path.
+    ``accessors`` and every link of it is neither a many-to-many nor generic,
+    and it crosses no reverse relation: a reverse relation is allowed only as
+    a one-link path.
 
     Raises:
-        ImproperlyConfigured: the ``depends_on`` name is not a relation, is a
-            many-to-many (forward or reverse), is a generic foreign key or
-            generic relation, or is a longer path that crosses a reverse
-            relation.
+        ImproperlyConfigured: a link of the ``depends_on`` name is not a
+            relation, is a many-to-many (forward or reverse), is a generic
+            foreign key or generic relation, or the name is a longer path that
+            crosses a reverse relation.
     """
     first, *rest = name.split(LOOKUP_SEP)
     relation = accessors.get(first)
@@ -251,13 +252,11 @@ def _require_forward_relations(
     model: type[Model], name: str, related: type[Model], segments: list[str]
 ) -> None:
     """Fail unless ``segments``, the rest of ``model``'s ``depends_on`` path
-    ``name`` walked from ``related``, are forward relations.
-
-    The walk stops at the first segment whose related model is unknown.
+    ``name`` walked from ``related``, are single-valued forward relations.
 
     Raises:
-        ImproperlyConfigured: a segment is not a relation, or is a reverse
-            relation.
+        ImproperlyConfigured: a segment is not a relation, is a reverse
+            relation, or is a link :func:`_require_single_valued` rejects.
     """
     for segment in segments:
         step = relations_by_accessor(related).get(segment)
