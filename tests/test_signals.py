@@ -3195,6 +3195,61 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
 
 
 @pytest.mark.django_db
+def test_moving_a_followed_instance_linked_by_a_unique_column_replaces_both_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Warehouse is registered, following its shelves: Shelf itself is
+    # not.
+    rag.register(Warehouse, follow=["shelves"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the shelf's move below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    south = Warehouse.objects.create(name="South depot", code="south")
+    moved_shelf = Shelf.objects.create(warehouse=north, label="Timber")
+    Shelf.objects.create(warehouse=north, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The shelf's foreign key goes from the code "north" to the code
+        # "south", neither of them a primary key.
+        moved_shelf.warehouse = south
+        moved_shelf.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Warehouse is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Warehouses' groups as committed, under their primary keys, not their
+    # codes: the old Warehouse keeps only its remaining shelf's label, the new
+    # Warehouse gains the moved shelf's label.
+    assert received == {
+        f"testapp.warehouse:{north.pk}": [
+            NormalizedDocument(
+                text="North depot\n\nPaint",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=north.pk,
+                title="North depot",
+            ),
+        ],
+        f"testapp.warehouse:{south.pk}": [
+            NormalizedDocument(
+                text="South depot\n\nTimber",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=south.pk,
+                title="South depot",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_null_foreign_key_to_a_nullable_unique_column_sends_nothing_for_a_null_row(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
