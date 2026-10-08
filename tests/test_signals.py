@@ -719,6 +719,37 @@ FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedC
 )
 
 
+def _group_of_a_supplier_by_its_profile_body(
+    supplier: Supplier, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The supplier's group, as its custom extractor builds it: its name, then
+    the profile's body if the profile is on the supplier; no title of its own."""
+    text = f"{supplier.name}\n\nKiln-dried boards." if holding else supplier.name
+    return {
+        f"testapp.supplier:{supplier.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=supplier.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through a reverse one-to-one: only Supplier is registered, with a
+# custom extractor reading its profile's body by the accessor `profile`
+# (SupplierProfile is not); a profile holds the key to its Supplier.
+DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedCase(
+    register=_register_suppliers_by_their_profile_body,
+    create_follower=_create_birch_mill,
+    create_other_follower=_create_oak_yard,
+    create_holder=_create_a_profile_of,
+    point_holder_to=_point_the_profile_to,
+    group_of=_group_of_a_supplier_by_its_profile_body,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -787,6 +818,7 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
             DEPENDS_ON_REVERSE_FOREIGN_KEY, id="depends_on-reverse_foreign_key"
         ),
         pytest.param(FOLLOW_REVERSE_ONE_TO_ONE, id="follow-reverse_one_to_one"),
+        pytest.param(DEPENDS_ON_REVERSE_ONE_TO_ONE, id="depends_on-reverse_one_to_one"),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
