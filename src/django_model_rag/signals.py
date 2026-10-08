@@ -223,8 +223,9 @@ def sync_saved_instance(
     followers_at_save = _reverse_followers(sender, instance) + instance.__dict__.pop(
         _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
     )
-    # A row just created has no follower pointing to it at its save.
-    if not created and _is_followed(sender):
+    # A row just created has no follower pointing to it at its save, and
+    # costs the commit no lookup unless it points to a follower.
+    if (followers_at_save or not created) and _is_followed(sender):
         # Rows may be attached to it, or it to other rows, before the commit,
         # by a write that sends no signal: its followers are looked up then.
         transaction.on_commit(
