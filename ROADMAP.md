@@ -898,13 +898,14 @@ or a `GenericRelation` in `follow`.
     ahead, lookups on every write; whether deletes keep the in-memory read
     is decided in "Reverse relations onto lookups".
   - [x] **Fill the test gaps above**, before changing the code. Most
-    should pass today; one that fails is a bug found. 21 tests: 19
+    should pass today; one that fails is a bug found. 24 tests: 22
     passed as written; the two that failed — a plugin moved by `update()`
     after its own save, and one created then moved the same way in its
-    transaction — were fixed (see the second patch above). Three more
-    closed what the coverage matrix still showed empty — moving and
-    deleting a reverse one-to-one in `depends_on`, removing a musician
-    from a band through `Engagement` — and passed as written.
+    transaction — were fixed (see the second patch above). The last three
+    came from the coverage matrix: moving and deleting a reverse
+    one-to-one in `depends_on`, and removing a musician from a band
+    through `Engagement`. That pair is still tested from the band's side
+    only.
   - [ ] **Reverse relations onto lookups**, the suite green after each
     change.
   - [ ] **Many-to-many links onto lookups.**
