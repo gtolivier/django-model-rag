@@ -14,6 +14,7 @@ from django.db.models import (
     ManyToManyField,
     ManyToManyRel,
     Model,
+    Q,
     QuerySet,
 )
 
@@ -516,9 +517,12 @@ def _followers_looked_up(
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for lookup, reached_model in followed_lookups(registered_model, sender)
         for follower_pk in _pks_reaching(
-            registered_model, lookup, _group_pk(instance, reached_model)
+            registered_model,
+            [
+                (lookup, _group_pk(instance, reached_model))
+                for lookup, reached_model in followed_lookups(registered_model, sender)
+            ],
         )
     ]
 
@@ -556,20 +560,23 @@ def _followed_lookups(
 
 
 def _pks_reaching(
-    registered_model: type[Model], lookup: str, reached_pk: Any
+    registered_model: type[Model], reached_rows: list[tuple[str, Any]]
 ) -> list[Any]:
     """Return the primary keys of the ``registered_model`` rows reaching a row.
 
-    Those rows reach, through ``lookup``, the row whose primary key is ``reached_pk``.
+    Those rows reach, through a lookup of ``reached_rows``, the row whose primary
+    key comes with it. One query crosses all the lookups.
     """
-    if reached_pk is None:
-        # A row deleted since its save has lost its primary key: filtering on
-        # None would match the rows whose foreign key is null.
+    # A row deleted since its save has lost its primary key: filtering on None
+    # would match the rows whose foreign key is null.
+    condition = Q()
+    for lookup, reached_pk in reached_rows:
+        if reached_pk is not None:
+            condition |= Q(**{f"{lookup}__pk": reached_pk})
+    if not condition:
         return []
 
-    reaching_rows = registered_model._base_manager.filter(
-        **{f"{lookup}__pk": reached_pk}
-    )
+    reaching_rows = registered_model._base_manager.filter(condition)
     return list(reaching_rows.values_list("pk", flat=True))
 
 
