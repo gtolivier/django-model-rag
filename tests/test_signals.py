@@ -48,6 +48,7 @@ from tests.testapp.models import (
     Offer,
     Page,
     PageIntro,
+    Person,
     Photo,
     Product,
     Remark,
@@ -3925,6 +3926,71 @@ def test_clearing_the_members_of_a_guild_replaces_the_group_of_each_craftsman_in
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Person is registered following its mentees, the reverse side of its own
+    # many-to-many ``mentors``: both sides of the links are Persons.
+    rag.register(Person, fields=["name"], follow=["mentees"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. Ada
+    # has two mentors: one mentors another person too, so that its group keeps
+    # the mentee left, the other mentors her alone.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    ada.mentors.add(grace, linus)
+    alan.mentors.add(grace)
+    # A person not mentoring Ada: the clear below does not change Barbara's
+    # group.
+    barbara = Person.objects.create(name="Barbara")
+    alan.mentors.add(barbara)
+
+    # Cleared from the mentee's side: Django sends m2m_changed with Ada as its
+    # instance and no primary keys at all, so her mentors can only be found
+    # before the clear, by the join rows naming her as the mentee, not as the
+    # mentor. No row is saved again: the clear deletes only Ada's links to her
+    # mentors.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both former mentors as committed, each without Ada's name,
+    # and no group of the person who never mentored her. Ada's own group, which
+    # follows her mentees, not her mentors, is left out of the comparison: the
+    # clear leaves its text unchanged.
+    received_groups = _received_groups(built_outputs)
+    received_groups.pop(f"testapp.person:{ada.pk}", None)
+    assert received_groups == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+        f"testapp.person:{linus.pk}": [
+            NormalizedDocument(
+                text="Linus",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=linus.pk,
+                title="Linus",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db

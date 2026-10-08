@@ -813,6 +813,18 @@ class Engagement(models.Model):
     musician = models.ForeignKey(Musician, to_field="handle", on_delete=models.CASCADE)
 
 
+# --- A non-symmetrical many-to-many from a model to itself --------------
+# A Person reaches the Persons mentoring them by the many-to-many ``mentors``,
+# and those they mentor by its reverse side, ``mentees``: both foreign keys of
+# the join table point to Person, and a link from one Person to another is not
+# a link back.
+
+
+class Person(models.Model):
+    name = models.CharField(max_length=200)
+    mentors = models.ManyToManyField("self", symmetrical=False, related_name="mentees")
+
+
 # --- A proxy model ------------------------------------------------------
 # A CategoryProxy is a Category under another class, with no table of its own:
 # saving one writes the Category's row, yet Django sends the save's signals
