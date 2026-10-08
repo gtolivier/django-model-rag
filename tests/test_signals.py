@@ -1193,6 +1193,21 @@ class _GroupOnTarget(Protocol[FollowerT_contra, TargetT_contra]):
 
 
 @dataclass(frozen=True, kw_only=True)
+class _KeyChange(Generic[TargetT, FollowerT]):
+    """A change of the column a follower points to its target by, and the
+    follower's group it leaves as committed."""
+
+    # Changes that column on the target and saves it; then, for a relation
+    # whose followers move with it, moves them to the new value by a queryset
+    # update, which sends no signal.
+    change: Callable[[TargetT], None]
+    # The follower's group as committed, under its source key, once its
+    # target's key changed: on the target, for a follower moved with it; its
+    # own fields alone, for a follower left naming the old key.
+    group_of: _GroupOnTarget[FollowerT, TargetT]
+
+
+@dataclass(frozen=True, kw_only=True)
 class _TargetCase(Generic[TargetT, FollowerT]):
     """What a declaration and a relation provide to the writes of a row its
     follower's path ends on: the writes themselves are generic over cases."""
@@ -1217,10 +1232,9 @@ class _TargetCase(Generic[TargetT, FollowerT]):
         [FollowerT], dict[str, list[NormalizedDocument]]
     ]
     # For a follower pointing to its target by a column other than its primary
-    # key only: changes that column on the target, saves it, then moves its
-    # followers to the new value by a queryset update, which sends no signal.
+    # key only: the change of that column, and the follower's group it leaves.
     # A case that provides it gets the "change key" write too.
-    change_key: Callable[[TargetT], None] | None = None
+    change_key: _KeyChange[TargetT, FollowerT] | None = None
 
 
 def _whatever_the_target(
@@ -1684,7 +1698,10 @@ FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD: _TargetCase[Warehouse, Shelf] = _TargetCase
     change_target=_rename_the_warehouse,
     group_of=_group_of_a_timber_shelf_following_its_warehouse,
     group_once_target_deleted=_group_of_a_shelf_deleted_by_cascade,
-    change_key=_recode_the_warehouse_moving_its_shelves,
+    change_key=_KeyChange(
+        change=_recode_the_warehouse_moving_its_shelves,
+        group_of=_group_of_a_timber_shelf_following_its_warehouse,
+    ),
 )
 
 
@@ -1783,7 +1800,96 @@ FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD_SET_NULL: _TargetCase[Depot, Bin] = _TargetC
     change_target=_rename_the_depot,
     group_of=_group_of_a_spare_parts_bin_following_its_depot,
     group_once_target_deleted=_group_of_a_spare_parts_bin_whose_depot_is_nulled,
-    change_key=_recode_the_depot_moving_its_bins,
+    change_key=_KeyChange(
+        change=_recode_the_depot_moving_its_bins,
+        group_of=_group_of_a_spare_parts_bin_following_its_depot,
+    ),
+)
+
+
+def _register_seminars_following_their_venue() -> None:
+    """Register Seminar, by its title, following its venue through the
+    multi-column ForeignObject ``venue``: Venue itself is not registered."""
+    rag.register(Seminar, fields=["title"], follow=["venue"])
+
+
+def _leave_the_venue_unchanged(_venue: Venue) -> None:
+    """Change nothing on the given venue: Venue has no column outside the key
+    the seminars name it by."""
+
+
+def _group_of_a_seminar_following_its_venue(
+    seminar: Seminar, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The seminar's group: its title, then its venue's text fields, name
+    first; its title is its document's title too."""
+    return {
+        f"testapp.seminar:{seminar.pk}": [
+            NormalizedDocument(
+                text=f"{_SEMINAR_TITLE}\n\n{target.name}\n\n{target.city}",
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=seminar.pk,
+                title=_SEMINAR_TITLE,
+            ),
+        ],
+    }
+
+
+def _group_of_a_seminar_deleted_by_cascade(
+    seminar: Seminar,
+) -> dict[str, list[NormalizedDocument]]:
+    """The seminar's group once deleted with its venue by cascade: empty."""
+    return {f"testapp.seminar:{seminar.pk}": []}
+
+
+def _rename_the_venue_leaving_its_seminars(venue: Venue) -> None:
+    """Rename the given venue to Grande Halle and save it, its seminars left
+    naming the old name."""
+    # The name is one of the columns the seminars name the venue by: after the
+    # save, the venue's seminar still carries the old name, so only the venue
+    # as it was before the save tells which seminars named it.
+    venue.name = "Grande Halle"
+    venue.save()
+
+
+def _group_of_a_seminar_whose_venue_was_renamed(
+    seminar: Seminar, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The seminar's group once its venue is renamed: its two columns now name
+    no venue, so only its own title is left, not the stale venue text."""
+    return {
+        f"testapp.seminar:{seminar.pk}": [
+            NormalizedDocument(
+                text=_SEMINAR_TITLE,
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=seminar.pk,
+                title=_SEMINAR_TITLE,
+            ),
+        ],
+    }
+
+
+# `follow` through a forward multi-column relation: only Seminar is
+# registered, following its venue (Venue is not); the seminar holds the two
+# columns naming the venue, its city and name, through the ForeignObject
+# ``venue``, the row written, CASCADE on delete. The other venue is in the same
+# city: only both columns together tell the venues apart.
+FOLLOW_FORWARD_MULTI_COLUMN: _TargetCase[Venue, Seminar] = _TargetCase(
+    register=_register_seminars_following_their_venue,
+    create_target=_create_the_halle_tony_garnier,
+    create_other_target=_whatever_the_target(_create_the_transbordeur),
+    create_follower_on=_create_a_seminar_at,
+    # Both columns are the key the seminars name the venue by: the save
+    # changes neither, so the venue's seminars still follow it.
+    change_target=_leave_the_venue_unchanged,
+    group_of=_group_of_a_seminar_following_its_venue,
+    group_once_target_deleted=_group_of_a_seminar_deleted_by_cascade,
+    change_key=_KeyChange(
+        change=_rename_the_venue_leaving_its_seminars,
+        group_of=_group_of_a_seminar_whose_venue_was_renamed,
+    ),
 )
 
 
@@ -1832,7 +1938,8 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
 
 def _change_the_target_key(case: _TargetCase[TargetT, FollowerT]) -> Act:
     """The target's key changed and saved, its followers then moved to the new
-    key without a signal: one call, its follower's group as committed."""
+    key without a signal or left naming the old one: one call, its follower's
+    group as committed."""
     change_key = case.change_key
     # Paired only with the cases that provide a key change.
     assert change_key is not None
@@ -1844,8 +1951,8 @@ def _change_the_target_key(case: _TargetCase[TargetT, FollowerT]) -> Act:
     case.create_follower_on(case.create_other_target(target))
 
     def act() -> ReplaceCalls:
-        change_key(target)
-        return [case.group_of(follower, target=target)]
+        change_key.change(target)
+        return [change_key.group_of(follower, target=target)]
 
     return act
 
@@ -1868,6 +1975,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
         FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD_SET_NULL,
         "follow-forward_foreign_key_to_field_set_null",
     ),
+    (FOLLOW_FORWARD_MULTI_COLUMN, "follow-forward_multi_column"),
 ]
 
 
