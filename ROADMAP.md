@@ -790,8 +790,10 @@ or a `GenericRelation` in `follow`.
     group is replaced if its model follows the relation, and the groups of
     the rows `pk_set` names if theirs does. `pk_set` holds the values of
     the through model's `to_field`, converted to primary keys. A clear has
-    no `pk_set`: the linked rows are read in `pre_clear`. Proxies of either
-    end count.
+    no `pk_set`: the linked rows are read in `pre_clear`, and dropped by
+    the next `pre_*` if the clear fails before `post_clear`. A change made
+    through a proxy instance of either end counts, and so does a
+    non-symmetrical many-to-many from a model to itself.
   - **A missing `MODEL_RAG_OUTPUT` raises before the join rows change** —
     in `pre_add`, `pre_remove` and `pre_clear` — since autocommit writes
     them at once.
@@ -804,8 +806,8 @@ or a `GenericRelation` in `follow`.
     `ImproperlyConfigured`. Load with `MODEL_RAG_SIGNALS = False`, then run
     the command — `rag.signals_paused()` once 12a lands.
   - **Left out**: rows of a custom through model written directly (see
-    11d-bis); a symmetrical many-to-many from a model to itself is not
-    covered.
+    11d-bis); a symmetrical many-to-many from a model to itself; a
+    many-to-many declared to a proxy model (`ManyToManyField(TopicProxy)`).
 - [ ] **11d-bis. Resync through rows of a custom through model** — not
   planned unless a project runs into it. A many-to-many with `through=`
   gets its links from rows of that model, which a project can create,

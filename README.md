@@ -587,12 +587,15 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   links changed — for `clear()`, those linked before it. They are seen
   through Django's `m2m_changed` signal, connected once for every
   many-to-many: a change of links no registered model follows or depends
-  on schedules nothing. Proxies of either end count, and so does a
-  `to_field` on the through model. Rows of a custom `through` model
+  on schedules nothing. A change made through a proxy instance of either
+  end counts (`proxy_topic.courses.add(course)`), and so does a
+  `to_field` on the through model. A many-to-many from a model to itself
+  is covered when it is not symmetrical (`symmetrical=False`). Not
+  covered: a symmetrical one, a many-to-many declared to a proxy model
+  (`ManyToManyField(TopicProxy)`), and rows of a custom `through` model
   created, changed or deleted directly — `Enrollment.objects.create(...)`,
-  an admin inline of the through model — send no `m2m_changed`, so they
-  are not resynced (feature 11d-bis in the [roadmap](ROADMAP.md)). A
-  symmetrical many-to-many from a model to itself is not covered.
+  an admin inline of the through model — which send no `m2m_changed`
+  (feature 11d-bis in the [roadmap](ROADMAP.md)).
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
