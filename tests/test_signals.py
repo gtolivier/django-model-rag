@@ -636,6 +636,37 @@ FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
 )
 
 
+def _group_of_a_page_by_its_plugin_bodies(
+    page: Page, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The page's group, as its custom extractor builds it: its title, then the
+    plugin's body if the plugin is on the page; no title or URL of its own."""
+    text = f"{page.title}\n\nWe build chairs by hand." if holding else page.title
+    return {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through a reverse foreign key: only Page is registered, with a
+# custom extractor reading its plugins' bodies (TextPlugin is not); a plugin
+# holds the key to its Page.
+DEPENDS_ON_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
+    register=_register_pages_by_their_plugin_bodies,
+    create_follower=_create_the_about_page,
+    create_other_follower=_create_the_workshop_page,
+    create_holder=_create_a_plugin_on,
+    point_holder_to=_point_the_plugin_to,
+    group_of=_group_of_a_page_by_its_plugin_bodies,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -700,6 +731,9 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
     "case",
     [
         pytest.param(FOLLOW_REVERSE_FOREIGN_KEY, id="follow-reverse_foreign_key"),
+        pytest.param(
+            DEPENDS_ON_REVERSE_FOREIGN_KEY, id="depends_on-reverse_foreign_key"
+        ),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
