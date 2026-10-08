@@ -2077,6 +2077,92 @@ PATH_TWO_FORWARD_FOREIGN_KEYS: _TargetCase[Category, Offer] = _TargetCase(
 )
 
 
+def _register_talks_reading_their_venue_past_a_foreign_key() -> None:
+    """Register Talk, reading its seminar's venue's name through a lookup path
+    whose later link is the multi-column ForeignObject ``venue``, with no
+    follow: neither Seminar nor Venue is registered."""
+    rag.register(Talk, fields=["title", "seminar__venue__name"])
+
+
+# The title a talk is created with.
+_TALK_TITLE = "Keynote"
+
+
+def _create_a_keynote_at(venue: Venue) -> Talk:
+    """Create a seminar at the given venue, then a Keynote talk on it."""
+    return Talk.objects.create(title=_TALK_TITLE, seminar=_create_a_seminar_at(venue))
+
+
+def _group_of_a_keynote_reading_its_venue_name(
+    talk: Talk, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The keynote's group: its title, then its seminar's venue's name read
+    through the path; its title is its document's title too."""
+    return {
+        f"testapp.talk:{talk.pk}": [
+            NormalizedDocument(
+                text=f"{_TALK_TITLE}\n\n{target.name}",
+                source_app_label="testapp",
+                source_model="talk",
+                source_pk=talk.pk,
+                title=_TALK_TITLE,
+            ),
+        ],
+    }
+
+
+def _group_of_a_talk_deleted_by_cascade(
+    talk: Talk,
+) -> dict[str, list[NormalizedDocument]]:
+    """The talk's group once deleted by cascade with its seminar, itself
+    deleted with its venue: empty."""
+    return {f"testapp.talk:{talk.pk}": []}
+
+
+def _group_of_a_keynote_whose_venue_was_renamed(
+    talk: Talk, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The keynote's group once its seminar's venue is renamed: the seminar's
+    two columns now name no venue, so only the talk's own title is left, not
+    the stale venue name."""
+    return {
+        f"testapp.talk:{talk.pk}": [
+            NormalizedDocument(
+                text=_TALK_TITLE,
+                source_app_label="testapp",
+                source_model="talk",
+                source_pk=talk.pk,
+                title=_TALK_TITLE,
+            ),
+        ],
+    }
+
+
+# A lookup path past a forward foreign key then a multi-column relation: only
+# Talk is registered, reading its seminar's venue's name (neither Seminar nor
+# Venue is); the row written is the venue, the last link of the path, Talk →
+# seminar by foreign key → venue by the multi-column ForeignObject, both
+# CASCADE on delete. The other venue is in the same city: only both columns
+# together tell the venues apart. Once the venue is renamed, its seminar's two
+# columns name no venue: the path reads nothing, only the talk's own title is
+# left.
+PATH_FORWARD_FOREIGN_KEY_THEN_MULTI_COLUMN: _TargetCase[Venue, Talk] = _TargetCase(
+    register=_register_talks_reading_their_venue_past_a_foreign_key,
+    create_target=_create_the_halle_tony_garnier,
+    create_other_target=_whatever_the_target(_create_the_transbordeur),
+    create_follower_on=_create_a_keynote_at,
+    # Both columns are the key the seminars name the venue by: the save
+    # changes neither, so the talks of the venue's seminars still read it.
+    change_target=_leave_the_venue_unchanged,
+    group_of=_group_of_a_keynote_reading_its_venue_name,
+    group_once_target_deleted=_group_of_a_talk_deleted_by_cascade,
+    change_key=_KeyChange(
+        change=_rename_the_venue_leaving_its_seminars,
+        group_of=_group_of_a_keynote_whose_venue_was_renamed,
+    ),
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -2163,6 +2249,10 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (PATH_FORWARD_MULTI_COLUMN, "path-forward_multi_column"),
     (DEPENDS_ON_FORWARD_MULTI_COLUMN, "depends_on-forward_multi_column"),
     (PATH_TWO_FORWARD_FOREIGN_KEYS, "path-two_forward_foreign_keys"),
+    (
+        PATH_FORWARD_FOREIGN_KEY_THEN_MULTI_COLUMN,
+        "path-forward_foreign_key_then_multi_column",
+    ),
 ]
 
 
