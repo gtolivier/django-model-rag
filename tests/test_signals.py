@@ -545,7 +545,7 @@ def _no_other_groups(
     return {}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class _FollowedCase(Generic[FollowerT, HolderT]):
     """What a declaration and a relation provide to the writes of a row holding
     the key to its follower: the writes themselves are generic over cases."""
@@ -556,8 +556,13 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     create_follower: Callable[[], FollowerT]
     # Another follower, the holding row is moved to.
     create_other_follower: Callable[[], FollowerT]
-    # Creates the row holding the key to the given follower.
-    create_holder: Callable[[FollowerT], HolderT]
+    # Creates the row holding the key to the given follower, for a holding row
+    # that names its follower alone.
+    create_holder: Callable[[FollowerT], HolderT] | None = None
+    # Or, for a holding row that names other rows too: creates them, before
+    # anything else, and returns the function creating the holding row on a
+    # follower and naming them.
+    create_others_named: Callable[[], Callable[[FollowerT], HolderT]] | None = None
     # Points the holding row's key to the given follower, without saving it.
     point_holder_to: Callable[[HolderT, FollowerT], None]
     # The follower's group as committed, under its source key, whether the
@@ -569,6 +574,16 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     groups_of_the_others_named: Callable[
         [HolderT, bool], dict[str, list[NormalizedDocument]]
     ] = _no_other_groups
+
+    def prepare_holder(self) -> Callable[[FollowerT], HolderT]:
+        """Create the other rows the holding row names, if any, and return the
+        function creating the holding row on a follower."""
+        if self.create_others_named is not None:
+            return self.create_others_named()
+        if self.create_holder is None:
+            message = "A case creates its holding row, alone or naming others."
+            raise TypeError(message)
+        return self.create_holder
 
 
 def _create_the_about_page() -> Page:
@@ -885,10 +900,8 @@ DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
 )
 
 
-def _create_lyon_and_its_opponent() -> Team:
-    """Create the Lyon team, and Nantes, the opponent every match of Lyon's is
-    played against."""
-    Team.objects.create(name="Nantes")
+def _create_lyon() -> Team:
+    """Create the Lyon team."""
     return Team.objects.create(name="Lyon")
 
 
@@ -897,11 +910,26 @@ def _create_marseille() -> Team:
     return Team.objects.create(name="Marseille")
 
 
-def _create_a_match_at_home_of(team: Team) -> Match:
-    """Create a match with the given team at home, against Nantes away: it holds
-    the key to two different teams, one per foreign key."""
-    nantes = Team.objects.get(name="Nantes")
-    return Match.objects.create(title="Opening day", home_team=team, away_team=nantes)
+def _create_a_match_at_home_of_against(
+    opponent: Team,
+) -> Callable[[Team], Match]:
+    """The function creating a match with the given team at home, against the
+    opponent away: it holds the key to two different teams, one per foreign
+    key."""
+
+    def create_a_match_at_home_of(team: Team) -> Match:
+        return Match.objects.create(
+            title="Opening day", home_team=team, away_team=opponent
+        )
+
+    return create_a_match_at_home_of
+
+
+def _create_nantes_to_play_against() -> Callable[[Team], Match]:
+    """Create Nantes, the opponent every match is played against, and return
+    the function creating a match against it."""
+    nantes = Team.objects.create(name="Nantes")
+    return _create_a_match_at_home_of_against(nantes)
 
 
 def _point_the_match_home_to(match: Match, team: Team) -> None:
@@ -939,12 +967,13 @@ def _group_of_the_away_team(
 # `follow` through two reverse foreign keys to the same model: only Team is
 # registered, following its matches at home and away (Match is not); a match
 # holds the key to two different teams, the follower at home and Nantes away,
-# so each relation must be crossed for its team's group to be replaced.
+# created first and handed to every match, so each relation must be crossed
+# for its team's group to be replaced.
 FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
     register=_register_teams_following_their_matches,
-    create_follower=_create_lyon_and_its_opponent,
+    create_follower=_create_lyon,
     create_other_follower=_create_marseille,
-    create_holder=_create_a_match_at_home_of,
+    create_others_named=_create_nantes_to_play_against,
     point_holder_to=_point_the_match_home_to,
     group_of=_group_of_a_team_following_its_matches,
     groups_of_the_others_named=_group_of_the_away_team,
@@ -961,10 +990,11 @@ def _create(case: _FollowedCase[Any, Any]) -> Act:
     those of the other rows it names, each once."""
     # Created before the write: the commit callback of its own save is not
     # observed, so only the holding row's creation is.
+    create_holder = case.prepare_holder()
     follower = case.create_follower()
 
     def act() -> ReplaceCalls:
-        holder = case.create_holder(follower)
+        holder = create_holder(follower)
         return [
             {
                 **case.group_of(follower, True),
@@ -980,9 +1010,10 @@ def _move(case: _FollowedCase[Any, Any]) -> Act:
     followers' groups and those of the other rows it names, each once."""
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the move is.
+    create_holder = case.prepare_holder()
     old = case.create_follower()
     new = case.create_other_follower()
-    holder = case.create_holder(old)
+    holder = create_holder(old)
 
     def act() -> ReplaceCalls:
         case.point_holder_to(holder, new)
@@ -1005,8 +1036,9 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
     other rows it named, each once."""
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the delete is.
+    create_holder = case.prepare_holder()
     follower = case.create_follower()
-    holder = case.create_holder(follower)
+    holder = create_holder(follower)
 
     def act() -> ReplaceCalls:
         holder.delete()
