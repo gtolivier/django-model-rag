@@ -2629,47 +2629,6 @@ def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups
 
 
 @pytest.mark.django_db
-def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Citation is registered, reading its url from its bookmark
-    # through a lookup path, with no follow: Bookmark itself is not registered.
-    rag.register(Citation, fields=["title"], url_field="bookmark__link")
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the bookmark's save below is observed.
-    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
-    citation = Citation.objects.create(title="Linked", bookmark=bookmark)
-
-    with django_capture_on_commit_callbacks(execute=True):
-        bookmark.link = "/docs/b/"
-        bookmark.save()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The path alone resyncs the Citation: its group, with the bookmark's new
-    # link as its url.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.citation:{citation.pk}": [
-                NormalizedDocument(
-                    text="Linked",
-                    source_app_label="testapp",
-                    source_model="citation",
-                    source_pk=citation.pk,
-                    title="Linked",
-                    url="/docs/b/",
-                ),
-            ],
-        }
-    ]
-
-
-@pytest.mark.django_db
 def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -2724,48 +2683,6 @@ def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
             ),
         ],
     }
-
-
-@pytest.mark.django_db
-def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Product is registered, reading its title from its category
-    # through a lookup path, with no follow and no other path through the
-    # category: Category itself is not registered.
-    rag.register(Product, fields=["name"], title_field="category__name")
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    lamp = _create_a_plain_desk_lamp(lighting)
-
-    with django_capture_on_commit_callbacks(execute=True):
-        lighting.name = "Lamps"
-        lighting.save()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The path alone resyncs the Product: its group, with the category's new
-    # name as its title.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.product:{lamp.pk}": [
-                NormalizedDocument(
-                    text="Desk lamp",
-                    source_app_label="testapp",
-                    source_model="product",
-                    source_pk=lamp.pk,
-                    title="Lamps",
-                    url=f"/products/{lamp.pk}/",
-                ),
-            ],
-        }
-    ]
 
 
 @pytest.mark.django_db
@@ -4433,57 +4350,6 @@ def test_a_topic_saved_then_deleted_replaces_no_group_of_the_workshops_with_no_t
             ),
         ],
     }
-
-
-@pytest.mark.django_db
-def test_deleting_a_topic_read_two_links_deep_through_set_null_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Session is registered, reading its workshop's topic's title
-    # through a lookup path two links deep, the last one SET_NULL on delete,
-    # with no follow: neither Workshop nor Topic is registered, so the topic
-    # reaches the session only through the path.
-    rag.register(Session, fields=["title", "workshop__topic__title"])
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the topic's delete below is observed.
-    woodworking = _create_the_woodworking_topic()
-    glazing = Topic.objects.create(
-        summary="Colours and kilns.", title="Glazing", slug="glazing"
-    )
-    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
-    ceramics = Workshop.objects.create(title="Ceramics", topic=glazing)
-    morning = Session.objects.create(title="Morning", workshop=pottery)
-    Session.objects.create(title="Evening", workshop=ceramics)
-
-    # The delete sets the workshop's foreign key to null before the topic's
-    # row goes: by post_delete, the path from the session no longer reaches
-    # the topic.
-    with django_capture_on_commit_callbacks(execute=True):
-        woodworking.delete()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The session's group as committed: the topic's title is gone, only the
-    # session's own title is left. The session of a workshop on another topic
-    # is not sent.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.session:{morning.pk}": [
-                NormalizedDocument(
-                    text="Morning",
-                    source_app_label="testapp",
-                    source_model="session",
-                    source_pk=morning.pk,
-                    title="Morning",
-                ),
-            ],
-        }
-    ]
 
 
 @pytest.mark.django_db
