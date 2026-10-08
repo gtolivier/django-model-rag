@@ -722,6 +722,63 @@ def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
 
 
 @pytest.mark.django_db
+def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Citation is registered, reading its url from its bookmark
+    # through a lookup path over its nullable foreign key, SET_NULL on delete,
+    # with no follow: Bookmark itself is not registered.
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the bookmark's delete below is observed.
+    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
+    linked = Citation.objects.create(title="Linked", bookmark=bookmark)
+    quoted = Citation.objects.create(title="Quoted", bookmark=bookmark)
+    # Another bookmark and its citation, untouched by the delete.
+    other_bookmark = Bookmark.objects.create(title="Example", link="/docs/b/")
+    Citation.objects.create(title="Elsewhere", bookmark=other_bookmark)
+
+    # The delete sets the citations' foreign key to null before the bookmark's
+    # row goes: by post_delete, the citations no longer point to the bookmark.
+    with django_capture_on_commit_callbacks(execute=True):
+        bookmark.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of the citations that pointed to the bookmark, as committed:
+    # with no bookmark left, they have no url, an empty string. Merged across
+    # replace calls: whether they are sent in one call or several is not what
+    # this test is about. No group of the other bookmark's citation.
+    assert _received_groups(built_outputs) == {
+        f"testapp.citation:{linked.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=linked.pk,
+                title="Linked",
+                url="",
+            ),
+        ],
+        f"testapp.citation:{quoted.pk}": [
+            NormalizedDocument(
+                text="Quoted",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=quoted.pk,
+                title="Quoted",
+                url="",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
