@@ -1645,6 +1645,44 @@ def test_moving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_both_
 
 
 @pytest.mark.django_db
+def test_deleting_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_page(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_by_their_plugin_bodies()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's delete below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    deleted_plugin = TextPlugin.objects.create(
+        page=page, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        deleted_plugin.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Page's group as committed: the deleted plugin's text
+    # is gone, the remaining plugin's text stays after the Page's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_remark_a_custom_extractor_depends_on_without_related_name_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
