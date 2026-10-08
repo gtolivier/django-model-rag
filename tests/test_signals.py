@@ -1773,7 +1773,7 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_co
 
 
 @pytest.mark.django_db
-def test_a_product_moved_by_update_after_its_category_save_through_a_lookup_path(
+def test_a_product_moved_by_update_after_its_category_save_is_replaced_via_lookup_path(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -5494,12 +5494,11 @@ def test_deleting_a_venue_read_through_a_multi_column_lookup_path_sends_only_sem
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's delete below is observed.
     hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
-    rigging_pk = (
-        Seminar.objects.create(
-            title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
-        )
-    ).pk
+    rigging = Seminar.objects.create(
+        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
     acoustics_pk = acoustics.pk
+    rigging_pk = rigging.pk
     # Another venue of the same city: only both columns together name a venue,
     # so its seminar is neither deleted with the hall nor sent.
     _create_the_transbordeur_and_its_seminar()
