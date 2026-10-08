@@ -2105,6 +2105,49 @@ def test_deleting_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_t
 
 
 @pytest.mark.django_db
+def test_removing_a_topic_from_a_course_its_custom_extractor_depends_on_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and adds never run, so only the remove below is observed.
+    # The topic is covered by two courses, so that its group keeps the one
+    # left.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    joinery = Course.objects.create(title="Joinery")
+    basics.topics.add(woodworking)
+    joinery.topics.add(woodworking)
+
+    # Removed from the course's side: Django sends m2m_changed with the course
+    # as its instance, and the topic among the primary keys it names. Neither
+    # row is saved again: the remove deletes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.remove(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Topic's group as committed: the removed course's
+    # title is gone, only the other course's title is left.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: Joinery",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
