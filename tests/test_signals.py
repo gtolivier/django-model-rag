@@ -750,6 +750,60 @@ DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _Follo
 )
 
 
+def _create_the_north_depot() -> Warehouse:
+    """Create the North depot warehouse, coded "north"."""
+    return Warehouse.objects.create(name="North depot", code="north")
+
+
+def _create_the_south_depot() -> Warehouse:
+    """Create the South depot warehouse, coded "south"."""
+    return Warehouse.objects.create(name="South depot", code="south")
+
+
+def _create_a_shelf_in(warehouse: Warehouse) -> Shelf:
+    """Create a shelf in the given warehouse: its foreign key holds the
+    warehouse's code, not its primary key."""
+    return Shelf.objects.create(warehouse=warehouse, label="Timber")
+
+
+def _point_the_shelf_to(shelf: Shelf, warehouse: Warehouse) -> None:
+    """Point the shelf's foreign key to the given warehouse's code, without
+    saving it."""
+    shelf.warehouse = warehouse
+
+
+def _group_of_a_warehouse_following_its_shelves(
+    warehouse: Warehouse, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The warehouse's group, under its primary key, not its code: its name,
+    then the shelf's label if the shelf is in the warehouse."""
+    text = f"{warehouse.name}\n\nTimber" if holding else warehouse.name
+    return {
+        f"testapp.warehouse:{warehouse.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=warehouse.pk,
+                title=warehouse.name,
+            ),
+        ],
+    }
+
+
+# `follow` through a reverse foreign key to a unique column: only Warehouse is
+# registered, following its shelves (Shelf is not); a shelf holds the key to
+# its Warehouse, the Warehouse's code rather than its primary key.
+FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _FollowedCase(
+    register=_register_warehouses_following_their_shelves,
+    create_follower=_create_the_north_depot,
+    create_other_follower=_create_the_south_depot,
+    create_holder=_create_a_shelf_in,
+    point_holder_to=_point_the_shelf_to,
+    group_of=_group_of_a_warehouse_following_its_shelves,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -819,6 +873,10 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
         ),
         pytest.param(FOLLOW_REVERSE_ONE_TO_ONE, id="follow-reverse_one_to_one"),
         pytest.param(DEPENDS_ON_REVERSE_ONE_TO_ONE, id="depends_on-reverse_one_to_one"),
+        pytest.param(
+            FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD,
+            id="follow-reverse_foreign_key_to_field",
+        ),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
