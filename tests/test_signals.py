@@ -71,6 +71,7 @@ from tests.testapp.models import (
     Theme,
     Topic,
     TopicProxy,
+    Tournament,
     Venue,
     Warehouse,
     Workshop,
@@ -4140,6 +4141,89 @@ def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Two registered models follow Match in reverse: the Team by both its
+    # reverse foreign keys, ``home_matches`` and ``away_matches``, and the
+    # Tournament by its own, ``matches``. Match itself is not registered.
+    rag.register(Team, fields=["name"], follow=["home_matches", "away_matches"])
+    rag.register(Tournament, fields=["name"], follow=["matches"])
+
+    # Created outside the counted queries: only the match's update below is
+    # observed.
+    lyon = Team.objects.create(name="Lyon")
+    nantes = Team.objects.create(name="Nantes")
+    cup = Tournament.objects.create(name="Spring Cup")
+    derby = Match.objects.create(
+        title="Opening day", home_team=lyon, away_team=nantes, tournament=cup
+    )
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: one lookup per registered model before the
+    # save (two), the save's UPDATE, one lookup per registered model from the
+    # row as committed (two), then the reads of the groups: the Teams' four
+    # and the Tournament's three. Three reverse relations, but two registered
+    # models: the lookups grow with the models, not with the relations.
+    with (
+        django_assert_num_queries(12),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the match keeps its teams and its tournament.
+        derby.title = "Season opener"
+        derby.save()
+
+    # Each following row's group, with the match's title as committed after
+    # the row's own name, merged across replace calls: whether the groups come
+    # in one call or one per registered model is not what this test is about.
+    assert _received_groups(built_outputs) == {
+        f"testapp.team:{lyon.pk}": [
+            NormalizedDocument(
+                text="Lyon\n\nSeason opener",
+                source_app_label="testapp",
+                source_model="team",
+                source_pk=lyon.pk,
+                title="Lyon",
+            ),
+        ],
+        f"testapp.team:{nantes.pk}": [
+            NormalizedDocument(
+                text="Nantes\n\nSeason opener",
+                source_app_label="testapp",
+                source_model="team",
+                source_pk=nantes.pk,
+                title="Nantes",
+            ),
+        ],
+        f"testapp.tournament:{cup.pk}": [
+            NormalizedDocument(
+                text="Spring Cup\n\nSeason opener",
+                source_app_label="testapp",
+                source_model="tournament",
+                source_pk=cup.pk,
+                title="Spring Cup",
+            ),
+        ],
+    }
+    # Each group sent once: no following row is replaced twice.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [
+            f"testapp.team:{lyon.pk}",
+            f"testapp.team:{nantes.pk}",
+            f"testapp.tournament:{cup.pk}",
+        ]
+    )
 
 
 @pytest.mark.django_db
