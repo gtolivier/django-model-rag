@@ -624,6 +624,63 @@ def test_saving_a_notice_read_as_language_through_a_lookup_path_replaces_the_gro
 
 
 @pytest.mark.django_db
+def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Excerpt is registered, reading its language from its notice
+    # through a lookup path over its nullable foreign key, SET_NULL on delete,
+    # with no follow: Notice itself is not registered.
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the notice's delete below is observed.
+    notice = Notice.objects.create(title="Avis", language="fr")
+    greeting = Excerpt.objects.create(title="Bonjour", notice=notice)
+    farewell = Excerpt.objects.create(title="Au revoir", notice=notice)
+    # Another notice and its excerpt, untouched by the delete.
+    other_notice = Notice.objects.create(title="Notice", language="en")
+    Excerpt.objects.create(title="Hello", notice=other_notice)
+
+    # The delete sets the excerpts' foreign key to null before the notice's
+    # row goes: by post_delete, the excerpts no longer point to the notice.
+    with django_capture_on_commit_callbacks(execute=True):
+        notice.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of the excerpts that pointed to the notice, as committed:
+    # with no notice left, they have no language. Merged across replace
+    # calls: whether they are sent in one call or several is not what this
+    # test is about. No group of the other notice's excerpt.
+    assert _received_groups(built_outputs) == {
+        f"testapp.excerpt:{greeting.pk}": [
+            NormalizedDocument(
+                text="Bonjour",
+                source_app_label="testapp",
+                source_model="excerpt",
+                source_pk=greeting.pk,
+                title="Bonjour",
+                language=None,
+            ),
+        ],
+        f"testapp.excerpt:{farewell.pk}": [
+            NormalizedDocument(
+                text="Au revoir",
+                source_app_label="testapp",
+                source_model="excerpt",
+                source_pk=farewell.pk,
+                title="Au revoir",
+                language=None,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
