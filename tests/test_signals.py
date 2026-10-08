@@ -1732,6 +1732,51 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_co
 
 
 @pytest.mark.django_db
+def test_a_product_moved_by_update_after_its_category_save_through_a_lookup_path(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its category's name through a
+    # lookup path, with no follow: Category itself is not registered.
+    rag.register(Product, fields=["name", "category__name"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The product starts in another category; the category it moves to
+    # has none.
+    tools = Category.objects.create(name="Tools")
+    lamp = _create_a_plain_desk_lamp(tools)
+    lighting = Category.objects.create(name="Lighting")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Moved to the category after the category's save, in the same
+        # transaction, by a write that sends no signal: only the category's
+        # save is observed.
+        Product.objects.filter(pk=lamp.pk).update(category=lighting)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The product moved after the save reads the category
+    # through the path at the commit, so its group is replaced, as committed:
+    # with the new name of the category it moved to.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Desk lamp\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title="Desk lamp",
+                url=f"/products/{lamp.pk}/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
