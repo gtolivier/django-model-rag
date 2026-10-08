@@ -1441,6 +1441,49 @@ PATH_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Notice, Excerpt] = _TargetCase(
 )
 
 
+def _retitle_the_page(page: Page) -> None:
+    """Retitle the given page to Our story, without saving it."""
+    page.title = "Our story"
+
+
+def _group_of_a_plugin_by_its_page_title(
+    plugin: TextPlugin, /, *, target: Page
+) -> dict[str, list[NormalizedDocument]]:
+    """The plugin's group, as its custom extractor builds it: its page's title,
+    then its body; no title or URL of its own."""
+    return {
+        f"testapp.textplugin:{plugin.pk}": [
+            NormalizedDocument(
+                text=f"{target.title}: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=plugin.pk,
+            ),
+        ],
+    }
+
+
+def _group_of_a_plugin_deleted_by_cascade(
+    plugin: TextPlugin,
+) -> dict[str, list[NormalizedDocument]]:
+    """The plugin's group once deleted with its page by cascade: empty."""
+    return {f"testapp.textplugin:{plugin.pk}": []}
+
+
+# `depends_on` through a forward foreign key: only TextPlugin is registered,
+# with a custom extractor reading its page's title (Page is not); the plugin
+# holds the key to the page, the row written, CASCADE on delete.
+DEPENDS_ON_FORWARD_FOREIGN_KEY: _TargetCase[Page, TextPlugin] = _TargetCase(
+    register=_register_plugins_by_their_page_title,
+    create_target=_create_the_about_page,
+    create_other_target=_create_the_workshop_page,
+    create_follower_on=_create_a_plugin_on,
+    change_target=_retitle_the_page,
+    group_of=_group_of_a_plugin_by_its_page_title,
+    group_once_target_deleted=_group_of_a_plugin_deleted_by_cascade,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1504,6 +1547,9 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
         pytest.param(
             PATH_FORWARD_FOREIGN_KEY_SET_NULL,
             id="path-forward_foreign_key_set_null",
+        ),
+        pytest.param(
+            DEPENDS_ON_FORWARD_FOREIGN_KEY, id="depends_on-forward_foreign_key"
         ),
     ],
 )
