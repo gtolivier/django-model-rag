@@ -980,6 +980,54 @@ FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
 )
 
 
+def _create_a_match_away_of_against(
+    opponent: Team,
+) -> Callable[[Team], Match]:
+    """The function creating a match with the given team away, against the
+    opponent at home: it holds the key to two different teams, one per foreign
+    key."""
+
+    def create_a_match_away_of(team: Team) -> Match:
+        return Match.objects.create(
+            title="Opening day", home_team=opponent, away_team=team
+        )
+
+    return create_a_match_away_of
+
+
+def _create_nantes_to_play_at() -> Callable[[Team], Match]:
+    """Create Nantes, the opponent hosting every match, and return the function
+    creating a match at its home."""
+    nantes = Team.objects.create(name="Nantes")
+    return _create_a_match_away_of_against(nantes)
+
+
+def _point_the_match_away_to(match: Match, team: Team) -> None:
+    """Point the match's away team key to the given team, without saving it:
+    its home team stays."""
+    match.away_team = team
+
+
+def _group_of_the_home_team(
+    match: Match, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The group of the match's home team, which no write changes."""
+    return _group_of_a_team_following_its_matches(match.home_team, holding)
+
+
+# The mirror of the case above: the follower plays away and Nantes at home,
+# so the write changes the key of the reverse relation ``away_matches``.
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY: _FollowedCase[Team, Match] = _FollowedCase(
+    register=_register_teams_following_their_matches,
+    create_follower=_create_lyon,
+    create_other_follower=_create_marseille,
+    create_others_named=_create_nantes_to_play_at,
+    point_holder_to=_point_the_match_away_to,
+    group_of=_group_of_a_team_following_its_matches,
+    groups_of_the_others_named=_group_of_the_home_team,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -1081,6 +1129,10 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
         ),
         pytest.param(
             FOLLOW_TWO_REVERSE_FOREIGN_KEYS, id="follow-two_reverse_foreign_keys"
+        ),
+        pytest.param(
+            FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY,
+            id="follow-two_reverse_foreign_keys_away",
         ),
     ],
 )
