@@ -779,12 +779,12 @@ DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _Follo
 )
 
 
-def _create_the_north_depot() -> Warehouse:
+def _create_the_north_warehouse() -> Warehouse:
     """Create the North depot warehouse, coded "north"."""
     return Warehouse.objects.create(name="North depot", code="north")
 
 
-def _create_the_south_depot() -> Warehouse:
+def _create_the_south_warehouse() -> Warehouse:
     """Create the South depot warehouse, coded "south"."""
     return Warehouse.objects.create(name="South depot", code="south")
 
@@ -831,8 +831,8 @@ def _group_of_a_warehouse_following_its_shelves(
 # its Warehouse, the Warehouse's code rather than its primary key.
 FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _FollowedCase(
     register=_register_warehouses_following_their_shelves,
-    create_follower=_create_the_north_depot,
-    create_other_follower=_create_the_south_depot,
+    create_follower=_create_the_north_warehouse,
+    create_other_follower=_create_the_south_warehouse,
     prepare_holder=_naming_the_follower_alone(_create_a_shelf_in),
     holder_text=_SHELF_LABEL,
     sibling_text=_SIBLING_SHELF_LABEL,
@@ -1329,15 +1329,16 @@ def _rename_the_category(category: Category) -> None:
 
 
 def _register_products_following_their_category() -> None:
-    """Register Product, following its category through its own foreign key:
-    Category itself is not registered."""
+    """Register only Product, by its name, following its category through its
+    own foreign key: Category itself is not registered."""
     rag.register(Product, fields=["name"], follow=["category"])
 
 
-def _group_of_a_desk_lamp_following_its_category(
+def _group_of_a_desk_lamp_reading_its_category(
     product: Product, /, *, target: Category
 ) -> dict[str, list[NormalizedDocument]]:
-    """The desk lamp's group: its name, then its category's name."""
+    """The desk lamp's group: its name, then its category's name, whether it
+    follows its category or reads its name through a lookup path."""
     return {
         f"testapp.product:{product.pk}": [
             NormalizedDocument(
@@ -1368,7 +1369,7 @@ FOLLOW_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
     create_other_target=_whatever_the_target(_create_the_tools_category),
     create_follower_on=_create_a_plain_desk_lamp,
     change_target=_rename_the_category,
-    group_of=_group_of_a_desk_lamp_following_its_category,
+    group_of=_group_of_a_desk_lamp_reading_its_category,
     group_once_target_deleted=_group_of_a_product_deleted_by_cascade,
 )
 
@@ -1455,7 +1456,7 @@ PATH_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
     create_other_target=_whatever_the_target(_create_the_tools_category),
     create_follower_on=_create_a_plain_desk_lamp,
     change_target=_rename_the_category,
-    group_of=_group_of_a_desk_lamp_following_its_category,
+    group_of=_group_of_a_desk_lamp_reading_its_category,
     group_once_target_deleted=_group_of_a_product_deleted_by_cascade,
 )
 
@@ -1701,7 +1702,7 @@ def _register_shelves_following_their_warehouse() -> None:
     rag.register(Shelf, follow=["warehouse"])
 
 
-def _create_a_depot_coded_by_the_pk_of(warehouse: Warehouse) -> Warehouse:
+def _create_a_warehouse_coded_by_the_pk_of(warehouse: Warehouse) -> Warehouse:
     """Create the South depot warehouse, coded by the given warehouse's primary
     key as text: a shelf matched by comparing that primary key with the stored
     code would be this one's, not the given warehouse's."""
@@ -1760,8 +1761,8 @@ def _recode_the_warehouse_moving_its_shelves(warehouse: Warehouse) -> None:
 # warehouse's primary key as text.
 FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD: _TargetCase[Warehouse, Shelf] = _TargetCase(
     register=_register_shelves_following_their_warehouse,
-    create_target=_create_the_north_depot,
-    create_other_target=_create_a_depot_coded_by_the_pk_of,
+    create_target=_create_the_north_warehouse,
+    create_other_target=_create_a_warehouse_coded_by_the_pk_of,
     create_follower_on=_create_a_shelf_in,
     change_target=_rename_the_warehouse,
     group_of=_group_of_a_timber_shelf_following_its_warehouse,
@@ -1779,12 +1780,12 @@ def _register_bins_following_their_depot() -> None:
     rag.register(Bin, follow=["depot"])
 
 
-def _create_the_north_bin_depot() -> Depot:
+def _create_the_north_depot() -> Depot:
     """Create the North depot, coded "north"."""
     return Depot.objects.create(name="North depot", code="north")
 
 
-def _create_a_bin_depot_coded_by_the_pk_of(depot: Depot) -> Depot:
+def _create_a_depot_coded_by_the_pk_of(depot: Depot) -> Depot:
     """Create the South depot, coded by the given depot's primary key as text:
     a bin matched by comparing that primary key with the stored code would be
     this one's, not the given depot's."""
@@ -1862,8 +1863,8 @@ def _recode_the_depot_moving_its_bins(depot: Depot) -> None:
 # text.
 FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD_SET_NULL: _TargetCase[Depot, Bin] = _TargetCase(
     register=_register_bins_following_their_depot,
-    create_target=_create_the_north_bin_depot,
-    create_other_target=_create_a_bin_depot_coded_by_the_pk_of,
+    create_target=_create_the_north_depot,
+    create_other_target=_create_a_depot_coded_by_the_pk_of,
     create_follower_on=_create_a_spare_parts_bin_in,
     change_target=_rename_the_depot,
     group_of=_group_of_a_spare_parts_bin_following_its_depot,
@@ -2237,14 +2238,23 @@ class _TargetWrite(Protocol):
     def __call__(self, case: _TargetCase[TargetT, FollowerT], /) -> Act: ...
 
 
-def _save_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
-    """The target changed and saved: one call, its follower's group."""
-    # Created before the write: the commit callbacks of these saves are not
-    # observed, so only the target's save is. The other target and its
-    # follower are left untouched.
+def _create_both_targets_with_their_followers(
+    case: _TargetCase[TargetT, FollowerT],
+) -> tuple[TargetT, FollowerT]:
+    """Create the case's target with its follower, then the other target with a
+    follower of its own, which the write leaves untouched; return the target
+    and its follower."""
     target = case.create_target()
     follower = case.create_follower_on(target)
     case.create_follower_on(case.create_other_target(target))
+    return target, follower
+
+
+def _save_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
+    """The target changed and saved: one call, its follower's group."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the target's save is.
+    target, follower = _create_both_targets_with_their_followers(case)
 
     def act() -> ReplaceCalls:
         case.change_target(target)
@@ -2258,11 +2268,8 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     """The target deleted: one call, its follower's group as the delete leaves
     it."""
     # Created before the write: the commit callbacks of these saves are not
-    # observed, so only the target's delete is. The other target and its
-    # follower are left untouched.
-    target = case.create_target()
-    follower = case.create_follower_on(target)
-    case.create_follower_on(case.create_other_target(target))
+    # observed, so only the target's delete is.
+    target, follower = _create_both_targets_with_their_followers(case)
 
     def act() -> ReplaceCalls:
         # Expected before the delete: a follower deleted with its target may
@@ -2282,11 +2289,8 @@ def _change_the_target_key(case: _TargetCase[TargetT, FollowerT]) -> Act:
     # Paired only with the cases that provide a key change.
     assert change_key is not None
     # Created before the write: the commit callbacks of these saves are not
-    # observed, so only the target's key change is. The other target and its
-    # follower are left untouched.
-    target = case.create_target()
-    follower = case.create_follower_on(target)
-    case.create_follower_on(case.create_other_target(target))
+    # observed, so only the target's key change is.
+    target, follower = _create_both_targets_with_their_followers(case)
 
     def act() -> ReplaceCalls:
         change_key.change(target)
@@ -2384,7 +2388,7 @@ def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups
     # Only the Excerpt is registered, reading its language from its notice
     # through a lookup path over its nullable foreign key, SET_NULL on delete,
     # with no follow: Notice itself is not registered.
-    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+    _register_excerpts_reading_their_language_through_a_path()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the notice's delete below is observed.
@@ -2582,7 +2586,7 @@ def test_saving_a_product_in_the_middle_of_a_lookup_path_replaces_the_group_read
     # through a lookup path two foreign keys deep, with no follow: neither
     # Product nor Category is registered, so the product reaches the offer
     # only through the path.
-    rag.register(Offer, fields=["title", "product__category__name"])
+    _register_offers_reading_their_category_two_foreign_keys_deep()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the product's save below is observed.
@@ -2685,7 +2689,7 @@ def test_a_category_read_two_links_deep_saved_with_no_output_writes_no_row() -> 
     # through a lookup path two foreign keys deep, with no follow: neither
     # Product nor Category is registered, so the category reaches the offer
     # only through the path.
-    rag.register(Offer, fields=["title", "product__category__name"])
+    _register_offers_reading_their_category_two_foreign_keys_deep()
 
     # No transaction around the save (transaction=True): in autocommit, each
     # query commits as soon as it runs, so the save must fail before its
@@ -2706,7 +2710,7 @@ def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
@@ -2768,7 +2772,7 @@ def test_saving_a_category_followed_by_more_rows_than_sqlite_variables_replaces_
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # More followers than SQLite accepts variables in one query. Created
     # outside the captured callbacks: bulk_create sends no signal anyway, so
@@ -2818,7 +2822,7 @@ def test_creating_a_category_followed_by_foreign_key_reads_nothing_and_sends_not
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits: neither the save nor the commit may read.
@@ -2847,7 +2851,7 @@ def test_saving_a_category_followed_by_foreign_key_looks_its_followers_up_once(
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     lighting = Category.objects.create(name="Lighting")
     _create_a_plain_desk_lamp(lighting)
@@ -2880,7 +2884,7 @@ def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_i
 
     # Only the Product is registered, following its category through its own
     # foreign key: neither Category nor its proxy is.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's save below is observed.
@@ -3010,7 +3014,7 @@ def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_d
     # Only the Bin is registered, following its depot through its own nullable
     # foreign key, which holds the Depot's code, not its primary key: Depot
     # itself is not.
-    rag.register(Bin, follow=["depot"])
+    _register_bins_following_their_depot()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the depot's save below is observed. The depot's
@@ -3039,7 +3043,7 @@ def test_deleting_a_depot_followed_through_set_null_replaces_the_groups_of_its_b
     # Only the Bin is registered, following its depot through its own nullable
     # foreign key, which holds the Depot's code, not its primary key, SET_NULL
     # on delete: Depot itself is not.
-    rag.register(Bin, follow=["depot"])
+    _register_bins_following_their_depot()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the depot's delete below is observed.
@@ -3358,7 +3362,7 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_co
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The product starts in another category; the category it moves to
@@ -3403,7 +3407,7 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_via_looku
 
     # Only the Product is registered, reading its category's name through a
     # lookup path, with no follow: Category itself is not registered.
-    rag.register(Product, fields=["name", "category__name"])
+    _register_products_reading_their_category_through_a_path()
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The product starts in another category; the category it moves to
@@ -3970,7 +3974,7 @@ def test_a_category_followed_by_foreign_key_saved_with_no_output_writes_no_row()
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # No transaction around the save (transaction=True): in autocommit, each
     # query commits as soon as it runs, so the save must fail before its
@@ -4020,7 +4024,7 @@ def test_a_category_followed_by_foreign_key_saved_unsynced_costs_nothing_more(
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     lighting = Category.objects.create(name="Lighting")
     _create_a_plain_desk_lamp(lighting)
@@ -4055,7 +4059,7 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the categories' saves below are observed.
@@ -4120,7 +4124,7 @@ def test_an_output_failing_on_the_followers_of_a_category_proxy_logs_the_categor
 
     # Only the Product is registered, following its category through its own
     # foreign key: neither Category nor its proxy is.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's save below is observed.
@@ -4163,7 +4167,7 @@ def test_an_output_failing_on_the_followers_of_a_deleted_topic_proxy_logs_the_to
     # Only the Workshop is registered, following its topic through its own
     # foreign key, SET_NULL on delete: neither Topic nor its proxy is. The
     # Workshop outlives its topic, so its group is replaced at the commit.
-    rag.register(Workshop, follow=["topic"])
+    _register_workshops_following_their_topic()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's delete below is observed.
@@ -4204,7 +4208,7 @@ def test_a_topic_saved_then_deleted_replaces_no_group_of_the_workshops_with_no_t
 
     # Only the Workshop is registered, following its topic through its own
     # foreign key, SET_NULL on delete: Topic itself is not.
-    rag.register(Workshop, follow=["topic"])
+    _register_workshops_following_their_topic()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the topic's save and delete below are observed.
@@ -4298,7 +4302,7 @@ def test_deleting_a_category_whose_following_products_cascade_sends_only_their_g
 
     # Only the Product is registered, following its category through its own
     # foreign key, CASCADE on delete: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's delete below is observed.
@@ -4339,7 +4343,7 @@ def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_
 
     # Only the Workshop is registered, following its topic through its own
     # foreign key, SET_NULL on delete: neither Topic nor its proxy is.
-    rag.register(Workshop, follow=["topic"])
+    _register_workshops_following_their_topic()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's delete below is observed.
@@ -4428,7 +4432,7 @@ def test_a_followed_topic_deleted_with_no_output_fails_and_signals_off_costs_not
 
     # Only the Workshop is registered, following its topic through its own
     # foreign key, SET_NULL on delete: Topic itself is not.
-    rag.register(Workshop, follow=["topic"])
+    _register_workshops_following_their_topic()
 
     # No transaction around the delete (transaction=True): the delete runs in
     # its own, which commits as it ends, so it must fail before then.
@@ -6775,7 +6779,7 @@ def test_deleting_a_venue_read_through_a_multi_column_lookup_path_sends_only_sem
     # Only the Seminar is registered, reading its venue's name through a lookup
     # path across the multi-column ForeignObject ``venue``, CASCADE on delete:
     # Venue itself is not.
-    rag.register(Seminar, fields=["title", "venue__name"])
+    _register_seminars_reading_their_venue_through_a_path()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's delete below is observed.
@@ -6821,7 +6825,7 @@ def test_saving_a_venue_unchanged_replaces_each_of_its_following_seminars_once(
 
     # Only the Seminar is registered, following its venue through the
     # multi-column ForeignObject ``venue``: Venue itself is not.
-    rag.register(Seminar, fields=["title"], follow=["venue"])
+    _register_seminars_following_their_venue()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
@@ -8041,7 +8045,7 @@ def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logg
 
     # Only the Product is registered, following its category through its own
     # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
+    _register_products_following_their_category()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the categories' saves below are observed.
