@@ -1,13 +1,14 @@
 import inspect
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 import pytest
 from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
-from django.db.models import QuerySet
+from django.db.models import Model, QuerySet
 from django.db.models.signals import m2m_changed, post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 from pytest_django import (
@@ -558,68 +559,149 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
 # The replace calls an output receives, in call order.
 ReplaceCalls = list[Mapping[str, Sequence[NormalizedDocument]]]
 
-# A write and the replace calls it must send once its transaction commits.
-Write = Callable[[], ReplaceCalls]
+# The model of the follower rows, and the model of the row holding the key.
+FollowerT = TypeVar("FollowerT", bound=Model)
+HolderT = TypeVar("HolderT", bound=Model)
 
 
-def _create_a_plugin_on_a_page_following_its_plugins() -> Write:
-    """Arrange `follow` through a reverse foreign key, written by a creation.
+@dataclass(frozen=True)
+class _FollowedCase(Generic[FollowerT, HolderT]):
+    """What a declaration and a relation provide to the writes of a row holding
+    the key to its follower: the writes themselves are generic over cases."""
 
-    Only Page is registered, following its text plugins: TextPlugin is not.
-    The plugin created holds the key to its Page.
-    """
-    _register_pages_following_their_plugins()
+    # Registers the follower's model and its declaration.
+    register: Callable[[], None]
+    # The follower the holding row is first written on.
+    create_follower: Callable[[], FollowerT]
+    # Another follower, the holding row is moved to.
+    create_other_follower: Callable[[], FollowerT]
+    # Creates the row holding the key to the given follower.
+    create_holder: Callable[[FollowerT], HolderT]
+    # Points the holding row's key to the given follower, without saving it.
+    point_holder_to: Callable[[HolderT, FollowerT], None]
+    # The follower's group as committed, under its source key, whether the
+    # holding row's key points to it or not.
+    group_of: Callable[[FollowerT, bool], dict[str, list[NormalizedDocument]]]
 
-    # Created before the write: the commit callback of the Page's own save is
-    # not observed, so only the plugin's creation is.
-    page = Page.objects.create(title="About us", slug="about-us")
 
-    def write() -> ReplaceCalls:
-        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
-        # One call: the Page's group as committed, with the plugin's text
-        # after the Page's own title.
-        return [
-            {
-                f"testapp.page:{page.pk}": [
-                    NormalizedDocument(
-                        text="About us\n\nWe build chairs by hand.",
-                        source_app_label="testapp",
-                        source_model="page",
-                        source_pk=page.pk,
-                        title="About us",
-                        url="/pages/about-us/",
-                    ),
-                ],
-            }
-        ]
+def _create_the_about_page() -> Page:
+    """Create the About us page."""
+    return Page.objects.create(title="About us", slug="about-us")
 
-    return write
+
+def _create_the_workshop_page() -> Page:
+    """Create the Our workshop page."""
+    return Page.objects.create(title="Our workshop", slug="our-workshop")
+
+
+def _create_a_plugin_on(page: Page) -> TextPlugin:
+    """Create a text plugin on the given page: it holds the key to the page."""
+    return TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+
+def _point_the_plugin_to(plugin: TextPlugin, page: Page) -> None:
+    """Point the plugin's foreign key to the given page, without saving it."""
+    plugin.page = page
+
+
+def _group_of_a_page_following_its_plugins(
+    page: Page, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The page's group: its title, then the plugin's text if the plugin is
+    on the page."""
+    text = f"{page.title}\n\nWe build chairs by hand." if holding else page.title
+    return {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+                title=page.title,
+                url=f"/pages/{page.slug}/",
+            ),
+        ],
+    }
+
+
+# `follow` through a reverse foreign key: only Page is registered, following
+# its text plugins (TextPlugin is not); a plugin holds the key to its Page.
+FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
+    register=_register_pages_following_their_plugins,
+    create_follower=_create_the_about_page,
+    create_other_follower=_create_the_workshop_page,
+    create_holder=_create_a_plugin_on,
+    point_holder_to=_point_the_plugin_to,
+    group_of=_group_of_a_page_following_its_plugins,
+)
+
+
+# A write performed in the captured callbacks, returning the replace calls it
+# must send once its transaction commits.
+Act = Callable[[], ReplaceCalls]
+
+
+def _create(case: _FollowedCase[Any, Any]) -> Act:
+    """The holding row created on a follower: one call, the follower's group."""
+    # Created before the write: the commit callback of its own save is not
+    # observed, so only the holding row's creation is.
+    follower = case.create_follower()
+
+    def act() -> ReplaceCalls:
+        case.create_holder(follower)
+        return [case.group_of(follower, True)]
+
+    return act
+
+
+def _move(case: _FollowedCase[Any, Any]) -> Act:
+    """The holding row moved to another follower by ``save()``: one call, both
+    followers' groups, each once."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the move is.
+    old = case.create_follower()
+    new = case.create_other_follower()
+    holder = case.create_holder(old)
+
+    def act() -> ReplaceCalls:
+        case.point_holder_to(holder, new)
+        holder.save()
+        # The old follower left without the holding row, the new one gaining it.
+        return [{**case.group_of(old, False), **case.group_of(new, True)}]
+
+    return act
 
 
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "arrange",
+    "write",
     [
-        pytest.param(
-            _create_a_plugin_on_a_page_following_its_plugins,
-            id="follow-reverse_foreign_key-create",
-        ),
+        pytest.param(_create, id="create"),
+        pytest.param(_move, id="move"),
+    ],
+)
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(FOLLOW_REVERSE_FOREIGN_KEY, id="follow-reverse_foreign_key"),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
-    arrange: Callable[[], Write],
+    case: _FollowedCase[Any, Any],
+    write: Callable[[_FollowedCase[Any, Any]], Act],
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Each case registers its models and creates the rows the write needs,
+    # The case registers its models; the write creates the rows it needs,
     # outside the captured callbacks.
-    write = arrange()
+    case.register()
+    act = write(case)
 
     with django_capture_on_commit_callbacks(execute=True):
-        expected = write()
+        expected = act()
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
