@@ -1343,6 +1343,27 @@ FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Topic, Workshop] = _TargetCase(
 )
 
 
+def _register_products_reading_their_category_through_a_path() -> None:
+    """Register Product, reading its category's name through a lookup path,
+    with no follow: Category itself is not registered."""
+    rag.register(Product, fields=["name", "category__name"])
+
+
+# A lookup path through a forward foreign key: only Product is registered,
+# reading its category's name (Category is not); the product holds the key to
+# the category, the row written, CASCADE on delete. The path alone builds the
+# same group as follow=["category"].
+PATH_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
+    register=_register_products_reading_their_category_through_a_path,
+    create_target=_create_the_lighting_category,
+    create_other_target=_create_the_tools_category,
+    create_follower_on=_create_a_plain_desk_lamp,
+    change_target=_rename_the_category,
+    group_of=_group_of_a_desk_lamp_following_its_category,
+    group_once_target_deleted=_group_of_a_product_deleted_by_cascade,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1402,6 +1423,7 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
             FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL,
             id="follow-forward_foreign_key_set_null",
         ),
+        pytest.param(PATH_FORWARD_FOREIGN_KEY, id="path-forward_foreign_key"),
     ],
 )
 def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
