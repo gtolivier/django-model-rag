@@ -906,8 +906,20 @@ or a `GenericRelation` in `follow`.
     one-to-one in `depends_on`, and removing a musician from a band
     through `Engagement`. That pair is still tested from the band's side
     only.
-  - [ ] **Reverse relations onto lookups**, the suite green after each
-    change.
+  - [x] **Reverse relations onto lookups**, the suite green after each
+    change. Before the save and at the commit, the followers a row points
+    to are now looked up through the reverse relation's query name
+    (`_followers_pointed_to`), like those reaching it: no committed row is
+    loaded any more, and a `to_field` or multi-column relation needs no
+    query of its own there. `_committed_reverse_followers` is gone. Over
+    the suite, 2622 → 2615 queries: one or two fewer on each write through
+    a `to_field` or multi-column relation, one more for a row followed by
+    two models through two reverse relations (two lookups instead of one
+    load). Two reads stay in memory, by decision: the delete's, so that a
+    cascade costs no lookup per deleted row, and the save's, so that a row
+    just created still costs the commit no lookup unless it points to a
+    follower. Both keep `_follower_pks` and its `to_field` / multi-column
+    branch: at `post_delete` the row is gone, and no lookup can find it.
   - [ ] **Many-to-many links onto lookups.** Test the `Band` /
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
