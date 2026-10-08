@@ -1687,7 +1687,7 @@ def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_co
 
 
 @pytest.mark.django_db
-def test_a_plugin_moved_by_update_after_its_own_save_replaces_its_new_page_at_commit(
+def test_a_plugin_moved_by_update_after_its_own_save_replaces_both_pages_at_commit(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -1711,20 +1711,31 @@ def test_a_plugin_moved_by_update_after_its_own_save_replaces_its_new_page_at_co
         TextPlugin.objects.filter(pk=chairs.pk).update(page=workshop)
 
     # Merged across replace calls: how the groups are batched is not what this
-    # test is about, nor is the group of the page the plugin left. The plugin
-    # is on the other page at the commit, so that page's group is replaced, as
-    # committed: with the plugin's text after its own title.
-    received = _received_groups(built_outputs)
-    assert received.get(f"testapp.page:{workshop.pk}") == [
-        NormalizedDocument(
-            text="Our workshop\n\nWe build chairs and tables by hand.",
-            source_app_label="testapp",
-            source_model="page",
-            source_pk=workshop.pk,
-            title="Our workshop",
-            url="/pages/our-workshop/",
-        ),
-    ]
+    # test is about. Both pages are replaced, as committed: the page the plugin
+    # moved to with the plugin's text after its own title, and the page it left
+    # with its title alone, the plugin's text gone.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs and tables by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
