@@ -1618,6 +1618,74 @@ PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL: _TargetCase[Bookmark, Citation] = _Tar
 )
 
 
+def _register_citations_reading_their_title_through_a_path() -> None:
+    """Register Citation, by its title, reading its document title from its
+    bookmark's title through a lookup path, with no follow: Bookmark itself is
+    not registered."""
+    rag.register(Citation, fields=["title"], title_field="bookmark__title")
+
+
+def _retitle_the_bookmark(bookmark: Bookmark) -> None:
+    """Retitle the given bookmark to Guides, without saving it."""
+    bookmark.title = "Guides"
+
+
+def _group_of_a_linked_citation_titled_by_its_bookmark(
+    citation: Citation, /, *, target: Bookmark
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group: its own title as its text, with its
+    bookmark's title as its document title."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title=target.title,
+            ),
+        ],
+    }
+
+
+def _group_of_a_linked_citation_whose_title_bookmark_is_nulled(
+    citation: Citation,
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group once its bookmark is deleted and its foreign
+    key set to null: with no bookmark left, it has no title, an empty
+    string."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title="",
+            ),
+        ],
+    }
+
+
+# A lookup path read as the title, through a nullable forward foreign key: only
+# Citation is registered, reading its title from its bookmark's title (Bookmark
+# is not); the citation holds the key to the bookmark, the row written,
+# SET_NULL on delete.
+PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_TITLE: _TargetCase[Bookmark, Citation] = (
+    _TargetCase(
+        register=_register_citations_reading_their_title_through_a_path,
+        create_target=_create_the_docs_bookmark,
+        create_other_target=_whatever_the_target(_create_the_example_bookmark),
+        create_follower_on=_create_a_linked_citation,
+        change_target=_retitle_the_bookmark,
+        group_of=_group_of_a_linked_citation_titled_by_its_bookmark,
+        group_once_target_deleted=(
+            _group_of_a_linked_citation_whose_title_bookmark_is_nulled
+        ),
+    )
+)
+
+
 def _register_products_reading_their_title_through_a_path() -> None:
     """Register Product, by its name, reading its title from its category's
     name through a lookup path, with no follow: Category itself is not
@@ -2491,6 +2559,10 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (
         PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL,
         "path-forward_foreign_key_set_null_as_url",
+    ),
+    (
+        PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_TITLE,
+        "path-forward_foreign_key_set_null_as_title",
     ),
     (PATH_FORWARD_FOREIGN_KEY_AS_TITLE, "path-forward_foreign_key_as_title"),
     (DEPENDS_ON_FORWARD_FOREIGN_KEY, "depends_on-forward_foreign_key"),
