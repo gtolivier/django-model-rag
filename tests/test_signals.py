@@ -540,16 +540,17 @@ RowT_contra = TypeVar("RowT_contra", bound=Model, contravariant=True)
 
 
 class _GroupsOf(Protocol[RowT_contra]):
-    """The groups a row leaves as committed, whether the holding row is on it
-    or not: ``holding`` is keyword-only, so that each write says which."""
+    """The groups a row leaves as committed, given the texts the holding rows on
+    it were created with, in the order they were created: ``holding`` is
+    keyword-only, so that each write says which rows are on it."""
 
     def __call__(
-        self, row: RowT_contra, /, *, holding: bool
+        self, row: RowT_contra, /, *, holding: Sequence[str]
     ) -> dict[str, list[NormalizedDocument]]: ...
 
 
 def _no_other_groups(
-    holder: Model, *, holding: bool
+    holder: Model, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
     """A holding row that names its follower alone: no other group."""
     return {}
@@ -567,24 +568,31 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     # Another follower, the holding row is moved to.
     create_other_follower: Callable[[], FollowerT]
     # Creates the other rows the holding row names, if any, before anything
-    # else, and returns the function creating the holding row on a follower.
-    prepare_holder: Callable[[], Callable[[FollowerT], HolderT]]
+    # else, and returns the function creating a holding row on a follower,
+    # told apart from the others by the given text.
+    prepare_holder: Callable[[], Callable[[FollowerT, str], HolderT]]
+    # The text the holding row the writes are about is created with.
+    holder_text: str
+    # The text of a sibling holding row, created by the same function on the
+    # follower the holding row is first written on, before it, and never
+    # written: None for a relation that allows one holding row per follower.
+    sibling_text: str | None
     # Points the holding row's key to the given follower, without saving it.
     point_holder_to: Callable[[HolderT, FollowerT], None]
-    # The follower's group as committed, under its source key, whether the
-    # holding row's key points to it or not.
+    # The follower's group as committed, under its source key, given the
+    # holding rows its key points to.
     group_of: _GroupsOf[FollowerT]
     # The groups of the other rows the holding row names, whose keys no write
-    # changes, as committed, whether the holding row still exists or not: none
-    # for a holding row that names its follower alone.
+    # changes, as committed, given the holding rows still naming them, the
+    # sibling included: none for a holding row that names its follower alone.
     groups_of_the_others_named: _GroupsOf[HolderT] = _no_other_groups
 
 
 def _naming_the_follower_alone(
-    create_holder: Callable[[FollowerT], HolderT],
-) -> Callable[[], Callable[[FollowerT], HolderT]]:
+    create_holder: Callable[[FollowerT, str], HolderT],
+) -> Callable[[], Callable[[FollowerT, str], HolderT]]:
     """For a holding row that names its follower alone: no other row to create
-    first, the holding row created on a follower by the given function."""
+    first, a holding row created on a follower by the given function."""
     return lambda: create_holder
 
 
@@ -598,9 +606,16 @@ def _create_the_workshop_page() -> Page:
     return Page.objects.create(title="Our workshop", slug="our-workshop")
 
 
-def _create_a_plugin_on(page: Page) -> TextPlugin:
-    """Create a text plugin on the given page: it holds the key to the page."""
-    return TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+# The body a text plugin is created with unless another one is given, and the
+# body of its sibling on the same page.
+_PLUGIN_BODY = "We build chairs by hand."
+_SIBLING_PLUGIN_BODY = "We ship worldwide."
+
+
+def _create_a_plugin_on(page: Page, body: str = _PLUGIN_BODY) -> TextPlugin:
+    """Create a text plugin with the given body, _PLUGIN_BODY by default, on the
+    given page: it holds the key to the page."""
+    return TextPlugin.objects.create(page=page, body=body)
 
 
 def _point_the_plugin_to(plugin: TextPlugin, page: Page) -> None:
@@ -609,15 +624,13 @@ def _point_the_plugin_to(plugin: TextPlugin, page: Page) -> None:
 
 
 def _group_of_a_page_following_its_plugins(
-    page: Page, *, holding: bool
+    page: Page, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
-    """The page's group: its title, then the plugin's text if the plugin is
-    on the page."""
-    text = f"{page.title}\n\nWe build chairs by hand." if holding else page.title
+    """The page's group: its title, then the text of each plugin on the page."""
     return {
         f"testapp.page:{page.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([page.title, *holding]),
                 source_app_label="testapp",
                 source_model="page",
                 source_pk=page.pk,
@@ -635,21 +648,22 @@ FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
     create_follower=_create_the_about_page,
     create_other_follower=_create_the_workshop_page,
     prepare_holder=_naming_the_follower_alone(_create_a_plugin_on),
+    holder_text=_PLUGIN_BODY,
+    sibling_text=_SIBLING_PLUGIN_BODY,
     point_holder_to=_point_the_plugin_to,
     group_of=_group_of_a_page_following_its_plugins,
 )
 
 
 def _group_of_a_page_by_its_plugin_bodies(
-    page: Page, *, holding: bool
+    page: Page, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
     """The page's group, as its custom extractor builds it: its title, then the
-    plugin's body if the plugin is on the page; no title or URL of its own."""
-    text = f"{page.title}\n\nWe build chairs by hand." if holding else page.title
+    body of each plugin on the page; no title or URL of its own."""
     return {
         f"testapp.page:{page.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([page.title, *holding]),
                 source_app_label="testapp",
                 source_model="page",
                 source_pk=page.pk,
@@ -666,6 +680,8 @@ DEPENDS_ON_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
     create_follower=_create_the_about_page,
     create_other_follower=_create_the_workshop_page,
     prepare_holder=_naming_the_follower_alone(_create_a_plugin_on),
+    holder_text=_PLUGIN_BODY,
+    sibling_text=_SIBLING_PLUGIN_BODY,
     point_holder_to=_point_the_plugin_to,
     group_of=_group_of_a_page_by_its_plugin_bodies,
 )
@@ -681,9 +697,14 @@ def _create_oak_yard() -> Supplier:
     return Supplier.objects.create(name="Oak Yard")
 
 
-def _create_a_profile_of(supplier: Supplier) -> SupplierProfile:
-    """Create the given supplier's profile: it holds the key to the supplier."""
-    return SupplierProfile.objects.create(supplier=supplier, body="Kiln-dried boards.")
+# The body a supplier's profile is created with.
+_PROFILE_BODY = "Kiln-dried boards."
+
+
+def _create_a_profile_of(supplier: Supplier, body: str) -> SupplierProfile:
+    """Create the given supplier's profile, with the given body: it holds the key
+    to the supplier."""
+    return SupplierProfile.objects.create(supplier=supplier, body=body)
 
 
 def _point_the_profile_to(profile: SupplierProfile, supplier: Supplier) -> None:
@@ -693,15 +714,14 @@ def _point_the_profile_to(profile: SupplierProfile, supplier: Supplier) -> None:
 
 
 def _group_of_a_supplier_following_its_profile(
-    supplier: Supplier, *, holding: bool
+    supplier: Supplier, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
     """The supplier's group: its name, then the profile's body if the profile
     is on the supplier."""
-    text = f"{supplier.name}\n\nKiln-dried boards." if holding else supplier.name
     return {
         f"testapp.supplier:{supplier.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([supplier.name, *holding]),
                 source_app_label="testapp",
                 source_model="supplier",
                 source_pk=supplier.pk,
@@ -718,21 +738,23 @@ FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedC
     create_follower=_create_birch_mill,
     create_other_follower=_create_oak_yard,
     prepare_holder=_naming_the_follower_alone(_create_a_profile_of),
+    holder_text=_PROFILE_BODY,
+    # A supplier has at most one profile.
+    sibling_text=None,
     point_holder_to=_point_the_profile_to,
     group_of=_group_of_a_supplier_following_its_profile,
 )
 
 
 def _group_of_a_supplier_by_its_profile_body(
-    supplier: Supplier, *, holding: bool
+    supplier: Supplier, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
     """The supplier's group, as its custom extractor builds it: its name, then
     the profile's body if the profile is on the supplier; no title of its own."""
-    text = f"{supplier.name}\n\nKiln-dried boards." if holding else supplier.name
     return {
         f"testapp.supplier:{supplier.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([supplier.name, *holding]),
                 source_app_label="testapp",
                 source_model="supplier",
                 source_pk=supplier.pk,
@@ -749,6 +771,9 @@ DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _Follo
     create_follower=_create_birch_mill,
     create_other_follower=_create_oak_yard,
     prepare_holder=_naming_the_follower_alone(_create_a_profile_of),
+    holder_text=_PROFILE_BODY,
+    # A supplier has at most one profile.
+    sibling_text=None,
     point_holder_to=_point_the_profile_to,
     group_of=_group_of_a_supplier_by_its_profile_body,
 )
@@ -764,10 +789,17 @@ def _create_the_south_depot() -> Warehouse:
     return Warehouse.objects.create(name="South depot", code="south")
 
 
-def _create_a_shelf_in(warehouse: Warehouse) -> Shelf:
-    """Create a shelf in the given warehouse: its foreign key holds the
-    warehouse's code, not its primary key."""
-    return Shelf.objects.create(warehouse=warehouse, label="Timber")
+# The label a shelf is created with unless another one is given, and the label
+# of its sibling in the same warehouse.
+_SHELF_LABEL = "Timber"
+_SIBLING_SHELF_LABEL = "Paint"
+
+
+def _create_a_shelf_in(warehouse: Warehouse, label: str = _SHELF_LABEL) -> Shelf:
+    """Create a shelf with the given label, _SHELF_LABEL by default, in the given
+    warehouse: its foreign key holds the warehouse's code, not its primary
+    key."""
+    return Shelf.objects.create(warehouse=warehouse, label=label)
 
 
 def _point_the_shelf_to(shelf: Shelf, warehouse: Warehouse) -> None:
@@ -777,15 +809,14 @@ def _point_the_shelf_to(shelf: Shelf, warehouse: Warehouse) -> None:
 
 
 def _group_of_a_warehouse_following_its_shelves(
-    warehouse: Warehouse, *, holding: bool
+    warehouse: Warehouse, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
     """The warehouse's group, under its primary key, not its code: its name,
-    then the shelf's label if the shelf is in the warehouse."""
-    text = f"{warehouse.name}\n\nTimber" if holding else warehouse.name
+    then the label of each shelf in the warehouse."""
     return {
         f"testapp.warehouse:{warehouse.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([warehouse.name, *holding]),
                 source_app_label="testapp",
                 source_model="warehouse",
                 source_pk=warehouse.pk,
@@ -803,6 +834,8 @@ FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _Followed
     create_follower=_create_the_north_depot,
     create_other_follower=_create_the_south_depot,
     prepare_holder=_naming_the_follower_alone(_create_a_shelf_in),
+    holder_text=_SHELF_LABEL,
+    sibling_text=_SIBLING_SHELF_LABEL,
     point_holder_to=_point_the_shelf_to,
     group_of=_group_of_a_warehouse_following_its_shelves,
 )
@@ -819,11 +852,13 @@ def _create_the_transbordeur() -> Venue:
     return Venue.objects.create(city="Lyon", name="Transbordeur")
 
 
-# The title a seminar is created with unless another one is given.
+# The title a seminar is created with unless another one is given, and the
+# title of its sibling at the same venue.
 _SEMINAR_TITLE = "Acoustics"
+_SIBLING_SEMINAR_TITLE = "Stage lighting"
 
 
-def _create_a_seminar_at(venue: Venue, *, title: str = _SEMINAR_TITLE) -> Seminar:
+def _create_a_seminar_at(venue: Venue, title: str = _SEMINAR_TITLE) -> Seminar:
     """Create a seminar with the given title, _SEMINAR_TITLE by default, at the
     given venue: its two columns hold the venue's city and name."""
     return Seminar.objects.create(
@@ -839,19 +874,15 @@ def _point_the_seminar_to(seminar: Seminar, venue: Venue) -> None:
 
 
 def _group_of_a_venue_following_its_seminars(
-    venue: Venue, *, holding: bool
+    venue: Venue, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
-    """The venue's group: its name, then the seminar's text fields, title first,
-    if the seminar is at the venue."""
-    text = (
-        f"{venue.name}\n\n{_SEMINAR_TITLE}\n\n{venue.city}\n\n{venue.name}"
-        if holding
-        else venue.name
-    )
+    """The venue's group: its name, then the text fields of each seminar at the
+    venue, title first."""
+    seminars = [f"{title}\n\n{venue.city}\n\n{venue.name}" for title in holding]
     return {
         f"testapp.venue:{venue.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([venue.name, *seminars]),
                 source_app_label="testapp",
                 source_model="venue",
                 source_pk=venue.pk,
@@ -869,21 +900,22 @@ FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
     create_follower=_create_the_halle_tony_garnier,
     create_other_follower=_create_the_transbordeur,
     prepare_holder=_naming_the_follower_alone(_create_a_seminar_at),
+    holder_text=_SEMINAR_TITLE,
+    sibling_text=_SIBLING_SEMINAR_TITLE,
     point_holder_to=_point_the_seminar_to,
     group_of=_group_of_a_venue_following_its_seminars,
 )
 
 
 def _group_of_a_venue_by_its_seminar_titles(
-    venue: Venue, *, holding: bool
+    venue: Venue, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
     """The venue's group, as its custom extractor builds it: its name, then the
-    seminar's title if the seminar is at the venue; no title of its own."""
-    text = f"{venue.name}\n\n{_SEMINAR_TITLE}" if holding else venue.name
+    title of each seminar at the venue; no title of its own."""
     return {
         f"testapp.venue:{venue.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([venue.name, *holding]),
                 source_app_label="testapp",
                 source_model="venue",
                 source_pk=venue.pk,
@@ -901,6 +933,8 @@ DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
     create_follower=_create_the_halle_tony_garnier,
     create_other_follower=_create_the_transbordeur,
     prepare_holder=_naming_the_follower_alone(_create_a_seminar_at),
+    holder_text=_SEMINAR_TITLE,
+    sibling_text=_SIBLING_SEMINAR_TITLE,
     point_holder_to=_point_the_seminar_to,
     group_of=_group_of_a_venue_by_its_seminar_titles,
 )
@@ -921,17 +955,24 @@ def _create_nantes() -> Team:
     return Team.objects.create(name="Nantes")
 
 
-# The title every match is created with.
+# The title a match is created with unless another one is given, and the title
+# of its sibling, the same teams on the same sides.
 _MATCH_TITLE = "Opening day"
+_SIBLING_MATCH_TITLE = "Rematch"
 
 
 def _create_a_match(
-    *, home_team: Team, away_team: Team, tournament: Tournament | None = None
+    *,
+    home_team: Team,
+    away_team: Team,
+    tournament: Tournament | None = None,
+    title: str = _MATCH_TITLE,
 ) -> Match:
-    """Create a match between the given teams, in the given tournament if any:
-    it holds the key to two different teams, one per foreign key."""
+    """Create a match with the given title, _MATCH_TITLE by default, between the
+    given teams, in the given tournament if any: it holds the key to two
+    different teams, one per foreign key."""
     return Match.objects.create(
-        title=_MATCH_TITLE,
+        title=title,
         home_team=home_team,
         away_team=away_team,
         tournament=tournament,
@@ -939,15 +980,14 @@ def _create_a_match(
 
 
 def _group_of_a_team_following_its_matches(
-    team: Team, *, holding: bool
+    team: Team, *, holding: Sequence[str]
 ) -> dict[str, list[NormalizedDocument]]:
-    """The team's group: its name, then the match's title if the match names
-    the team, at home or away."""
-    text = f"{team.name}\n\n{_MATCH_TITLE}" if holding else team.name
+    """The team's group: its name, then the title of each match naming the team
+    on one side, its matches at home before those away."""
     return {
         f"testapp.team:{team.pk}": [
             NormalizedDocument(
-                text=text,
+                text="\n\n".join([team.name, *holding]),
                 source_app_label="testapp",
                 source_model="team",
                 source_pk=team.pk,
@@ -972,16 +1012,20 @@ class _Side(Enum):
 
 def _teams_following_their_matches_on(side: _Side) -> _FollowedCase[Team, Match]:
     """The case of a team following its matches, whose holding row is a match
-    with the follower on the given side, against Nantes on the opposite one."""
+    with the follower on the given side, against Nantes on the opposite one:
+    its sibling too, so Nantes's group holds the sibling's title as well, and
+    both matches are on the same relation of each team."""
 
-    def create_nantes_to_play_against() -> Callable[[Team], Match]:
+    def create_nantes_to_play_against() -> Callable[[Team, str], Match]:
         nantes = _create_nantes()
 
-        def create_a_match_of(team: Team) -> Match:
+        def create_a_match_of(team: Team, title: str) -> Match:
             home_team, away_team = (
                 (team, nantes) if side is _Side.HOME else (nantes, team)
             )
-            return _create_a_match(home_team=home_team, away_team=away_team)
+            return _create_a_match(
+                home_team=home_team, away_team=away_team, title=title
+            )
 
         return create_a_match_of
 
@@ -990,7 +1034,7 @@ def _teams_following_their_matches_on(side: _Side) -> _FollowedCase[Team, Match]
         setattr(match, side.value, team)
 
     def group_of_nantes(
-        match: Match, *, holding: bool
+        match: Match, *, holding: Sequence[str]
     ) -> dict[str, list[NormalizedDocument]]:
         nantes: Team = getattr(match, side.opposite.value)
         return _group_of_a_team_following_its_matches(nantes, holding=holding)
@@ -1000,6 +1044,8 @@ def _teams_following_their_matches_on(side: _Side) -> _FollowedCase[Team, Match]
         create_follower=_create_lyon,
         create_other_follower=_create_marseille,
         prepare_holder=create_nantes_to_play_against,
+        holder_text=_MATCH_TITLE,
+        sibling_text=_SIBLING_MATCH_TITLE,
         point_holder_to=point_the_match_to,
         group_of=_group_of_a_team_following_its_matches,
         groups_of_the_others_named=group_of_nantes,
@@ -1048,20 +1094,38 @@ def _merged(
     return merged
 
 
+def _create_the_sibling_on(
+    follower: FollowerT,
+    case: _FollowedCase[FollowerT, HolderT],
+    create_holder: Callable[[FollowerT, str], HolderT],
+) -> list[str]:
+    """Create the case's sibling holding row on the given follower, if its
+    relation allows one, and return the texts of the holding rows it leaves
+    there: the sibling's, or none."""
+    if case.sibling_text is None:
+        return []
+    create_holder(follower, case.sibling_text)
+    return [case.sibling_text]
+
+
 def _create(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row created on a follower: one call, the follower's group and
     those of the other rows it names, each once."""
-    # Created before the write: the commit callback of its own save is not
+    # Created before the write: the commit callbacks of these saves are not
     # observed, so only the holding row's creation is.
     create_holder = case.prepare_holder()
     follower = case.create_follower()
+    siblings = _create_the_sibling_on(follower, case, create_holder)
 
     def act() -> ReplaceCalls:
-        holder = create_holder(follower)
+        holder = create_holder(follower, case.holder_text)
+        # The follower and the other rows it names gaining the holding row,
+        # after the sibling, created first.
+        holding = [*siblings, case.holder_text]
         return [
             _merged(
-                case.group_of(follower, holding=True),
-                case.groups_of_the_others_named(holder, holding=True),
+                case.group_of(follower, holding=holding),
+                case.groups_of_the_others_named(holder, holding=holding),
             )
         ]
 
@@ -1076,18 +1140,21 @@ def _move(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     create_holder = case.prepare_holder()
     old = case.create_follower()
     new = case.create_other_follower()
-    holder = create_holder(old)
+    siblings = _create_the_sibling_on(old, case, create_holder)
+    holder = create_holder(old, case.holder_text)
 
     def act() -> ReplaceCalls:
         case.point_holder_to(holder, new)
         holder.save()
-        # The old follower left without the holding row, the new one gaining
-        # it, the other rows it names keeping it.
+        # The old follower left with the sibling alone, the new one gaining the
+        # holding row, the other rows it names keeping both.
         return [
             _merged(
-                case.group_of(old, holding=False),
-                case.group_of(new, holding=True),
-                case.groups_of_the_others_named(holder, holding=True),
+                case.group_of(old, holding=siblings),
+                case.group_of(new, holding=[case.holder_text]),
+                case.groups_of_the_others_named(
+                    holder, holding=[*siblings, case.holder_text]
+                ),
             )
         ]
 
@@ -1101,15 +1168,16 @@ def _delete(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     # observed, so only the delete is.
     create_holder = case.prepare_holder()
     follower = case.create_follower()
-    holder = create_holder(follower)
+    siblings = _create_the_sibling_on(follower, case, create_holder)
+    holder = create_holder(follower, case.holder_text)
 
     def act() -> ReplaceCalls:
         holder.delete()
-        # The follower and the other rows it named left without the holding row.
+        # The follower and the other rows it named left with the sibling alone.
         return [
             _merged(
-                case.group_of(follower, holding=False),
-                case.groups_of_the_others_named(holder, holding=False),
+                case.group_of(follower, holding=siblings),
+                case.groups_of_the_others_named(holder, holding=siblings),
             )
         ]
 
