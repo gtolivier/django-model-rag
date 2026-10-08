@@ -901,7 +901,10 @@ or a `GenericRelation` in `follow`.
     should pass today; one that fails is a bug found. 21 tests: 19
     passed as written; the two that failed — a plugin moved by `update()`
     after its own save, and one created then moved the same way in its
-    transaction — were fixed (see the second patch above).
+    transaction — were fixed (see the second patch above). Three more
+    closed what the coverage matrix still showed empty — moving and
+    deleting a reverse one-to-one in `depends_on`, removing a musician
+    from a band through `Engagement` — and passed as written.
   - [ ] **Reverse relations onto lookups**, the suite green after each
     change.
   - [ ] **Many-to-many links onto lookups.**
