@@ -6260,18 +6260,7 @@ def test_saving_a_seminar_a_custom_extractor_depends_on_by_multi_column_replaces
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Venue is registered, with a custom extractor reading its
-    # seminars: depends_on names the reverse of the multi-column ForeignObject
-    # ``venue``, whose saves change its documents. Seminar itself is not
-    # registered.
-    @rag.register_extractor(Venue, depends_on=["seminars"])
-    class VenueExtractor(BaseExtractor[Venue]):
-        def extract(self, instance: Venue) -> NormalizedDocument:
-            titles = [seminar.title for seminar in instance.seminars.order_by("pk")]
-            return self.build_document(
-                instance, text="\n\n".join([instance.name, *titles])
-            )
+    _register_venues_by_their_seminar_titles()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's save below is observed.
