@@ -1316,6 +1316,61 @@ def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_d
 
 
 @pytest.mark.django_db
+def test_deleting_a_depot_followed_through_set_null_replaces_the_groups_of_its_bins(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Bin is registered, following its depot through its own nullable
+    # foreign key, which holds the Depot's code, not its primary key, SET_NULL
+    # on delete: Depot itself is not.
+    rag.register(Bin, follow=["depot"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the depot's delete below is observed.
+    north = Depot.objects.create(name="North depot", code="north")
+    spare_parts = Bin.objects.create(depot=north, label="Spare parts")
+    fasteners = Bin.objects.create(depot=north, label="Fasteners")
+    # Another depot and its bin, untouched by the delete.
+    south = Depot.objects.create(name="South depot", code="south")
+    Bin.objects.create(depot=south, label="Paint")
+
+    # The delete sets the bins' foreign key to null before the depot's row
+    # goes: by post_delete, the bins no longer hold the depot's code.
+    with django_capture_on_commit_callbacks(execute=True):
+        north.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of the bins that pointed to the depot, as committed: the
+    # depot's name is gone, only each bin's own label is left. Merged across
+    # replace calls: whether they are sent in one call or several is not what
+    # this test is about. No group of the other depot's bin.
+    assert _received_groups(built_outputs) == {
+        f"testapp.bin:{spare_parts.pk}": [
+            NormalizedDocument(
+                text="Spare parts",
+                source_app_label="testapp",
+                source_model="bin",
+                source_pk=spare_parts.pk,
+                title="Spare parts",
+            ),
+        ],
+        f"testapp.bin:{fasteners.pk}": [
+            NormalizedDocument(
+                text="Fasteners",
+                source_app_label="testapp",
+                source_model="bin",
+                source_pk=fasteners.pk,
+                title="Fasteners",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_its_intro(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
