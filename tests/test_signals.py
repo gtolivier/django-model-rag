@@ -1617,6 +1617,47 @@ PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL: _TargetCase[Bookmark, Citation] = _Tar
 )
 
 
+def _register_products_reading_their_title_through_a_path() -> None:
+    """Register Product, by its name, reading its title from its category's
+    name through a lookup path, with no follow: Category itself is not
+    registered."""
+    rag.register(Product, fields=["name"], title_field="category__name")
+
+
+def _group_of_a_desk_lamp_titled_by_its_category(
+    product: Product, /, *, target: Category
+) -> dict[str, list[NormalizedDocument]]:
+    """The desk lamp's group: its name, with its category's name as its
+    title."""
+    return {
+        f"testapp.product:{product.pk}": [
+            NormalizedDocument(
+                text="Desk lamp",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=product.pk,
+                title=target.name,
+                url=f"/products/{product.pk}/",
+            ),
+        ],
+    }
+
+
+# A lookup path read as the title, through a forward foreign key: only Product
+# is registered, reading its title from its category's name (Category is not);
+# the product holds the key to the category, the row written, CASCADE on
+# delete.
+PATH_FORWARD_FOREIGN_KEY_AS_TITLE: _TargetCase[Category, Product] = _TargetCase(
+    register=_register_products_reading_their_title_through_a_path,
+    create_target=_create_the_lighting_category,
+    create_other_target=_whatever_the_target(_create_the_tools_category),
+    create_follower_on=_create_a_plain_desk_lamp,
+    change_target=_rename_the_category,
+    group_of=_group_of_a_desk_lamp_titled_by_its_category,
+    group_once_target_deleted=_group_of_a_product_deleted_by_cascade,
+)
+
+
 def _retitle_the_page(page: Page) -> None:
     """Retitle the given page to Our story, without saving it."""
     page.title = "Our story"
@@ -2457,6 +2498,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
         PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL,
         "path-forward_foreign_key_set_null_as_url",
     ),
+    (PATH_FORWARD_FOREIGN_KEY_AS_TITLE, "path-forward_foreign_key_as_title"),
     (DEPENDS_ON_FORWARD_FOREIGN_KEY, "depends_on-forward_foreign_key"),
     (
         DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
