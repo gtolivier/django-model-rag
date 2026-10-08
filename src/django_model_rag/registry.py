@@ -829,11 +829,15 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        return [
-            relation
-            for relation in self._followed_or_depended_on_relations(model)
-            if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
-        ]
+        # A model may both follow a relation and depend on it: list it once,
+        # since each reverse relation costs a query when finding followers.
+        return list(
+            dict.fromkeys(
+                relation
+                for relation in self._followed_or_depended_on_relations(model)
+                if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
+            )
+        )
 
     def follows_many_to_many(self, model: type[Model], through: type[Model]) -> bool:
         """Tell whether ``model`` follows or depends on a many-to-many via ``through``.
