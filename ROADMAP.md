@@ -958,15 +958,16 @@ or a `GenericRelation` in `follow`.
       one-to-one, so the move and the delete must leave the old
       follower's group with the sibling's text.
     - **Rows a follower's path ends on** (a forward relation in `follow`,
-      a lookup path or `depends_on`, `SET_NULL` included, one or two
-      links deep): 14 cases × save / delete, and a change of the key for
-      the 6 cases linked by a `to_field` or several columns.
+      a lookup path — read as text, title or url — or `depends_on`,
+      `SET_NULL` included, one or two links deep): 17 cases × save /
+      delete, and a change of the key for the 6 cases linked by a
+      `to_field` or several columns.
     - **Result:** the hand-written tests these repeat are gone, the two
       leftovers named here included (the profile under a `depends_on`
       extractor, the reverse one-to-one moved in `follow`): 9 for the
-      first test (#38), 24 for the second and the siblings. Every case
+      first test (#38), 27 for the second and the siblings. Every case
       passed from the start: no production code changed. The second
-      test and the siblings take the suite from 588 to 598 tests, with
+      test and the siblings take the suite from 588 to 601 tests, with
       cases no hand-written test had.
     - **Kept by hand:** the variants a case does not express — a batch,
       the queries counted, proxies and multi-table children, many-to-many

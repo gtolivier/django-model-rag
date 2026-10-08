@@ -411,7 +411,7 @@ def test_saving_a_multi_table_child_replaces_the_group_of_its_registered_parent(
     # Created in a commit of its own, unregistered: only the child's save
     # below is observed.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
     built_outputs.clear()
 
     # Django sends post_save once, with the child as its sender, not Product.
@@ -449,7 +449,7 @@ def test_saving_a_child_with_a_primary_key_of_its_own_replaces_its_parents_group
     # Created in a commit of its own, unregistered: only the child's save
     # below is observed.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
     built_outputs.clear()
 
     # The child's primary key is its code, not the Product's: the parent row
@@ -498,7 +498,7 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
     # Created in a commit of its own, unregistered: only the child's save
     # below is observed.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
     built_outputs.clear()
 
     # Django sends post_save once, with the child as its sender, not Product.
@@ -1538,6 +1538,153 @@ PATH_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Notice, Excerpt] = _TargetCase(
 )
 
 
+def _register_citations_reading_their_url_through_a_path() -> None:
+    """Register Citation, reading its url from its bookmark's link through a
+    lookup path, with no follow: Bookmark itself is not registered."""
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+
+def _create_the_docs_bookmark() -> Bookmark:
+    """Create the Docs bookmark, linking to /docs/a/."""
+    return Bookmark.objects.create(title="Docs", link="/docs/a/")
+
+
+def _create_the_example_bookmark() -> Bookmark:
+    """Create the Example bookmark, linking to /docs/b/."""
+    return Bookmark.objects.create(title="Example", link="/docs/b/")
+
+
+def _create_a_linked_citation(bookmark: Bookmark) -> Citation:
+    """Create a Linked citation of the given bookmark."""
+    return Citation.objects.create(title="Linked", bookmark=bookmark)
+
+
+def _relink_the_bookmark(bookmark: Bookmark) -> None:
+    """Point the given bookmark's link to /docs/c/, without saving it."""
+    bookmark.link = "/docs/c/"
+
+
+def _group_of_a_linked_citation_reading_its_bookmark(
+    citation: Citation, /, *, target: Bookmark
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group: its title, with its bookmark's link as its
+    url."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title="Linked",
+                url=target.link,
+            ),
+        ],
+    }
+
+
+def _group_of_a_linked_citation_whose_bookmark_is_nulled(
+    citation: Citation,
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group once its bookmark is deleted and its foreign
+    key set to null: with no bookmark left, it has no url, an empty string."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title="Linked",
+                url="",
+            ),
+        ],
+    }
+
+
+# A lookup path read as the url, through a nullable forward foreign key: only
+# Citation is registered, reading its url from its bookmark's link (Bookmark is
+# not); the citation holds the key to the bookmark, the row written, SET_NULL
+# on delete.
+PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL: _TargetCase[Bookmark, Citation] = _TargetCase(
+    register=_register_citations_reading_their_url_through_a_path,
+    create_target=_create_the_docs_bookmark,
+    create_other_target=_whatever_the_target(_create_the_example_bookmark),
+    create_follower_on=_create_a_linked_citation,
+    change_target=_relink_the_bookmark,
+    group_of=_group_of_a_linked_citation_reading_its_bookmark,
+    group_once_target_deleted=_group_of_a_linked_citation_whose_bookmark_is_nulled,
+)
+
+
+def _register_citations_reading_their_title_through_a_path() -> None:
+    """Register Citation, by its title, reading its document title from its
+    bookmark's title through a lookup path, with no follow: Bookmark itself is
+    not registered."""
+    rag.register(Citation, fields=["title"], title_field="bookmark__title")
+
+
+def _retitle_the_bookmark(bookmark: Bookmark) -> None:
+    """Retitle the given bookmark to Guides, without saving it."""
+    bookmark.title = "Guides"
+
+
+def _group_of_a_linked_citation_titled_by_its_bookmark(
+    citation: Citation, /, *, target: Bookmark
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group: its own title as its text, with its
+    bookmark's title as its document title."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title=target.title,
+            ),
+        ],
+    }
+
+
+def _group_of_a_linked_citation_whose_title_bookmark_is_nulled(
+    citation: Citation,
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group once its bookmark is deleted and its foreign
+    key set to null: with no bookmark left, it has no title, an empty
+    string."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title="",
+            ),
+        ],
+    }
+
+
+# A lookup path read as the title, through a nullable forward foreign key: only
+# Citation is registered, reading its title from its bookmark's title (Bookmark
+# is not); the citation holds the key to the bookmark, the row written,
+# SET_NULL on delete.
+PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_TITLE: _TargetCase[Bookmark, Citation] = (
+    _TargetCase(
+        register=_register_citations_reading_their_title_through_a_path,
+        create_target=_create_the_docs_bookmark,
+        create_other_target=_whatever_the_target(_create_the_example_bookmark),
+        create_follower_on=_create_a_linked_citation,
+        change_target=_retitle_the_bookmark,
+        group_of=_group_of_a_linked_citation_titled_by_its_bookmark,
+        group_once_target_deleted=(
+            _group_of_a_linked_citation_whose_title_bookmark_is_nulled
+        ),
+    )
+)
+
+
 def _retitle_the_page(page: Page) -> None:
     """Retitle the given page to Our story, without saving it."""
     page.title = "Our story"
@@ -2146,6 +2293,74 @@ PATH_TWO_FORWARD_FOREIGN_KEYS: _TargetCase[Category, Offer] = _TargetCase(
 )
 
 
+def _register_sessions_reading_their_topic_two_links_deep() -> None:
+    """Register Session, reading its workshop's topic's title through a lookup
+    path two links deep, with no follow: neither Workshop nor Topic is
+    registered."""
+    rag.register(Session, fields=["title", "workshop__topic__title"])
+
+
+def _create_a_morning_session_of_a_pottery_workshop_on(topic: Topic) -> Session:
+    """Create a Pottery workshop on the given topic, then a Morning session of
+    it."""
+    return Session.objects.create(
+        title="Morning", workshop=_create_a_pottery_workshop(topic)
+    )
+
+
+def _group_of_a_morning_session_reading_its_topic(
+    session: Session, /, *, target: Topic
+) -> dict[str, list[NormalizedDocument]]:
+    """The morning session's group: its title, then its workshop's topic's
+    title."""
+    return {
+        f"testapp.session:{session.pk}": [
+            NormalizedDocument(
+                text=f"Morning\n\n{target.title}",
+                source_app_label="testapp",
+                source_model="session",
+                source_pk=session.pk,
+                title="Morning",
+            ),
+        ],
+    }
+
+
+def _group_of_a_morning_session_whose_topic_is_nulled(
+    session: Session,
+) -> dict[str, list[NormalizedDocument]]:
+    """The morning session's group once its workshop's topic is deleted and the
+    workshop's foreign key set to null: the topic's title is gone, only the
+    session's own title is left."""
+    return {
+        f"testapp.session:{session.pk}": [
+            NormalizedDocument(
+                text="Morning",
+                source_app_label="testapp",
+                source_model="session",
+                source_pk=session.pk,
+                title="Morning",
+            ),
+        ],
+    }
+
+
+# A lookup path two links deep, the last one nullable: only Session is
+# registered, reading its workshop's topic's title (neither Workshop nor Topic
+# is); the row written is the topic, the last link of the path, Session →
+# workshop (CASCADE on delete) → topic (SET_NULL on delete). The delete sets
+# the workshop's foreign key to null: the session is left, without the topic.
+PATH_TWO_LINKS_SET_NULL: _TargetCase[Topic, Session] = _TargetCase(
+    register=_register_sessions_reading_their_topic_two_links_deep,
+    create_target=_create_the_woodworking_topic,
+    create_other_target=_whatever_the_target(_create_the_carving_topic),
+    create_follower_on=_create_a_morning_session_of_a_pottery_workshop_on,
+    change_target=_retitle_the_topic,
+    group_of=_group_of_a_morning_session_reading_its_topic,
+    group_once_target_deleted=_group_of_a_morning_session_whose_topic_is_nulled,
+)
+
+
 def _register_talks_reading_their_venue_past_a_foreign_key() -> None:
     """Register Talk, reading its seminar's venue's name through a lookup path
     whose later link is the multi-column ForeignObject ``venue``, with no
@@ -2272,11 +2487,8 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     target, follower = _create_both_targets_with_their_followers(case)
 
     def act() -> ReplaceCalls:
-        # Expected before the delete: a follower deleted with its target may
-        # lose its pk.
-        expected: ReplaceCalls = [case.group_once_target_deleted(follower)]
         target.delete()
-        return expected
+        return [case.group_once_target_deleted(follower)]
 
     return act
 
@@ -2306,6 +2518,14 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL, "follow-forward_foreign_key_set_null"),
     (PATH_FORWARD_FOREIGN_KEY, "path-forward_foreign_key"),
     (PATH_FORWARD_FOREIGN_KEY_SET_NULL, "path-forward_foreign_key_set_null"),
+    (
+        PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL,
+        "path-forward_foreign_key_set_null_as_url",
+    ),
+    (
+        PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_TITLE,
+        "path-forward_foreign_key_set_null_as_title",
+    ),
     (DEPENDS_ON_FORWARD_FOREIGN_KEY, "depends_on-forward_foreign_key"),
     (
         DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
@@ -2321,6 +2541,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (PATH_FORWARD_MULTI_COLUMN, "path-forward_multi_column"),
     (DEPENDS_ON_FORWARD_MULTI_COLUMN, "depends_on-forward_multi_column"),
     (PATH_TWO_FORWARD_FOREIGN_KEYS, "path-two_forward_foreign_keys"),
+    (PATH_TWO_LINKS_SET_NULL, "path-two_links_set_null"),
     (
         PATH_FORWARD_FOREIGN_KEY_THEN_MULTI_COLUMN,
         "path-forward_foreign_key_then_multi_column",
@@ -2392,11 +2613,11 @@ def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the notice's delete below is observed.
-    notice = Notice.objects.create(title="Avis", language="fr")
-    greeting = Excerpt.objects.create(title="Bonjour", notice=notice)
+    notice = _create_the_french_notice()
+    greeting = _create_a_greeting_excerpt(notice)
     farewell = Excerpt.objects.create(title="Au revoir", notice=notice)
     # Another notice and its excerpt, untouched by the delete.
-    other_notice = Notice.objects.create(title="Notice", language="en")
+    other_notice = _create_the_english_notice()
     Excerpt.objects.create(title="Hello", notice=other_notice)
 
     # The delete sets the excerpts' foreign key to null before the notice's
@@ -2411,16 +2632,7 @@ def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups
     # calls: whether they are sent in one call or several is not what this
     # test is about. No group of the other notice's excerpt.
     assert _received_groups(built_outputs) == {
-        f"testapp.excerpt:{greeting.pk}": [
-            NormalizedDocument(
-                text="Bonjour",
-                source_app_label="testapp",
-                source_model="excerpt",
-                source_pk=greeting.pk,
-                title="Bonjour",
-                language=None,
-            ),
-        ],
+        **_group_of_a_greeting_excerpt_whose_notice_is_nulled(greeting),
         f"testapp.excerpt:{farewell.pk}": [
             NormalizedDocument(
                 text="Au revoir",
@@ -2435,47 +2647,6 @@ def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups
 
 
 @pytest.mark.django_db
-def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Citation is registered, reading its url from its bookmark
-    # through a lookup path, with no follow: Bookmark itself is not registered.
-    rag.register(Citation, fields=["title"], url_field="bookmark__link")
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the bookmark's save below is observed.
-    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
-    citation = Citation.objects.create(title="Linked", bookmark=bookmark)
-
-    with django_capture_on_commit_callbacks(execute=True):
-        bookmark.link = "/docs/b/"
-        bookmark.save()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The path alone resyncs the Citation: its group, with the bookmark's new
-    # link as its url.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.citation:{citation.pk}": [
-                NormalizedDocument(
-                    text="Linked",
-                    source_app_label="testapp",
-                    source_model="citation",
-                    source_pk=citation.pk,
-                    title="Linked",
-                    url="/docs/b/",
-                ),
-            ],
-        }
-    ]
-
-
-@pytest.mark.django_db
 def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -2486,15 +2657,15 @@ def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
     # Only the Citation is registered, reading its url from its bookmark
     # through a lookup path over its nullable foreign key, SET_NULL on delete,
     # with no follow: Bookmark itself is not registered.
-    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+    _register_citations_reading_their_url_through_a_path()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the bookmark's delete below is observed.
-    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
-    linked = Citation.objects.create(title="Linked", bookmark=bookmark)
+    bookmark = _create_the_docs_bookmark()
+    linked = _create_a_linked_citation(bookmark)
     quoted = Citation.objects.create(title="Quoted", bookmark=bookmark)
     # Another bookmark and its citation, untouched by the delete.
-    other_bookmark = Bookmark.objects.create(title="Example", link="/docs/b/")
+    other_bookmark = _create_the_example_bookmark()
     Citation.objects.create(title="Elsewhere", bookmark=other_bookmark)
 
     # The delete sets the citations' foreign key to null before the bookmark's
@@ -2509,16 +2680,7 @@ def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
     # replace calls: whether they are sent in one call or several is not what
     # this test is about. No group of the other bookmark's citation.
     assert _received_groups(built_outputs) == {
-        f"testapp.citation:{linked.pk}": [
-            NormalizedDocument(
-                text="Linked",
-                source_app_label="testapp",
-                source_model="citation",
-                source_pk=linked.pk,
-                title="Linked",
-                url="",
-            ),
-        ],
+        **_group_of_a_linked_citation_whose_bookmark_is_nulled(linked),
         f"testapp.citation:{quoted.pk}": [
             NormalizedDocument(
                 text="Quoted",
@@ -2530,48 +2692,6 @@ def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
             ),
         ],
     }
-
-
-@pytest.mark.django_db
-def test_saving_a_category_read_as_title_through_a_lookup_path_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Product is registered, reading its title from its category
-    # through a lookup path, with no follow and no other path through the
-    # category: Category itself is not registered.
-    rag.register(Product, fields=["name"], title_field="category__name")
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    lamp = _create_a_plain_desk_lamp(lighting)
-
-    with django_capture_on_commit_callbacks(execute=True):
-        lighting.name = "Lamps"
-        lighting.save()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The path alone resyncs the Product: its group, with the category's new
-    # name as its title.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.product:{lamp.pk}": [
-                NormalizedDocument(
-                    text="Desk lamp",
-                    source_app_label="testapp",
-                    source_model="product",
-                    source_pk=lamp.pk,
-                    title="Lamps",
-                    url=f"/products/{lamp.pk}/",
-                ),
-            ],
-        }
-    ]
 
 
 @pytest.mark.django_db
@@ -2590,8 +2710,8 @@ def test_saving_a_product_in_the_middle_of_a_lookup_path_replaces_the_group_read
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the product's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    garden = Category.objects.create(name="Garden")
+    lighting = _create_the_lighting_category()
+    garden = _create_the_garden_category()
     lamp = _create_a_plain_desk_lamp(lighting)
     rake = Product.objects.create(
         name="Rake",
@@ -2641,7 +2761,7 @@ def test_saving_a_category_both_followed_and_read_by_a_path_replaces_each_group_
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamp = _create_a_plain_desk_lamp(lighting)
     bulb = _create_a_bulb(lighting)
 
@@ -2714,7 +2834,7 @@ def test_saving_a_category_followed_by_two_products_replaces_both_in_one_batch(
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamp = _create_a_plain_desk_lamp(lighting)
     bulb = _create_a_bulb(lighting)
     # A product of another category: the save below does not change its group.
@@ -2777,7 +2897,7 @@ def test_saving_a_category_followed_by_more_rows_than_sqlite_variables_replaces_
     # More followers than SQLite accepts variables in one query. Created
     # outside the captured callbacks: bulk_create sends no signal anyway, so
     # only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamps = Product.objects.bulk_create(
         Product(
             name=f"Lamp {number}",
@@ -2853,7 +2973,7 @@ def test_saving_a_category_followed_by_foreign_key_looks_its_followers_up_once(
     # foreign key: Category itself is not.
     _register_products_following_their_category()
 
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     _create_a_plain_desk_lamp(lighting)
 
     # The commit callbacks are not run: only the save itself is counted.
@@ -2888,7 +3008,7 @@ def test_saving_through_a_proxy_of_a_category_followed_by_foreign_key_replaces_i
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamp = _create_a_plain_desk_lamp(lighting)
 
     # Django sends post_save with the proxy as its sender, not Category.
@@ -2932,7 +3052,7 @@ def test_saving_a_category_followed_by_a_foreign_key_to_its_proxy_replaces_the_g
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     banner = Banner.objects.create(title="Spring sale", category_id=lighting.pk)
 
     # A plain Category, not its proxy: Django sends post_save with Category as
@@ -2974,7 +3094,7 @@ def test_saving_a_multi_table_child_of_a_product_followed_by_foreign_key_replace
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the featured product's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamp = _create_a_desk_lamp(lighting)
     review = Review.objects.create(title="Sturdy", product=lamp)
 
@@ -3047,8 +3167,8 @@ def test_deleting_a_depot_followed_through_set_null_replaces_the_groups_of_its_b
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the depot's delete below is observed.
-    north = Depot.objects.create(name="North depot", code="north")
-    spare_parts = Bin.objects.create(depot=north, label="Spare parts")
+    north = _create_the_north_depot()
+    spare_parts = _create_a_spare_parts_bin_in(north)
     fasteners = Bin.objects.create(depot=north, label="Fasteners")
     # Another depot and its bin, untouched by the delete.
     south = Depot.objects.create(name="South depot", code="south")
@@ -3099,12 +3219,12 @@ def test_saving_a_page_a_custom_extractor_depends_on_replaces_the_groups_of_its_
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the page's save below is observed.
-    about = Page.objects.create(title="About us", slug="about-us")
-    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
-    tables = TextPlugin.objects.create(page=about, body="And tables too.")
+    about = _create_the_about_page()
+    chairs = _create_a_plugin_on(about)
+    tables = _create_a_plugin_on(about, "And tables too.")
     # A plugin of another page: the save below does not change its group.
     contact = Page.objects.create(title="Contact", slug="contact")
-    TextPlugin.objects.create(page=contact, body="Write to us.")
+    _create_a_plugin_on(contact, "Write to us.")
 
     with django_capture_on_commit_callbacks(execute=True):
         about.title = "Our workshop"
@@ -3147,7 +3267,7 @@ def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
 
     # Created outside the captured callbacks: its commit callbacks never run,
     # and it has no plugin yet.
-    about = Page.objects.create(title="About us", slug="about-us")
+    about = _create_the_about_page()
 
     with django_capture_on_commit_callbacks(execute=True):
         about.title = "Our workshop"
@@ -3186,8 +3306,8 @@ def test_a_plugin_moved_by_update_after_its_page_save_is_replaced_at_the_commit(
     # Created outside the captured callbacks: their commit callbacks never
     # run. The plugin starts on another page; the page it moves to has none.
     news = Page.objects.create(title="News", slug="news")
-    chairs = TextPlugin.objects.create(page=news, body="We build chairs by hand.")
-    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = _create_a_plugin_on(news)
+    about = _create_the_about_page()
 
     with django_capture_on_commit_callbacks(execute=True):
         about.title = "Our workshop"
@@ -3223,8 +3343,8 @@ def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_co
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The plugin starts on the saved page; the page it moves to has none.
-    about = Page.objects.create(title="About us", slug="about-us")
-    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    about = _create_the_about_page()
+    chairs = _create_a_plugin_on(about)
     news = Page.objects.create(title="News", slug="news")
 
     with django_capture_on_commit_callbacks(execute=True):
@@ -3262,9 +3382,9 @@ def test_a_plugin_moved_by_update_after_its_own_save_replaces_both_pages_at_comm
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The plugin starts on one page; the page it moves to has none.
-    about = Page.objects.create(title="About us", slug="about-us")
-    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
-    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    about = _create_the_about_page()
+    chairs = _create_a_plugin_on(about)
+    workshop = _create_the_workshop_page()
 
     with django_capture_on_commit_callbacks(execute=True):
         chairs.body = "We build chairs and tables by hand."
@@ -3314,8 +3434,8 @@ def test_a_plugin_created_then_moved_by_update_replaces_both_pages_at_commit(
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. Neither page has a plugin yet.
-    about = Page.objects.create(title="About us", slug="about-us")
-    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    about = _create_the_about_page()
+    workshop = _create_the_workshop_page()
 
     with django_capture_on_commit_callbacks(execute=True):
         chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
@@ -3367,9 +3487,9 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_co
     # Created outside the captured callbacks: their commit callbacks never
     # run. The product starts in another category; the category it moves to
     # has none.
-    tools = Category.objects.create(name="Tools")
+    tools = _create_the_tools_category()
     lamp = _create_a_plain_desk_lamp(tools)
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting.name = "Lamps"
@@ -3412,9 +3532,9 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_via_looku
     # Created outside the captured callbacks: their commit callbacks never
     # run. The product starts in another category; the category it moves to
     # has none.
-    tools = Category.objects.create(name="Tools")
+    tools = _create_the_tools_category()
     lamp = _create_a_plain_desk_lamp(tools)
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
 
     with django_capture_on_commit_callbacks(execute=True):
         lighting.name = "Lamps"
@@ -3507,8 +3627,8 @@ def test_saving_a_category_a_custom_extractor_depends_on_two_links_deep_replaces
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    garden = Category.objects.create(name="Garden")
+    lighting = _create_the_lighting_category()
+    garden = _create_the_garden_category()
     lamp = _create_a_plain_desk_lamp(lighting)
     rake = Product.objects.create(
         name="Rake",
@@ -3565,8 +3685,8 @@ def test_saving_a_category_a_custom_extractor_depends_on_via_parent_link_replace
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    garden = Category.objects.create(name="Garden")
+    lighting = _create_the_lighting_category()
+    garden = _create_the_garden_category()
     lamp = _create_a_desk_lamp(lighting)
     # A featured product in another category: the save below does not change
     # its group.
@@ -3624,8 +3744,8 @@ def test_saving_a_category_a_custom_extractor_depends_on_then_parent_link_replac
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    garden = Category.objects.create(name="Garden")
+    lighting = _create_the_lighting_category()
+    garden = _create_the_garden_category()
     lamp = _create_a_desk_lamp(lighting)
     rake = FeaturedProduct.objects.create(
         name="Rake",
@@ -3940,9 +4060,9 @@ def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leav
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the page's save below is observed.
-    about = Page.objects.create(title="About us", slug="about-us")
-    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
-    blank = TextPlugin.objects.create(page=about, body="")
+    about = _create_the_about_page()
+    chairs = _create_a_plugin_on(about)
+    blank = _create_a_plugin_on(about, "")
 
     with django_capture_on_commit_callbacks(execute=True):
         about.title = "Our workshop"
@@ -4026,7 +4146,7 @@ def test_a_category_followed_by_foreign_key_saved_unsynced_costs_nothing_more(
     # foreign key: Category itself is not.
     _register_products_following_their_category()
 
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     _create_a_plain_desk_lamp(lighting)
 
     # The queries are counted around the commit callbacks too, which run when
@@ -4063,11 +4183,11 @@ def test_an_output_failing_on_the_followers_of_a_category_logs_the_category_save
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the categories' saves below are observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     # Two followers, so that the message cannot name the one follower there is.
     lamp = _create_a_plain_desk_lamp(lighting)
     _create_a_bulb(lighting)
-    tools = Category.objects.create(name="Tools")
+    tools = _create_the_tools_category()
     hammer = _create_a_hammer(tools)
 
     settings.MODEL_RAG_OUTPUT = {
@@ -4128,7 +4248,7 @@ def test_an_output_failing_on_the_followers_of_a_category_proxy_logs_the_categor
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's save below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamp = _create_a_plain_desk_lamp(lighting)
 
     settings.MODEL_RAG_OUTPUT = {
@@ -4172,7 +4292,7 @@ def test_an_output_failing_on_the_followers_of_a_deleted_topic_proxy_logs_the_to
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's delete below is observed.
     woodworking = _create_the_woodworking_topic()
-    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    pottery = _create_a_pottery_workshop(woodworking)
     woodworking_pk = woodworking.pk
 
     settings.MODEL_RAG_OUTPUT = {
@@ -4213,7 +4333,7 @@ def test_a_topic_saved_then_deleted_replaces_no_group_of_the_workshops_with_no_t
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the topic's save and delete below are observed.
     woodworking = _create_the_woodworking_topic()
-    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    pottery = _create_a_pottery_workshop(woodworking)
     # Its nullable foreign key is null: it never followed the topic.
     Workshop.objects.create(title="Ceramics", topic=None)
 
@@ -4242,57 +4362,6 @@ def test_a_topic_saved_then_deleted_replaces_no_group_of_the_workshops_with_no_t
 
 
 @pytest.mark.django_db
-def test_deleting_a_topic_read_two_links_deep_through_set_null_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Session is registered, reading its workshop's topic's title
-    # through a lookup path two links deep, the last one SET_NULL on delete,
-    # with no follow: neither Workshop nor Topic is registered, so the topic
-    # reaches the session only through the path.
-    rag.register(Session, fields=["title", "workshop__topic__title"])
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the topic's delete below is observed.
-    woodworking = _create_the_woodworking_topic()
-    glazing = Topic.objects.create(
-        summary="Colours and kilns.", title="Glazing", slug="glazing"
-    )
-    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
-    ceramics = Workshop.objects.create(title="Ceramics", topic=glazing)
-    morning = Session.objects.create(title="Morning", workshop=pottery)
-    Session.objects.create(title="Evening", workshop=ceramics)
-
-    # The delete sets the workshop's foreign key to null before the topic's
-    # row goes: by post_delete, the path from the session no longer reaches
-    # the topic.
-    with django_capture_on_commit_callbacks(execute=True):
-        woodworking.delete()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The session's group as committed: the topic's title is gone, only the
-    # session's own title is left. The session of a workshop on another topic
-    # is not sent.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.session:{morning.pk}": [
-                NormalizedDocument(
-                    text="Morning",
-                    source_app_label="testapp",
-                    source_model="session",
-                    source_pk=morning.pk,
-                    title="Morning",
-                ),
-            ],
-        }
-    ]
-
-
-@pytest.mark.django_db
 def test_deleting_a_category_whose_following_products_cascade_sends_only_their_groups(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -4306,7 +4375,7 @@ def test_deleting_a_category_whose_following_products_cascade_sends_only_their_g
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the category's delete below is observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lamp_pk = _create_a_plain_desk_lamp(lighting).pk
     bulb_pk = _create_a_bulb(lighting).pk
 
@@ -4348,7 +4417,7 @@ def test_deleting_through_a_proxy_of_a_topic_followed_through_set_null_replaces_
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the proxy's delete below is observed.
     woodworking = _create_the_woodworking_topic()
-    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    pottery = _create_a_pottery_workshop(woodworking)
 
     # Django sends pre_delete and post_delete with the proxy as their sender,
     # not Topic.
@@ -4426,7 +4495,7 @@ def test_a_followed_topic_deleted_with_no_output_fails_and_signals_off_costs_not
     # Created before Workshop is registered: with no MODEL_RAG_OUTPUT, their
     # own saves would fail otherwise.
     woodworking = _create_the_woodworking_topic()
-    pottery = Workshop.objects.create(title="Pottery", topic=woodworking)
+    pottery = _create_a_pottery_workshop(woodworking)
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
 
@@ -4480,7 +4549,7 @@ def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_o
 
     # Created outside the captured callbacks: the commit callback of the
     # Page's own save never runs, so only the plugin's save below is observed.
-    page = Page.objects.create(title="About us", slug="about-us")
+    page = _create_the_about_page()
 
     with django_capture_on_commit_callbacks(execute=True):
         plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
@@ -4528,12 +4597,10 @@ def test_moving_a_followed_instance_built_with_an_existing_pk_replaces_both_grou
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the plugin's move below is observed.
-    about = Page.objects.create(title="About us", slug="about-us")
-    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
-    existing_plugin = TextPlugin.objects.create(
-        page=about, body="We build chairs by hand."
-    )
-    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+    about = _create_the_about_page()
+    workshop = _create_the_workshop_page()
+    existing_plugin = _create_a_plugin_on(about)
+    _create_a_plugin_on(about, "We ship worldwide.")
 
     # Not loaded: built anew with the existing row's primary key, so Django
     # marks it as being added, yet saves it as an UPDATE of that row.
@@ -4593,9 +4660,9 @@ def test_a_change_left_unsaved_after_a_move_does_not_change_the_groups_replaced(
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the product's move below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    tools = Category.objects.create(name="Tools")
-    garden = Category.objects.create(name="Garden")
+    lighting = _create_the_lighting_category()
+    tools = _create_the_tools_category()
+    garden = _create_the_garden_category()
     lamp = _create_a_plain_desk_lamp(lighting)
     review = Review.objects.create(title="Sturdy", product=lamp)
 
@@ -4657,9 +4724,9 @@ def test_a_product_saved_then_moved_by_update_skips_the_category_it_only_passed_
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the product's moves below are observed.
-    lighting = Category.objects.create(name="Lighting")
-    tools = Category.objects.create(name="Tools")
-    garden = Category.objects.create(name="Garden")
+    lighting = _create_the_lighting_category()
+    tools = _create_the_tools_category()
+    garden = _create_the_garden_category()
     lamp = _create_a_plain_desk_lamp(lighting)
 
     with django_capture_on_commit_callbacks(execute=True):
@@ -4710,8 +4777,8 @@ def test_updating_a_followed_instance_in_place_replaces_the_group_once(
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the plugin's update below is observed.
-    page = Page.objects.create(title="About us", slug="about-us")
-    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    page = _create_the_about_page()
+    plugin = _create_a_plugin_on(page)
 
     # The plugin stays on its Page: the Page it had before the save is the
     # Page it has after.
@@ -4752,8 +4819,8 @@ def test_saving_or_deleting_through_a_proxy_of_a_followed_model_replaces_the_gro
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the saves and deletes below are observed.
-    page = Page.objects.create(title="About us", slug="about-us")
-    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    page = _create_the_about_page()
+    plugin = _create_a_plugin_on(page)
 
     # Django sends post_save with the proxy as its sender, not TextPlugin.
     with django_capture_on_commit_callbacks(execute=True):
@@ -4855,8 +4922,8 @@ def test_moving_a_child_with_a_primary_key_of_its_own_replaces_both_categories(
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the clearance product's move below is observed.
-    lighting = Category.objects.create(name="Lighting")
-    tools = Category.objects.create(name="Tools")
+    lighting = _create_the_lighting_category()
+    tools = _create_the_tools_category()
     # The child's primary key is its code, not the Product's: its Product row
     # is reached by the explicit parent link, ``product``, whose value is the
     # Product's integer primary key, never the code.
@@ -4912,7 +4979,7 @@ def test_saving_an_instance_followed_by_two_models_replaces_the_group_of_each(
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the exhibit's save below is observed.
     north = Showroom.objects.create(name="North hall")
-    tools = Category.objects.create(name="Tools")
+    tools = _create_the_tools_category()
 
     with django_capture_on_commit_callbacks(execute=True):
         Exhibit.objects.create(showroom=north, label="Hammer", category=tools)
@@ -4959,8 +5026,8 @@ def test_updating_a_followed_instance_linked_by_a_unique_column_reads_it_at_comm
 
     # Created outside the counted queries: only the shelf's update below is
     # observed.
-    north = Warehouse.objects.create(name="North depot", code="north")
-    shelf = Shelf.objects.create(warehouse=north, label="Timber")
+    north = _create_the_north_warehouse()
+    shelf = _create_a_shelf_in(north)
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits: the lookup of the Warehouse before the save,
@@ -6950,7 +7017,7 @@ def test_deleting_a_registered_instance_replaces_its_group_with_an_empty_one(
     # Created in a commit of its own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
     lighting_pk = lighting.pk
     built_outputs.clear()
 
@@ -6976,9 +7043,9 @@ def test_deleting_a_queryset_empties_the_group_of_each_deleted_instance(
     # Created in a commit of their own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
         lamps = Category.objects.create(name="Lamps")
-        tools = Category.objects.create(name="Tools")
+        tools = _create_the_tools_category()
     built_outputs.clear()
 
     with django_capture_on_commit_callbacks(execute=True):
@@ -7011,7 +7078,7 @@ def test_deleting_through_a_proxy_empties_the_group_of_the_registered_model(
     # Created in a commit of its own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
     lighting_pk = lighting.pk
     built_outputs.clear()
 
@@ -7043,7 +7110,7 @@ def test_unregistering_a_proxy_keeps_deleting_through_it_emptying_the_models_gro
     # Created in a commit of its own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
     lighting_pk = lighting.pk
     built_outputs.clear()
 
@@ -7069,7 +7136,7 @@ def test_deleting_a_multi_table_child_empties_the_group_of_its_registered_parent
     # Created in a commit of their own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
         lamp = _create_a_desk_lamp(lighting)
     lamp_pk = lamp.pk
     built_outputs.clear()
@@ -7098,7 +7165,7 @@ def test_deleting_a_child_with_a_primary_key_of_its_own_empties_its_parents_grou
     # Created in a commit of their own, so that only the delete's commit is
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
+        lighting = _create_the_lighting_category()
         lamp = _create_a_clearance_desk_lamp(lighting)
     # The child's primary key is its code, not the Product's: the parent row
     # is reached by the explicit parent link, ``product``.
@@ -7129,10 +7196,10 @@ def test_deleting_a_page_whose_followed_plugins_cascade_sends_only_its_empty_gro
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the Page's delete below is observed.
-    page = Page.objects.create(title="About us", slug="about-us")
+    page = _create_the_about_page()
     page_pk = page.pk
-    TextPlugin.objects.create(page=page, body="We build chairs by hand.")
-    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+    _create_a_plugin_on(page)
+    _create_a_plugin_on(page, "We ship worldwide.")
 
     # The plugins are deleted with the Page by cascade: Django sends
     # post_delete for each of them as well as for the Page.
@@ -7204,8 +7271,8 @@ def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
 
     _register_pages_following_their_plugins()
 
-    page = Page.objects.create(title="About us", slug="about-us")
-    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    page = _create_the_about_page()
+    plugin = _create_a_plugin_on(page)
 
     # The same instance is updated once while the Page is still registered:
     # its save sends the Page's group.
@@ -7238,7 +7305,7 @@ def test_a_plugin_of_a_page_since_unregistered_defers_nothing_and_fast_deletes(
 def test_a_forward_followed_topic_is_listened_to_only_while_followed() -> None:
     # Two registered models follow Topic through their own foreign key;
     # neither Topic nor its proxy is registered.
-    rag.register(Workshop, follow=["topic"])
+    _register_workshops_following_their_topic()
     rag.register(Lesson, follow=["topic"])
 
     rag.unregister(Workshop)
@@ -7358,7 +7425,7 @@ def test_a_followed_instance_saved_with_no_output_setting_fails_and_writes_no_ro
 ):
     # Created before Page is registered: with no MODEL_RAG_OUTPUT, its own
     # save would fail otherwise.
-    page = Page.objects.create(title="About us", slug="about-us")
+    page = _create_the_about_page()
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
     _register_pages_following_their_plugins()
@@ -7489,8 +7556,8 @@ def test_deleting_a_followed_instance_without_an_output_setting_fails_at_the_del
 ) -> None:
     # Created before Page is registered: with no MODEL_RAG_OUTPUT, their own
     # saves would fail otherwise.
-    page = Page.objects.create(title="About us", slug="about-us")
-    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    page = _create_the_about_page()
+    plugin = _create_a_plugin_on(page)
 
     # tests/settings.py defines no MODEL_RAG_OUTPUT.
     _register_pages_following_their_plugins()
@@ -7537,7 +7604,7 @@ def test_deleting_a_registered_instance_with_signals_off_sends_nothing(
 
     _register_categories_by_name()
 
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
 
     # The commit callbacks run: one sending anything would build an output.
     with django_capture_on_commit_callbacks(execute=True) as callbacks:
@@ -7561,8 +7628,8 @@ def test_saving_and_deleting_a_followed_instance_with_signals_off_costs_nothing_
 
     _register_pages_following_their_plugins()
 
-    page = Page.objects.create(title="About us", slug="about-us")
-    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    page = _create_the_about_page()
+    plugin = _create_a_plugin_on(page)
 
     # The commit callbacks run: one sending anything would build an output.
     # With signals on, the save of an existing row would read its committed
@@ -7617,8 +7684,8 @@ def test_a_raw_save_of_a_followed_instance_defers_nothing_and_reads_nothing_firs
 
     _register_pages_following_their_plugins()
 
-    page = Page.objects.create(title="About us", slug="about-us")
-    plugin = TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+    page = _create_the_about_page()
+    plugin = _create_a_plugin_on(page)
     plugin = TextPlugin.objects.get(pk=plugin.pk)
 
     # A new row saved as loaddata saves a fixture, then an existing row saved
@@ -7681,8 +7748,8 @@ def test_a_plugin_saved_in_a_rolled_back_transaction_page_following_it_sends_not
 
     # Created before Page is registered: in autocommit (transaction=True),
     # their own commit callbacks would otherwise run, and send the page's group.
-    about = Page.objects.create(title="About us", slug="about-us")
-    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    about = _create_the_about_page()
+    chairs = _create_a_plugin_on(about)
 
     _register_pages_following_their_plugins()
 
@@ -7772,7 +7839,7 @@ def test_a_follower_failing_at_the_commit_of_a_followed_save_is_logged_without_r
 
     # Created outside the captured callbacks: the commit callback of the
     # Page's own save never runs, so only the plugin's save below is observed.
-    page = Page.objects.create(title="About us", slug="about-us")
+    page = _create_the_about_page()
 
     def fail_to_extract(self: object, instance: object) -> NormalizedDocument:
         raise _ExtractionError
@@ -7812,7 +7879,7 @@ def test_deleting_an_instance_empties_its_group_without_going_through_its_extrac
 
     # Created before Category is registered, so that its save schedules
     # nothing: only the delete's commit is observed below.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     lighting_pk = lighting.pk
 
     @rag.register_extractor(Category)
@@ -7847,8 +7914,8 @@ def test_an_output_failing_on_one_saved_instance_still_receives_the_other_ones_g
     # Created in a commit of their own, so that their source keys are known
     # before the output is configured to fail on one of them.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
-        tools = Category.objects.create(name="Tools")
+        lighting = _create_the_lighting_category()
+        tools = _create_the_tools_category()
     built_outputs.clear()
 
     settings.MODEL_RAG_OUTPUT = {
@@ -7903,8 +7970,8 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     # Created in a commit of their own, so that their source keys are known
     # before the output is configured to fail on one of them.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
-        tools = Category.objects.create(name="Tools")
+        lighting = _create_the_lighting_category()
+        tools = _create_the_tools_category()
     lighting_pk = lighting.pk
     tools_pk = tools.pk
     built_outputs.clear()
@@ -7971,8 +8038,8 @@ def test_a_database_error_reloading_a_saved_instance_is_logged_without_raising(
     # Created in a commit of their own, so that the database can be made to
     # fail on reading one of them back.
     with django_capture_on_commit_callbacks(execute=True):
-        lighting = Category.objects.create(name="Lighting")
-        tools = Category.objects.create(name="Tools")
+        lighting = _create_the_lighting_category()
+        tools = _create_the_tools_category()
     built_outputs.clear()
 
     reload_error = DatabaseError("the database is unreachable")
@@ -8049,9 +8116,9 @@ def test_a_database_error_looking_up_a_categorys_followers_at_the_commit_is_logg
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the categories' saves below are observed.
-    lighting = Category.objects.create(name="Lighting")
+    lighting = _create_the_lighting_category()
     desk_lamp = _create_a_plain_desk_lamp(lighting)
-    tools = Category.objects.create(name="Tools")
+    tools = _create_the_tools_category()
     hammer = _create_a_hammer(tools)
 
     # The saves themselves go through: their callbacks are captured here, and
