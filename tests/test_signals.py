@@ -233,6 +233,12 @@ def _register_musicians_following_their_bands() -> None:
     rag.register(Musician, fields=["name"], follow=["bands"])
 
 
+def _register_teams_following_their_matches() -> None:
+    """Register Team, by its name, following its matches by both reverse foreign
+    keys, ``home_matches`` and ``away_matches``: Match itself is not."""
+    rag.register(Team, fields=["name"], follow=["home_matches", "away_matches"])
+
+
 def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
     """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
     hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
@@ -264,6 +270,18 @@ def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
 def _create_a_plain_desk_lamp(category: Category) -> Product:
     """Create a Desk lamp, a plain Product: a single row."""
     return Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=category,
+    )
+
+
+def _create_a_clearance_desk_lamp(category: Category) -> ClearanceProduct:
+    """Create a Desk lamp, a ClearanceProduct: a Product row and its child row,
+    whose primary key is its own code, ``CLR-1``, not the Product's."""
+    return ClearanceProduct.objects.create(
+        code="CLR-1",
         name="Desk lamp",
         description="A lamp for the desk.",
         price="25.00",
@@ -424,13 +442,7 @@ def test_saving_a_child_with_a_primary_key_of_its_own_replaces_its_parents_group
     # The child's primary key is its code, not the Product's: the parent row
     # is reached by the explicit parent link, ``product``.
     with django_capture_on_commit_callbacks(execute=True):
-        lamp = ClearanceProduct.objects.create(
-            code="CLR-1",
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-        )
+        lamp = _create_a_clearance_desk_lamp(lighting)
         assert _replaced(built_outputs) == []
 
     # The group is the parent row's, under the parent's label and the parent's
@@ -3728,13 +3740,7 @@ def test_moving_a_child_with_a_primary_key_of_its_own_replaces_both_categories(
     # The child's primary key is its code, not the Product's: its Product row
     # is reached by the explicit parent link, ``product``, whose value is the
     # Product's integer primary key, never the code.
-    lamp = ClearanceProduct.objects.create(
-        code="CLR-1",
-        name="Desk lamp",
-        description="A lamp for the desk.",
-        price="25.00",
-        category=lighting,
-    )
+    lamp = _create_a_clearance_desk_lamp(lighting)
 
     # Django sends pre_save and post_save with ClearanceProduct as their
     # sender, not Product: the category the Product row had before the save
@@ -4093,9 +4099,8 @@ def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Team is registered, following its matches by both reverse
-    # foreign keys, ``home_matches`` and ``away_matches``: Match itself is not.
-    rag.register(Team, fields=["name"], follow=["home_matches", "away_matches"])
+    # Only the Team is registered.
+    _register_teams_following_their_matches()
 
     # Created outside the counted queries: only the match's update below is
     # observed.
@@ -4155,7 +4160,7 @@ def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
     # Two registered models follow Match in reverse: the Team by both its
     # reverse foreign keys, ``home_matches`` and ``away_matches``, and the
     # Tournament by its own, ``matches``. Match itself is not registered.
-    rag.register(Team, fields=["name"], follow=["home_matches", "away_matches"])
+    _register_teams_following_their_matches()
     rag.register(Tournament, fields=["name"], follow=["matches"])
 
     # Created outside the counted queries: only the match's update below is
@@ -6680,13 +6685,7 @@ def test_deleting_a_child_with_a_primary_key_of_its_own_empties_its_parents_grou
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
         lighting = Category.objects.create(name="Lighting")
-        lamp = ClearanceProduct.objects.create(
-            code="CLR-1",
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-        )
+        lamp = _create_a_clearance_desk_lamp(lighting)
     # The child's primary key is its code, not the Product's: the parent row
     # is reached by the explicit parent link, ``product``.
     product_pk = lamp.product_id
