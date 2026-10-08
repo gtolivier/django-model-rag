@@ -804,6 +804,68 @@ FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _Followed
 )
 
 
+def _create_the_halle_tony_garnier() -> Venue:
+    """Create the Halle Tony Garnier, a venue of Lyon."""
+    return Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+
+
+def _create_the_transbordeur() -> Venue:
+    """Create the Transbordeur, another venue of Lyon: only the name column
+    tells it apart from the Halle Tony Garnier."""
+    return Venue.objects.create(city="Lyon", name="Transbordeur")
+
+
+def _create_a_seminar_at(venue: Venue) -> Seminar:
+    """Create a seminar at the given venue: its two columns hold the venue's
+    city and name."""
+    return Seminar.objects.create(
+        title="Acoustics", venue_city=venue.city, venue_name=venue.name
+    )
+
+
+def _point_the_seminar_to(seminar: Seminar, venue: Venue) -> None:
+    """Point the seminar's two columns to the given venue's city and name,
+    without saving it."""
+    seminar.venue_city = venue.city
+    seminar.venue_name = venue.name
+
+
+def _group_of_a_venue_following_its_seminars(
+    venue: Venue, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The venue's group: its name, then the seminar's text fields, title first,
+    if the seminar is at the venue."""
+    text = (
+        f"{venue.name}\n\nAcoustics\n\n{venue.city}\n\n{venue.name}"
+        if holding
+        else venue.name
+    )
+    return {
+        f"testapp.venue:{venue.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=venue.pk,
+                title=venue.name,
+            ),
+        ],
+    }
+
+
+# `follow` through the reverse of a multi-column relation: only Venue is
+# registered, following its seminars (Seminar is not); a seminar holds the key
+# to its Venue in two columns, matched to the Venue's city and name.
+FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
+    register=_register_venues_following_their_seminars,
+    create_follower=_create_the_halle_tony_garnier,
+    create_other_follower=_create_the_transbordeur,
+    create_holder=_create_a_seminar_at,
+    point_holder_to=_point_the_seminar_to,
+    group_of=_group_of_a_venue_following_its_seminars,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -877,6 +939,7 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
             FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD,
             id="follow-reverse_foreign_key_to_field",
         ),
+        pytest.param(FOLLOW_REVERSE_MULTI_COLUMN, id="follow-reverse_multi_column"),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
