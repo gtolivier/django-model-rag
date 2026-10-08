@@ -672,12 +672,28 @@ def _move(case: _FollowedCase[Any, Any]) -> Act:
     return act
 
 
+def _delete(case: _FollowedCase[Any, Any]) -> Act:
+    """The holding row deleted: one call, the follower's group."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the delete is.
+    follower = case.create_follower()
+    holder = case.create_holder(follower)
+
+    def act() -> ReplaceCalls:
+        holder.delete()
+        # The follower left without the holding row.
+        return [case.group_of(follower, False)]
+
+    return act
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "write",
     [
         pytest.param(_create, id="create"),
         pytest.param(_move, id="move"),
+        pytest.param(_delete, id="delete"),
     ],
 )
 @pytest.mark.parametrize(
