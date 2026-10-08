@@ -3652,6 +3652,67 @@ def test_saving_a_multi_table_child_of_a_followed_model_replaces_the_group(
 
 
 @pytest.mark.django_db
+def test_moving_a_child_with_a_primary_key_of_its_own_replaces_both_categories(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither Product nor ClearanceProduct is registered: a Category follows
+    # its products through the reverse relation ``products``.
+    rag.register(Category, follow=["products"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the clearance product's move below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    tools = Category.objects.create(name="Tools")
+    # The child's primary key is its code, not the Product's: its Product row
+    # is reached by the explicit parent link, ``product``, whose value is the
+    # Product's integer primary key, never the code.
+    lamp = ClearanceProduct.objects.create(
+        code="CLR-1",
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=lighting,
+    )
+
+    # Django sends pre_save and post_save with ClearanceProduct as their
+    # sender, not Product: the category the Product row had before the save
+    # is found from the parent link, not from the code.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.category = tools
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Both categories' groups as committed: the old one loses
+    # the product's text, the new one gains it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+        f"testapp.category:{tools.pk}": [
+            NormalizedDocument(
+                text="Tools\n\nDesk lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=tools.pk,
+                title="Tools",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_an_instance_followed_by_two_models_replaces_the_group_of_each(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
