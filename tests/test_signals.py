@@ -3509,6 +3509,61 @@ def test_a_change_left_unsaved_after_a_move_does_not_change_the_groups_replaced(
 
 
 @pytest.mark.django_db
+def test_a_product_saved_then_moved_by_update_skips_the_category_it_only_passed_by(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # A Product is followed by its Category, through the reverse relation
+    # ``products``. Product itself is not registered.
+    rag.register(Category, follow=["products"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the product's moves below are observed.
+    lighting = Category.objects.create(name="Lighting")
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.category = tools
+        lamp.save()
+        # Moved again after the save, in the same transaction, by a write that
+        # sends no signal: the Tools category never has the product in any
+        # committed state.
+        Product.objects.filter(pk=lamp.pk).update(category=garden)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of the category the product left and of the
+    # one it ends in, both as committed; no group of the category it only
+    # passed by before the commit.
+    assert _received_groups(built_outputs) == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+        f"testapp.category:{garden.pk}": [
+            NormalizedDocument(
+                text="Garden\n\nDesk lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=garden.pk,
+                title="Garden",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_updating_a_followed_instance_in_place_replaces_the_group_once(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
