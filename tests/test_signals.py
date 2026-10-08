@@ -579,6 +579,13 @@ FollowerT = TypeVar("FollowerT", bound=Model)
 HolderT = TypeVar("HolderT", bound=Model)
 
 
+def _no_other_groups(
+    holder: Model, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """A holding row that names its follower alone: no other group."""
+    return {}
+
+
 @dataclass(frozen=True)
 class _FollowedCase(Generic[FollowerT, HolderT]):
     """What a declaration and a relation provide to the writes of a row holding
@@ -597,6 +604,12 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     # The follower's group as committed, under its source key, whether the
     # holding row's key points to it or not.
     group_of: Callable[[FollowerT, bool], dict[str, list[NormalizedDocument]]]
+    # The groups of the other rows the holding row names, whose keys no write
+    # changes, as committed, whether the holding row still exists or not: none
+    # for a holding row that names its follower alone.
+    groups_of_the_others_named: Callable[
+        [HolderT, bool], dict[str, list[NormalizedDocument]]
+    ] = _no_other_groups
 
 
 def _create_the_about_page() -> Page:
@@ -913,27 +926,99 @@ DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
 )
 
 
+def _create_lyon_and_its_opponent() -> Team:
+    """Create the Lyon team, and Nantes, the opponent every match of Lyon's is
+    played against."""
+    Team.objects.create(name="Nantes")
+    return Team.objects.create(name="Lyon")
+
+
+def _create_marseille() -> Team:
+    """Create the Marseille team."""
+    return Team.objects.create(name="Marseille")
+
+
+def _create_a_match_at_home_of(team: Team) -> Match:
+    """Create a match with the given team at home, against Nantes away: it holds
+    the key to two different teams, one per foreign key."""
+    nantes = Team.objects.get(name="Nantes")
+    return Match.objects.create(title="Opening day", home_team=team, away_team=nantes)
+
+
+def _point_the_match_home_to(match: Match, team: Team) -> None:
+    """Point the match's home team key to the given team, without saving it:
+    its away team stays."""
+    match.home_team = team
+
+
+def _group_of_a_team_following_its_matches(
+    team: Team, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The team's group: its name, then the match's title if the match names
+    the team, at home or away."""
+    text = f"{team.name}\n\nOpening day" if holding else team.name
+    return {
+        f"testapp.team:{team.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="team",
+                source_pk=team.pk,
+                title=team.name,
+            ),
+        ],
+    }
+
+
+def _group_of_the_away_team(
+    match: Match, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The group of the match's away team, which no write changes."""
+    return _group_of_a_team_following_its_matches(match.away_team, holding)
+
+
+# `follow` through two reverse foreign keys to the same model: only Team is
+# registered, following its matches at home and away (Match is not); a match
+# holds the key to two different teams, the follower at home and Nantes away,
+# so each relation must be crossed for its team's group to be replaced.
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
+    register=_register_teams_following_their_matches,
+    create_follower=_create_lyon_and_its_opponent,
+    create_other_follower=_create_marseille,
+    create_holder=_create_a_match_at_home_of,
+    point_holder_to=_point_the_match_home_to,
+    group_of=_group_of_a_team_following_its_matches,
+    groups_of_the_others_named=_group_of_the_away_team,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
 
 
 def _create(case: _FollowedCase[Any, Any]) -> Act:
-    """The holding row created on a follower: one call, the follower's group."""
+    """The holding row created on a follower: one call, the follower's group and
+    those of the other rows it names, each once."""
     # Created before the write: the commit callback of its own save is not
     # observed, so only the holding row's creation is.
     follower = case.create_follower()
 
     def act() -> ReplaceCalls:
-        case.create_holder(follower)
-        return [case.group_of(follower, True)]
+        holder = case.create_holder(follower)
+        return [
+            {
+                **case.group_of(follower, True),
+                **case.groups_of_the_others_named(holder, True),
+            }
+        ]
 
     return act
 
 
 def _move(case: _FollowedCase[Any, Any]) -> Act:
     """The holding row moved to another follower by ``save()``: one call, both
-    followers' groups, each once."""
+    followers' groups and those of the other rows it names, each once."""
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the move is.
     old = case.create_follower()
@@ -943,14 +1028,22 @@ def _move(case: _FollowedCase[Any, Any]) -> Act:
     def act() -> ReplaceCalls:
         case.point_holder_to(holder, new)
         holder.save()
-        # The old follower left without the holding row, the new one gaining it.
-        return [{**case.group_of(old, False), **case.group_of(new, True)}]
+        # The old follower left without the holding row, the new one gaining
+        # it, the other rows it names keeping it.
+        return [
+            {
+                **case.group_of(old, False),
+                **case.group_of(new, True),
+                **case.groups_of_the_others_named(holder, True),
+            }
+        ]
 
     return act
 
 
 def _delete(case: _FollowedCase[Any, Any]) -> Act:
-    """The holding row deleted: one call, the follower's group."""
+    """The holding row deleted: one call, the follower's group and those of the
+    other rows it named, each once."""
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the delete is.
     follower = case.create_follower()
@@ -958,8 +1051,13 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
 
     def act() -> ReplaceCalls:
         holder.delete()
-        # The follower left without the holding row.
-        return [case.group_of(follower, False)]
+        # The follower and the other rows it named left without the holding row.
+        return [
+            {
+                **case.group_of(follower, False),
+                **case.groups_of_the_others_named(holder, False),
+            }
+        ]
 
     return act
 
@@ -989,6 +1087,9 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
         pytest.param(FOLLOW_REVERSE_MULTI_COLUMN, id="follow-reverse_multi_column"),
         pytest.param(
             DEPENDS_ON_REVERSE_MULTI_COLUMN, id="depends_on-reverse_multi_column"
+        ),
+        pytest.param(
+            FOLLOW_TWO_REVERSE_FOREIGN_KEYS, id="follow-two_reverse_foreign_keys"
         ),
     ],
 )
