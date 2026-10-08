@@ -216,7 +216,7 @@ def sync_saved_instance(
         _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
     )
     # A row just created has no follower pointing to it at its save.
-    if not created and _is_followed_through_lookups(sender):
+    if not created and _is_followed(sender):
         # Rows may be attached to it before the commit, by a write that sends
         # no signal: its followers are looked up then.
         transaction.on_commit(
@@ -407,7 +407,11 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = _followers_reaching(sender, instance) + followers_at_save
+        followers = (
+            _followers_reaching(sender, instance)
+            + _committed_reverse_followers(sender, instance.pk)
+            + followers_at_save
+        )
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
