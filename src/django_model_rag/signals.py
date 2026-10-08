@@ -252,6 +252,8 @@ def sync_changed_relation(
     through = kwargs["sender"]
     reverse = kwargs["reverse"]
     if action in _BEFORE_WRITE:
+        # Keys left by a clear that failed after pre_clear are not this change's.
+        instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
         _check_output_before_write(through, instance, model)
         if action == _BEFORE_CLEAR:
             _remember_cleared_pks(through, instance, model, reverse)
