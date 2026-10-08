@@ -1364,6 +1364,83 @@ PATH_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
 )
 
 
+def _register_excerpts_reading_their_language_through_a_path() -> None:
+    """Register Excerpt, reading its language from its notice through a lookup
+    path, with no follow: Notice itself is not registered."""
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+
+def _create_the_french_notice() -> Notice:
+    """Create a notice in French."""
+    return Notice.objects.create(title="Avis", language="fr")
+
+
+def _create_the_english_notice() -> Notice:
+    """Create a notice in English."""
+    return Notice.objects.create(title="Notice", language="en")
+
+
+def _create_a_greeting_excerpt(notice: Notice) -> Excerpt:
+    """Create a Bonjour excerpt on the given notice."""
+    return Excerpt.objects.create(title="Bonjour", notice=notice)
+
+
+def _switch_the_notice_to_english(notice: Notice) -> None:
+    """Switch the given notice's language to English, without saving it."""
+    notice.language = "en"
+
+
+def _group_of_a_greeting_excerpt_reading_its_notice(
+    excerpt: Excerpt, /, *, target: Notice
+) -> dict[str, list[NormalizedDocument]]:
+    """The greeting excerpt's group: its title, in its notice's language."""
+    return {
+        f"testapp.excerpt:{excerpt.pk}": [
+            NormalizedDocument(
+                text="Bonjour",
+                source_app_label="testapp",
+                source_model="excerpt",
+                source_pk=excerpt.pk,
+                title="Bonjour",
+                language=target.language,
+            ),
+        ],
+    }
+
+
+def _group_of_a_greeting_excerpt_whose_notice_is_nulled(
+    excerpt: Excerpt,
+) -> dict[str, list[NormalizedDocument]]:
+    """The greeting excerpt's group once its notice is deleted and its foreign
+    key set to null: with no notice left, it has no language."""
+    return {
+        f"testapp.excerpt:{excerpt.pk}": [
+            NormalizedDocument(
+                text="Bonjour",
+                source_app_label="testapp",
+                source_model="excerpt",
+                source_pk=excerpt.pk,
+                title="Bonjour",
+                language=None,
+            ),
+        ],
+    }
+
+
+# A lookup path through a nullable forward foreign key: only Excerpt is
+# registered, reading its language from its notice (Notice is not); the
+# excerpt holds the key to the notice, the row written, SET_NULL on delete.
+PATH_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Notice, Excerpt] = _TargetCase(
+    register=_register_excerpts_reading_their_language_through_a_path,
+    create_target=_create_the_french_notice,
+    create_other_target=_create_the_english_notice,
+    create_follower_on=_create_a_greeting_excerpt,
+    change_target=_switch_the_notice_to_english,
+    group_of=_group_of_a_greeting_excerpt_reading_its_notice,
+    group_once_target_deleted=_group_of_a_greeting_excerpt_whose_notice_is_nulled,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1424,6 +1501,10 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
             id="follow-forward_foreign_key_set_null",
         ),
         pytest.param(PATH_FORWARD_FOREIGN_KEY, id="path-forward_foreign_key"),
+        pytest.param(
+            PATH_FORWARD_FOREIGN_KEY_SET_NULL,
+            id="path-forward_foreign_key_set_null",
+        ),
     ],
 )
 def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
