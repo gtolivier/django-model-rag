@@ -3064,6 +3064,57 @@ def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it
 
 
 @pytest.mark.django_db
+def test_moving_a_followed_reverse_one_to_one_to_another_supplier_replaces_both_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Supplier is registered, following its profile by the reverse
+    # one-to-one accessor ``profile``: SupplierProfile itself is not.
+    rag.register(Supplier, follow=["profile"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's move below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    oak = Supplier.objects.create(name="Oak Yard")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.supplier = oak
+        profile.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Supplier is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Suppliers' groups as committed: the old Supplier is left with its
+    # name alone, the new Supplier gains the profile's text.
+    assert received == {
+        f"testapp.supplier:{birch.pk}": [
+            NormalizedDocument(
+                text="Birch Mill",
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=birch.pk,
+                title="Birch Mill",
+            ),
+        ],
+        f"testapp.supplier:{oak.pk}": [
+            NormalizedDocument(
+                text="Oak Yard\n\nKiln-dried boards.",
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=oak.pk,
+                title="Oak Yard",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
