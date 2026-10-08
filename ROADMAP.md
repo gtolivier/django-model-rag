@@ -459,11 +459,12 @@ or a `GenericRelation` in `follow`.
     `queryset.db`. No public signature changes: a `using=` argument would
     be a second source of truth, and changing `get_queryset()` would break
     the contract of feature 8.
-  - **Followers take the alias of the save** (feature 11a): the read of the
-    followers a row had before its save, the follower lookup through a
-    `to_field`, the follower's commit callback and its reload all use the
-    signal's `using`. Django keeps a relation within one database, so the
-    follower lives on the same alias as the followed row.
+  - **Followers take the alias of the save** (feature 11a): the follower
+    lookups, at `pre_save` and at the commit (`_pks_reaching`, through
+    `_base_manager` with no `.using()` today), the in-memory read through a
+    `to_field` (`_follower_pks`), the follower's commit callback and its
+    reload all use the signal's `using`. Django keeps a relation within one
+    database, so the follower lives on the same alias as the followed row.
   - **The group key keeps no alias.** Adding it would break `source_key`
     (feature 1) and the split that `prune` makes at the colon, make `run()`
     know the alias, and re-key every index. With one followed database per
@@ -920,6 +921,28 @@ or a `GenericRelation` in `follow`.
     just created still costs the commit no lookup unless it points to a
     follower. Both keep `_follower_pks` and its `to_field` / multi-column
     branch: at `post_delete` the row is gone, and no lookup can find it.
+  - [x] **Lookup costs**, the points the review of the previous step left.
+    - **One query per registered model.** The lookups of a registered model
+      are combined, before the save and at the commit: one `pk__in`
+      subquery per lookup, ORed in one statement. An OR across the joins
+      of several multi-valued relations would have no index to serve it.
+    - **No read on update.** An update no longer reads in memory the
+      followers the row points to: the commit's lookup finds them. If that
+      lookup fails, the error is logged, and a follower the row was moved
+      to is not replaced until its next save or the next sync. Keeping the
+      free read for a plain foreign key, only to cover that case, was
+      dropped.
+    - **New tests:** a multi-table child with a primary key of its own
+      (its parent link is `product`), and a row moved by `save()` and then
+      by `update()` before the commit. Test bench: `Team` / `Match` (two
+      foreign keys to `Team`) and `Tournament`.
+    - **Result:** over the tests that existed before, 2615 → 2612 queries.
+      Saving a match followed by two models through three reverse
+      relations: 14 → 12.
+    - **Left, low value:** the in-memory reads that stay, at a create and
+      at a delete (`_follower_pks`), still cost one query per relation
+      with a `to_field` or several columns, not one per registered model.
+      Combining them would change only those rare relations.
   - [ ] **Many-to-many links onto lookups.** Test the `Band` /
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
