@@ -5678,6 +5678,62 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
 
 
 @pytest.mark.django_db
+def test_updating_a_seminar_of_a_venue_following_by_multi_column_reads_it_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_venues_following_their_seminars()
+
+    # Created outside the counted queries: only the seminar's update below is
+    # observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: the lookup of the Venue before the save, the
+    # save's UPDATE, the lookup of the Venue from the row as committed, then
+    # the reads of the Venue's group. The Venue is not also read at post_save
+    # by the two columns the seminar holds in memory: the lookup at the commit
+    # already finds it.
+    with (
+        django_assert_num_queries(6) as queries,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the seminar's two columns still name the same
+        # venue, neither of them its primary key.
+        acoustics.title = "Acoustics of large halls"
+        acoustics.save()
+
+    # No query turns the two columns the seminar holds into the Venue's
+    # primary key.
+    by_columns = 'FROM "testapp_venue" WHERE ("testapp_venue"."city"'
+    assert not [
+        query for query in queries.captured_queries if by_columns in query["sql"]
+    ]
+    # The Venue's group, once, with the seminar's text fields as committed
+    # after the Venue's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.venue:{hall.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Halle Tony Garnier\n\nAcoustics of large halls"
+                        "\n\nLyon\n\nHalle Tony Garnier"
+                    ),
+                    source_app_label="testapp",
+                    source_model="venue",
+                    source_pk=hall.pk,
+                    title="Halle Tony Garnier",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_a_seminar_naming_no_venue_of_a_venue_following_by_multi_column_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
