@@ -2,6 +2,7 @@ import inspect
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Generic, Protocol, TypeVar
 
 import pytest
@@ -916,31 +917,21 @@ def _create_nantes() -> Team:
     return Team.objects.create(name="Nantes")
 
 
-def _create_a_match_at_home_of_against(
-    opponent: Team,
-) -> Callable[[Team], Match]:
-    """The function creating a match with the given team at home, against the
-    opponent away: it holds the key to two different teams, one per foreign
-    key."""
-
-    def create_a_match_at_home_of(team: Team) -> Match:
-        return Match.objects.create(
-            title="Opening day", home_team=team, away_team=opponent
-        )
-
-    return create_a_match_at_home_of
+# The title every match is created with.
+_MATCH_TITLE = "Opening day"
 
 
-def _create_nantes_to_play_against() -> Callable[[Team], Match]:
-    """Create Nantes, the opponent every match is played against, and return
-    the function creating a match against it."""
-    return _create_a_match_at_home_of_against(_create_nantes())
-
-
-def _point_the_match_home_to(match: Match, team: Team) -> None:
-    """Point the match's home team key to the given team, without saving it:
-    its away team stays."""
-    match.home_team = team
+def _create_a_match(
+    *, home_team: Team, away_team: Team, tournament: Tournament | None = None
+) -> Match:
+    """Create a match between the given teams, in the given tournament if any:
+    it holds the key to two different teams, one per foreign key."""
+    return Match.objects.create(
+        title=_MATCH_TITLE,
+        home_team=home_team,
+        away_team=away_team,
+        tournament=tournament,
+    )
 
 
 def _group_of_a_team_following_its_matches(
@@ -948,7 +939,7 @@ def _group_of_a_team_following_its_matches(
 ) -> dict[str, list[NormalizedDocument]]:
     """The team's group: its name, then the match's title if the match names
     the team, at home or away."""
-    text = f"{team.name}\n\nOpening day" if holding else team.name
+    text = f"{team.name}\n\n{_MATCH_TITLE}" if holding else team.name
     return {
         f"testapp.team:{team.pk}": [
             NormalizedDocument(
@@ -962,11 +953,53 @@ def _group_of_a_team_following_its_matches(
     }
 
 
-def _group_of_the_away_team(
-    match: Match, *, holding: bool
-) -> dict[str, list[NormalizedDocument]]:
-    """The group of the match's away team, which no write changes."""
-    return _group_of_a_team_following_its_matches(match.away_team, holding=holding)
+class _Side(Enum):
+    """The side a team plays a match on, by the name of the match's foreign key
+    to it."""
+
+    HOME = "home_team"
+    AWAY = "away_team"
+
+    @property
+    def opposite(self) -> "_Side":
+        """The side its opponent plays on."""
+        return _Side.AWAY if self is _Side.HOME else _Side.HOME
+
+
+def _teams_following_their_matches_on(side: _Side) -> _FollowedCase[Team, Match]:
+    """The case of a team following its matches, whose holding row is a match
+    with the follower on the given side, against Nantes on the opposite one."""
+
+    def create_nantes_to_play_against() -> Callable[[Team], Match]:
+        nantes = _create_nantes()
+
+        def create_a_match_of(team: Team) -> Match:
+            home_team, away_team = (
+                (team, nantes) if side is _Side.HOME else (nantes, team)
+            )
+            return _create_a_match(home_team=home_team, away_team=away_team)
+
+        return create_a_match_of
+
+    def point_the_match_to(match: Match, team: Team) -> None:
+        # Only the follower's key: Nantes's stays.
+        setattr(match, side.value, team)
+
+    def group_of_nantes(
+        match: Match, *, holding: bool
+    ) -> dict[str, list[NormalizedDocument]]:
+        nantes: Team = getattr(match, side.opposite.value)
+        return _group_of_a_team_following_its_matches(nantes, holding=holding)
+
+    return _FollowedCase(
+        register=_register_teams_following_their_matches,
+        create_follower=_create_lyon,
+        create_other_follower=_create_marseille,
+        prepare_holder=create_nantes_to_play_against,
+        point_holder_to=point_the_match_to,
+        group_of=_group_of_a_team_following_its_matches,
+        groups_of_the_others_named=group_of_nantes,
+    )
 
 
 # `follow` through two reverse foreign keys to the same model: only Team is
@@ -974,61 +1007,15 @@ def _group_of_the_away_team(
 # holds the key to two different teams, the follower at home and Nantes away,
 # created first and handed to every match, so each relation must be crossed
 # for its team's group to be replaced.
-FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
-    register=_register_teams_following_their_matches,
-    create_follower=_create_lyon,
-    create_other_follower=_create_marseille,
-    prepare_holder=_create_nantes_to_play_against,
-    point_holder_to=_point_the_match_home_to,
-    group_of=_group_of_a_team_following_its_matches,
-    groups_of_the_others_named=_group_of_the_away_team,
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = (
+    _teams_following_their_matches_on(_Side.HOME)
 )
-
-
-def _create_a_match_away_of_against(
-    opponent: Team,
-) -> Callable[[Team], Match]:
-    """The function creating a match with the given team away, against the
-    opponent at home: it holds the key to two different teams, one per foreign
-    key."""
-
-    def create_a_match_away_of(team: Team) -> Match:
-        return Match.objects.create(
-            title="Opening day", home_team=opponent, away_team=team
-        )
-
-    return create_a_match_away_of
-
-
-def _create_nantes_to_play_at() -> Callable[[Team], Match]:
-    """Create Nantes, the opponent hosting every match, and return the function
-    creating a match at its home."""
-    return _create_a_match_away_of_against(_create_nantes())
-
-
-def _point_the_match_away_to(match: Match, team: Team) -> None:
-    """Point the match's away team key to the given team, without saving it:
-    its home team stays."""
-    match.away_team = team
-
-
-def _group_of_the_home_team(
-    match: Match, *, holding: bool
-) -> dict[str, list[NormalizedDocument]]:
-    """The group of the match's home team, which no write changes."""
-    return _group_of_a_team_following_its_matches(match.home_team, holding=holding)
 
 
 # The mirror of the case above: the follower plays away and Nantes at home,
 # so the write changes the key of the reverse relation ``away_matches``.
-FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY: _FollowedCase[Team, Match] = _FollowedCase(
-    register=_register_teams_following_their_matches,
-    create_follower=_create_lyon,
-    create_other_follower=_create_marseille,
-    prepare_holder=_create_nantes_to_play_at,
-    point_holder_to=_point_the_match_away_to,
-    group_of=_group_of_a_team_following_its_matches,
-    groups_of_the_others_named=_group_of_the_home_team,
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY: _FollowedCase[Team, Match] = (
+    _teams_following_their_matches_on(_Side.AWAY)
 )
 
 
@@ -4401,7 +4388,7 @@ def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_
     # observed.
     lyon = _create_lyon()
     nantes = _create_nantes()
-    derby = Match.objects.create(title="Opening day", home_team=lyon, away_team=nantes)
+    derby = _create_a_match(home_team=lyon, away_team=nantes)
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits: one lookup of the Teams before the save, the
@@ -4463,9 +4450,7 @@ def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
     lyon = _create_lyon()
     nantes = _create_nantes()
     cup = Tournament.objects.create(name="Spring Cup")
-    derby = Match.objects.create(
-        title="Opening day", home_team=lyon, away_team=nantes, tournament=cup
-    )
+    derby = _create_a_match(home_team=lyon, away_team=nantes, tournament=cup)
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits: one lookup per registered model before the
