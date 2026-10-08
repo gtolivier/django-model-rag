@@ -152,6 +152,21 @@ def _register_plugins_by_their_page_title() -> None:
             )
 
 
+def _register_pages_by_their_plugin_bodies() -> None:
+    """Register only Page, with a custom extractor reading its title, then the
+    bodies of its text plugins: depends_on names the reverse relation
+    ``text_plugins``, whose saves change its documents. TextPlugin itself is
+    not registered."""
+
+    @rag.register_extractor(Page, depends_on=["text_plugins"])
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> NormalizedDocument:
+            bodies = [plugin.body for plugin in instance.text_plugins.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.title, *bodies])
+            )
+
+
 def _register_topics_by_their_course_titles() -> None:
     """Register only Topic, with a custom extractor reading its title, then the
     titles of its courses: depends_on names its reverse many-to-many
@@ -1555,16 +1570,7 @@ def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_p
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, with a custom extractor reading its text
-    # plugins: depends_on names the reverse relation, whose saves change its
-    # documents. TextPlugin itself is not registered.
-    @rag.register_extractor(Page, depends_on=["text_plugins"])
-    class PageExtractor(BaseExtractor[Page]):
-        def extract(self, instance: Page) -> NormalizedDocument:
-            bodies = [plugin.body for plugin in instance.text_plugins.order_by("pk")]
-            return self.build_document(
-                instance, text="\n\n".join([instance.title, *bodies])
-            )
+    _register_pages_by_their_plugin_bodies()
 
     # Created outside the captured callbacks: the commit callback of the
     # Page's own save never runs, so only the plugin's save below is observed.
@@ -1584,6 +1590,55 @@ def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_p
                 source_app_label="testapp",
                 source_model="page",
                 source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_moving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_both_pages(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_by_their_plugin_bodies()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's move below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    moved_plugin = TextPlugin.objects.create(
+        page=about, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_plugin.page = workshop
+        moved_plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Page is not what this test is about. Both Pages' groups as
+    # committed: the old Page keeps only its remaining plugin's text, the new
+    # Page gains the moved plugin's text.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+            ),
+        ],
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
             ),
         ],
     }
