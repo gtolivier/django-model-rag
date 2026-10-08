@@ -264,10 +264,8 @@ def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
 
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
     """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
-    _create_the_transbordeur()
-    return Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    transbordeur = _create_the_transbordeur()
+    return _create_a_seminar_at(transbordeur, title="Stage lighting")
 
 
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
@@ -817,11 +815,11 @@ def _create_the_transbordeur() -> Venue:
     return Venue.objects.create(city="Lyon", name="Transbordeur")
 
 
-def _create_a_seminar_at(venue: Venue) -> Seminar:
-    """Create a seminar at the given venue: its two columns hold the venue's
-    city and name."""
+def _create_a_seminar_at(venue: Venue, *, title: str = "Acoustics") -> Seminar:
+    """Create a seminar with the given title, Acoustics by default, at the given
+    venue: its two columns hold the venue's city and name."""
     return Seminar.objects.create(
-        title="Acoustics", venue_city=venue.city, venue_name=venue.name
+        title=title, venue_city=venue.city, venue_name=venue.name
     )
 
 
@@ -6031,16 +6029,14 @@ def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venu
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    hall = _create_the_halle_tony_garnier()
     # Another venue of the same city, with a seminar of its own: only both
     # columns together name a venue, so a seminar at the hall is not one of
     # its seminars.
     _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
-        Seminar.objects.create(
-            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-        )
+        _create_a_seminar_at(hall)
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
@@ -6076,13 +6072,9 @@ def test_deleting_a_seminar_of_a_venue_following_by_multi_column_replaces_the_ve
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's delete below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    deleted_seminar = Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
-    Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall = _create_the_halle_tony_garnier()
+    deleted_seminar = _create_a_seminar_at(hall, title="Stage lighting")
+    _create_a_seminar_at(hall)
 
     with django_capture_on_commit_callbacks(execute=True):
         deleted_seminar.delete()
@@ -6120,16 +6112,12 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's move below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    hall = _create_the_halle_tony_garnier()
     # Another venue of the same city: the move changes only the name column,
     # so the city column alone cannot tell the two venues apart.
-    transbordeur = Venue.objects.create(city="Lyon", name="Transbordeur")
-    moved_seminar = Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
-    Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    transbordeur = _create_the_transbordeur()
+    moved_seminar = _create_a_seminar_at(hall, title="Stage lighting")
+    _create_a_seminar_at(hall)
 
     with django_capture_on_commit_callbacks(execute=True):
         moved_seminar.venue_name = "Transbordeur"
@@ -6264,16 +6252,14 @@ def test_saving_a_seminar_a_custom_extractor_depends_on_by_multi_column_replaces
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    hall = _create_the_halle_tony_garnier()
     # Another venue of the same city, with a seminar of its own: only both
     # columns together name a venue, so a seminar at the hall is not one of
     # its seminars.
     _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
-        Seminar.objects.create(
-            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-        )
+        _create_a_seminar_at(hall)
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
@@ -6352,9 +6338,7 @@ def test_deleting_a_venue_read_through_a_multi_column_lookup_path_sends_only_sem
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's delete below is observed.
     hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
-    rigging = Seminar.objects.create(
-        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    rigging = _create_a_seminar_at(hall, title="Rigging")
     acoustics_pk = acoustics.pk
     rigging_pk = rigging.pk
     # Another venue of the same city: only both columns together name a venue,
@@ -6490,9 +6474,7 @@ def test_saving_a_venue_unchanged_replaces_each_of_its_following_seminars_once(
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
     hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
-    rigging = Seminar.objects.create(
-        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    rigging = _create_a_seminar_at(hall, title="Rigging")
 
     with django_capture_on_commit_callbacks(execute=True):
         # The save changes neither column the seminars name the venue by: the
