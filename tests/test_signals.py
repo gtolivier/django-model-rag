@@ -1687,6 +1687,47 @@ def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_co
 
 
 @pytest.mark.django_db
+def test_a_plugin_moved_by_update_after_its_own_save_replaces_its_new_page_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The plugin starts on one page; the page it moves to has none.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        chairs.body = "We build chairs and tables by hand."
+        chairs.save()
+        # Moved to the other page after its own save, in the same transaction,
+        # by a write that sends no signal: only the save, still on its first
+        # page, is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=workshop)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about, nor is the group of the page the plugin left. The plugin
+    # is on the other page at the commit, so that page's group is replaced, as
+    # committed: with the plugin's text after its own title.
+    received = _received_groups(built_outputs)
+    assert received.get(f"testapp.page:{workshop.pk}") == [
+        NormalizedDocument(
+            text="Our workshop\n\nWe build chairs and tables by hand.",
+            source_app_label="testapp",
+            source_model="page",
+            source_pk=workshop.pk,
+            title="Our workshop",
+            url="/pages/our-workshop/",
+        ),
+    ]
+
+
+@pytest.mark.django_db
 def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_commit(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
