@@ -196,6 +196,22 @@ def _register_suppliers_following_their_profile() -> None:
     rag.register(Supplier, follow=["profile"])
 
 
+def _register_suppliers_by_their_profile_body() -> None:
+    """Register only Supplier, with a custom extractor reading its name, then its
+    profile's body if it has one: depends_on names the reverse one-to-one by its
+    accessor, ``profile``, while the relation's query name is
+    ``supplier_profile``. SupplierProfile itself is not registered."""
+
+    @rag.register_extractor(Supplier, depends_on=["profile"])
+    class SupplierExtractor(BaseExtractor[Supplier]):
+        def extract(self, instance: Supplier) -> NormalizedDocument:
+            try:
+                body = instance.profile.body
+            except SupplierProfile.DoesNotExist:
+                return self.build_document(instance, text=instance.name)
+            return self.build_document(instance, text=f"{instance.name}\n\n{body}")
+
+
 def _register_warehouses_following_their_shelves() -> None:
     """Register only Warehouse, following its shelves, whose foreign key holds
     its code, not its primary key: Shelf itself is not."""
@@ -2164,18 +2180,7 @@ def test_moving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Supplier is registered, with a custom extractor reading its
-    # profile, if it has one: depends_on names the reverse one-to-one by its
-    # accessor, "profile", while the relation's query name is
-    # "supplier_profile". SupplierProfile itself is not registered.
-    @rag.register_extractor(Supplier, depends_on=["profile"])
-    class SupplierExtractor(BaseExtractor[Supplier]):
-        def extract(self, instance: Supplier) -> NormalizedDocument:
-            try:
-                body = instance.profile.body
-            except SupplierProfile.DoesNotExist:
-                return self.build_document(instance, text=instance.name)
-            return self.build_document(instance, text=f"{instance.name}\n\n{body}")
+    _register_suppliers_by_their_profile_body()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the profile's move below is observed.
@@ -2221,18 +2226,7 @@ def test_deleting_a_profile_a_custom_extractor_depends_on_by_its_accessor_replac
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Supplier is registered, with a custom extractor reading its
-    # profile, if it has one: depends_on names the reverse one-to-one by its
-    # accessor, "profile", while the relation's query name is
-    # "supplier_profile". SupplierProfile itself is not registered.
-    @rag.register_extractor(Supplier, depends_on=["profile"])
-    class SupplierExtractor(BaseExtractor[Supplier]):
-        def extract(self, instance: Supplier) -> NormalizedDocument:
-            try:
-                body = instance.profile.body
-            except SupplierProfile.DoesNotExist:
-                return self.build_document(instance, text=instance.name)
-            return self.build_document(instance, text=f"{instance.name}\n\n{body}")
+    _register_suppliers_by_their_profile_body()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the profile's delete below is observed.
