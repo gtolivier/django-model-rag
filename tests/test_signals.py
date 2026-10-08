@@ -6720,6 +6720,31 @@ def test_saving_a_registered_instance_in_a_rolled_back_transaction_sends_nothing
     assert _replaced(built_outputs) == []
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_plugin_saved_in_a_rolled_back_transaction_page_following_it_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Created before Page is registered: in autocommit (transaction=True),
+    # their own commit callbacks would otherwise run, and send the page's group.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+
+    _register_pages_following_their_plugins()
+
+    # A real transaction (transaction=True), so that leaving the atomic block
+    # on an exception rolls it back rather than a savepoint of the test's own.
+    with pytest.raises(_RolledBackError), transaction.atomic():
+        chairs.body = "We build chairs and tables by hand."
+        chairs.save()
+        raise _RolledBackError
+
+    # Not the page's group, nor any other: no replace call at all.
+    assert _replaced(built_outputs) == []
+
+
 class _ExtractionError(Exception):
     """Raised by an extractor that fails on the instance it is given."""
 
