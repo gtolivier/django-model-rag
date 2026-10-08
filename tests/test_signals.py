@@ -1893,6 +1893,55 @@ FOLLOW_FORWARD_MULTI_COLUMN: _TargetCase[Venue, Seminar] = _TargetCase(
 )
 
 
+def _register_seminars_reading_their_venue_through_a_path() -> None:
+    """Register Seminar, by its title, reading its venue's name through a
+    lookup path across the multi-column ForeignObject ``venue``, with no
+    follow: Venue itself is not registered."""
+    rag.register(Seminar, fields=["title", "venue__name"])
+
+
+def _group_of_a_seminar_reading_its_venue_name(
+    seminar: Seminar, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The seminar's group: its title, then its venue's name read through the
+    path; its title is its document's title too."""
+    return {
+        f"testapp.seminar:{seminar.pk}": [
+            NormalizedDocument(
+                text=f"{_SEMINAR_TITLE}\n\n{target.name}",
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=seminar.pk,
+                title=_SEMINAR_TITLE,
+            ),
+        ],
+    }
+
+
+# A lookup path through a forward multi-column relation: only Seminar is
+# registered, reading its venue's name (Venue is not); the seminar holds the
+# two columns naming the venue, its city and name, through the ForeignObject
+# ``venue``, the row written, CASCADE on delete. The other venue is in the same
+# city: only both columns together tell the venues apart. Once the venue is
+# renamed, its seminar's two columns name no venue: the path reads nothing,
+# only its own title is left.
+PATH_FORWARD_MULTI_COLUMN: _TargetCase[Venue, Seminar] = _TargetCase(
+    register=_register_seminars_reading_their_venue_through_a_path,
+    create_target=_create_the_halle_tony_garnier,
+    create_other_target=_whatever_the_target(_create_the_transbordeur),
+    create_follower_on=_create_a_seminar_at,
+    # Both columns are the key the seminars name the venue by: the save
+    # changes neither, so the venue's seminars still read it.
+    change_target=_leave_the_venue_unchanged,
+    group_of=_group_of_a_seminar_reading_its_venue_name,
+    group_once_target_deleted=_group_of_a_seminar_deleted_by_cascade,
+    change_key=_KeyChange(
+        change=_rename_the_venue_leaving_its_seminars,
+        group_of=_group_of_a_seminar_whose_venue_was_renamed,
+    ),
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1976,6 +2025,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
         "follow-forward_foreign_key_to_field_set_null",
     ),
     (FOLLOW_FORWARD_MULTI_COLUMN, "follow-forward_multi_column"),
+    (PATH_FORWARD_MULTI_COLUMN, "path-forward_multi_column"),
 ]
 
 
