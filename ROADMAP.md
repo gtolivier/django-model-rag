@@ -959,8 +959,8 @@ or a `GenericRelation` in `follow`.
       follower's group with the sibling's text.
     - **Rows a follower's path ends on** (a forward relation in `follow`,
       a lookup path or `depends_on`, `SET_NULL` included, one or two
-      links deep): 15 cases × save / delete, and a change of the key for
-      the 7 cases linked by a `to_field` or several columns.
+      links deep): 14 cases × save / delete, and a change of the key for
+      the 6 cases linked by a `to_field` or several columns.
     - **Result:** the hand-written tests these repeat are gone, the two
       leftovers named here included (the profile under a `depends_on`
       extractor, the reverse one-to-one moved in `follow`): 9 for the
