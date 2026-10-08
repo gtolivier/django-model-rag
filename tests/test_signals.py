@@ -1739,6 +1739,56 @@ def test_a_plugin_moved_by_update_after_its_own_save_replaces_both_pages_at_comm
 
 
 @pytest.mark.django_db
+def test_a_plugin_created_then_moved_by_update_replaces_both_pages_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. Neither page has a plugin yet.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+        # Moved to the other page after its creation, in the same transaction,
+        # by a write that sends no signal: only the creation, on its first
+        # page, is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=workshop)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Both pages are replaced, as committed: the page the plugin
+    # moved to with the plugin's text after its own title, and the page it was
+    # created on with its title alone, the plugin's text gone.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_commit(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
