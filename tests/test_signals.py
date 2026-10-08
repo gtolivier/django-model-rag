@@ -1034,6 +1034,20 @@ class _Write(Protocol):
     def __call__(self, case: _FollowedCase[FollowerT, HolderT], /) -> Act: ...
 
 
+def _merged(
+    *groups: dict[str, list[NormalizedDocument]],
+) -> dict[str, list[NormalizedDocument]]:
+    """The given groups in one mapping, once checked that no two share a source
+    key: merging them blindly would drop one of the colliding groups, shrinking
+    the expected call to match a wrong one."""
+    merged: dict[str, list[NormalizedDocument]] = {}
+    for group in groups:
+        shared = merged.keys() & group.keys()
+        assert not shared, f"groups expected under the same key: {sorted(shared)}"
+        merged |= group
+    return merged
+
+
 def _create(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row created on a follower: one call, the follower's group and
     those of the other rows it names, each once."""
@@ -1045,10 +1059,10 @@ def _create(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     def act() -> ReplaceCalls:
         holder = create_holder(follower)
         return [
-            {
-                **case.group_of(follower, holding=True),
-                **case.groups_of_the_others_named(holder, holding=True),
-            }
+            _merged(
+                case.group_of(follower, holding=True),
+                case.groups_of_the_others_named(holder, holding=True),
+            )
         ]
 
     return act
@@ -1070,11 +1084,11 @@ def _move(case: _FollowedCase[FollowerT, HolderT]) -> Act:
         # The old follower left without the holding row, the new one gaining
         # it, the other rows it names keeping it.
         return [
-            {
-                **case.group_of(old, holding=False),
-                **case.group_of(new, holding=True),
-                **case.groups_of_the_others_named(holder, holding=True),
-            }
+            _merged(
+                case.group_of(old, holding=False),
+                case.group_of(new, holding=True),
+                case.groups_of_the_others_named(holder, holding=True),
+            )
         ]
 
     return act
@@ -1093,10 +1107,10 @@ def _delete(case: _FollowedCase[FollowerT, HolderT]) -> Act:
         holder.delete()
         # The follower and the other rows it named left without the holding row.
         return [
-            {
-                **case.group_of(follower, holding=False),
-                **case.groups_of_the_others_named(holder, holding=False),
-            }
+            _merged(
+                case.group_of(follower, holding=False),
+                case.groups_of_the_others_named(holder, holding=False),
+            )
         ]
 
     return act
