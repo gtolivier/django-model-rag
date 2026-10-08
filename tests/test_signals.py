@@ -1277,6 +1277,72 @@ FOLLOW_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
 )
 
 
+def _retitle_the_topic(topic: Topic) -> None:
+    """Retitle the given topic to Joinery, without saving it."""
+    topic.title = "Joinery"
+
+
+def _register_workshops_following_their_topic() -> None:
+    """Register Workshop, following its topic through its own nullable foreign
+    key: Topic itself is not registered."""
+    rag.register(Workshop, follow=["topic"])
+
+
+def _create_a_pottery_workshop(topic: Topic) -> Workshop:
+    """Create a Pottery workshop on the given topic."""
+    return Workshop.objects.create(title="Pottery", topic=topic)
+
+
+def _group_of_a_pottery_workshop_following_its_topic(
+    workshop: Workshop, /, *, target: Topic
+) -> dict[str, list[NormalizedDocument]]:
+    """The pottery workshop's group: its title, then its topic's title and
+    summary."""
+    return {
+        f"testapp.workshop:{workshop.pk}": [
+            NormalizedDocument(
+                text=f"Pottery\n\n{target.title}\n\n{target.summary}",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=workshop.pk,
+                title="Pottery",
+            ),
+        ],
+    }
+
+
+def _group_of_a_pottery_workshop_whose_topic_is_nulled(
+    workshop: Workshop,
+) -> dict[str, list[NormalizedDocument]]:
+    """The pottery workshop's group once its topic is deleted and its foreign
+    key set to null: the topic's text is gone, only its own title is left."""
+    return {
+        f"testapp.workshop:{workshop.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=workshop.pk,
+                title="Pottery",
+            ),
+        ],
+    }
+
+
+# `follow` through a nullable forward foreign key: only Workshop is
+# registered, following its topic (Topic is not); the workshop holds the key
+# to the topic, the row written, SET_NULL on delete.
+FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Topic, Workshop] = _TargetCase(
+    register=_register_workshops_following_their_topic,
+    create_target=_create_the_woodworking_topic,
+    create_other_target=_create_the_carving_topic,
+    create_follower_on=_create_a_pottery_workshop,
+    change_target=_retitle_the_topic,
+    group_of=_group_of_a_pottery_workshop_following_its_topic,
+    group_once_target_deleted=_group_of_a_pottery_workshop_whose_topic_is_nulled,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1332,6 +1398,10 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     "case",
     [
         pytest.param(FOLLOW_FORWARD_FOREIGN_KEY, id="follow-forward_foreign_key"),
+        pytest.param(
+            FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL,
+            id="follow-forward_foreign_key_set_null",
+        ),
     ],
 )
 def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
