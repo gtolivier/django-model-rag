@@ -8,7 +8,7 @@ from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
-from django.db.models.signals import post_delete, pre_delete
+from django.db.models.signals import m2m_changed, post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 from pytest_django import (
     DjangoAssertNumQueries,
@@ -3771,6 +3771,69 @@ def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_
             ),
         ],
     }
+
+
+class _FailedClearError(Exception):
+    """Raised by a receiver of pre_clear, to make a clear fail before its DELETE."""
+
+
+@pytest.mark.django_db
+def test_adding_a_topic_after_a_failed_clear_replaces_only_the_added_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed. The
+    # course covers one topic, the one the failed clear reads; the other is
+    # the one the add below links.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    def fail_on_pre_clear(action: str, **kwargs: Any) -> None:
+        if action == "pre_clear":
+            raise _FailedClearError
+
+    # Connected after the package's receiver, connected at app ready: that one
+    # reads the keys of the links before this one makes the clear fail, so
+    # post_clear never comes.
+    m2m_changed.connect(fail_on_pre_clear, sender=Course.topics.through)
+    try:
+        # A savepoint of its own, so that the failure rolls back only the clear.
+        with pytest.raises(_FailedClearError), transaction.atomic():
+            basics.topics.clear()
+    finally:
+        m2m_changed.disconnect(fail_on_pre_clear, sender=Course.topics.through)
+
+    # Added from the course's side: Django sends m2m_changed with the same
+    # course instance the failed clear had, and only the added topic among the
+    # primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(carving)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Topic's group as committed, and no group of the topic the
+    # failed clear read: the course still covers it, unchanged.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{carving.pk}": [
+                NormalizedDocument(
+                    text="Carving\n\nKnives and gouges.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=carving.pk,
+                    title="Carving",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
