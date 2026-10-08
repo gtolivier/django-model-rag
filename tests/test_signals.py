@@ -565,13 +565,9 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     create_follower: Callable[[], FollowerT]
     # Another follower, the holding row is moved to.
     create_other_follower: Callable[[], FollowerT]
-    # Creates the row holding the key to the given follower, for a holding row
-    # that names its follower alone.
-    create_holder: Callable[[FollowerT], HolderT] | None = None
-    # Or, for a holding row that names other rows too: creates them, before
-    # anything else, and returns the function creating the holding row on a
-    # follower and naming them.
-    create_others_named: Callable[[], Callable[[FollowerT], HolderT]] | None = None
+    # Creates the other rows the holding row names, if any, before anything
+    # else, and returns the function creating the holding row on a follower.
+    prepare_holder: Callable[[], Callable[[FollowerT], HolderT]]
     # Points the holding row's key to the given follower, without saving it.
     point_holder_to: Callable[[HolderT, FollowerT], None]
     # The follower's group as committed, under its source key, whether the
@@ -582,15 +578,13 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     # for a holding row that names its follower alone.
     groups_of_the_others_named: _GroupsOf[HolderT] = _no_other_groups
 
-    def prepare_holder(self) -> Callable[[FollowerT], HolderT]:
-        """Create the other rows the holding row names, if any, and return the
-        function creating the holding row on a follower."""
-        if self.create_others_named is not None:
-            return self.create_others_named()
-        if self.create_holder is None:
-            message = "A case creates its holding row, alone or naming others."
-            raise TypeError(message)
-        return self.create_holder
+
+def _naming_the_follower_alone(
+    create_holder: Callable[[FollowerT], HolderT],
+) -> Callable[[], Callable[[FollowerT], HolderT]]:
+    """For a holding row that names its follower alone: no other row to create
+    first, the holding row created on a follower by the given function."""
+    return lambda: create_holder
 
 
 def _create_the_about_page() -> Page:
@@ -639,7 +633,7 @@ FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
     register=_register_pages_following_their_plugins,
     create_follower=_create_the_about_page,
     create_other_follower=_create_the_workshop_page,
-    create_holder=_create_a_plugin_on,
+    prepare_holder=_naming_the_follower_alone(_create_a_plugin_on),
     point_holder_to=_point_the_plugin_to,
     group_of=_group_of_a_page_following_its_plugins,
 )
@@ -670,7 +664,7 @@ DEPENDS_ON_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
     register=_register_pages_by_their_plugin_bodies,
     create_follower=_create_the_about_page,
     create_other_follower=_create_the_workshop_page,
-    create_holder=_create_a_plugin_on,
+    prepare_holder=_naming_the_follower_alone(_create_a_plugin_on),
     point_holder_to=_point_the_plugin_to,
     group_of=_group_of_a_page_by_its_plugin_bodies,
 )
@@ -722,7 +716,7 @@ FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedC
     register=_register_suppliers_following_their_profile,
     create_follower=_create_birch_mill,
     create_other_follower=_create_oak_yard,
-    create_holder=_create_a_profile_of,
+    prepare_holder=_naming_the_follower_alone(_create_a_profile_of),
     point_holder_to=_point_the_profile_to,
     group_of=_group_of_a_supplier_following_its_profile,
 )
@@ -753,7 +747,7 @@ DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _Follo
     register=_register_suppliers_by_their_profile_body,
     create_follower=_create_birch_mill,
     create_other_follower=_create_oak_yard,
-    create_holder=_create_a_profile_of,
+    prepare_holder=_naming_the_follower_alone(_create_a_profile_of),
     point_holder_to=_point_the_profile_to,
     group_of=_group_of_a_supplier_by_its_profile_body,
 )
@@ -807,7 +801,7 @@ FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _Followed
     register=_register_warehouses_following_their_shelves,
     create_follower=_create_the_north_depot,
     create_other_follower=_create_the_south_depot,
-    create_holder=_create_a_shelf_in,
+    prepare_holder=_naming_the_follower_alone(_create_a_shelf_in),
     point_holder_to=_point_the_shelf_to,
     group_of=_group_of_a_warehouse_following_its_shelves,
 )
@@ -869,7 +863,7 @@ FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
     register=_register_venues_following_their_seminars,
     create_follower=_create_the_halle_tony_garnier,
     create_other_follower=_create_the_transbordeur,
-    create_holder=_create_a_seminar_at,
+    prepare_holder=_naming_the_follower_alone(_create_a_seminar_at),
     point_holder_to=_point_the_seminar_to,
     group_of=_group_of_a_venue_following_its_seminars,
 )
@@ -901,7 +895,7 @@ DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
     register=_register_venues_by_their_seminar_titles,
     create_follower=_create_the_halle_tony_garnier,
     create_other_follower=_create_the_transbordeur,
-    create_holder=_create_a_seminar_at,
+    prepare_holder=_naming_the_follower_alone(_create_a_seminar_at),
     point_holder_to=_point_the_seminar_to,
     group_of=_group_of_a_venue_by_its_seminar_titles,
 )
@@ -915,6 +909,11 @@ def _create_lyon() -> Team:
 def _create_marseille() -> Team:
     """Create the Marseille team."""
     return Team.objects.create(name="Marseille")
+
+
+def _create_nantes() -> Team:
+    """Create the Nantes team, the opponent of every match."""
+    return Team.objects.create(name="Nantes")
 
 
 def _create_a_match_at_home_of_against(
@@ -935,8 +934,7 @@ def _create_a_match_at_home_of_against(
 def _create_nantes_to_play_against() -> Callable[[Team], Match]:
     """Create Nantes, the opponent every match is played against, and return
     the function creating a match against it."""
-    nantes = Team.objects.create(name="Nantes")
-    return _create_a_match_at_home_of_against(nantes)
+    return _create_a_match_at_home_of_against(_create_nantes())
 
 
 def _point_the_match_home_to(match: Match, team: Team) -> None:
@@ -980,7 +978,7 @@ FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
     register=_register_teams_following_their_matches,
     create_follower=_create_lyon,
     create_other_follower=_create_marseille,
-    create_others_named=_create_nantes_to_play_against,
+    prepare_holder=_create_nantes_to_play_against,
     point_holder_to=_point_the_match_home_to,
     group_of=_group_of_a_team_following_its_matches,
     groups_of_the_others_named=_group_of_the_away_team,
@@ -1005,8 +1003,7 @@ def _create_a_match_away_of_against(
 def _create_nantes_to_play_at() -> Callable[[Team], Match]:
     """Create Nantes, the opponent hosting every match, and return the function
     creating a match at its home."""
-    nantes = Team.objects.create(name="Nantes")
-    return _create_a_match_away_of_against(nantes)
+    return _create_a_match_away_of_against(_create_nantes())
 
 
 def _point_the_match_away_to(match: Match, team: Team) -> None:
@@ -1028,7 +1025,7 @@ FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY: _FollowedCase[Team, Match] = _FollowedCase
     register=_register_teams_following_their_matches,
     create_follower=_create_lyon,
     create_other_follower=_create_marseille,
-    create_others_named=_create_nantes_to_play_at,
+    prepare_holder=_create_nantes_to_play_at,
     point_holder_to=_point_the_match_away_to,
     group_of=_group_of_a_team_following_its_matches,
     groups_of_the_others_named=_group_of_the_home_team,
@@ -4402,8 +4399,8 @@ def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_
 
     # Created outside the counted queries: only the match's update below is
     # observed.
-    lyon = Team.objects.create(name="Lyon")
-    nantes = Team.objects.create(name="Nantes")
+    lyon = _create_lyon()
+    nantes = _create_nantes()
     derby = Match.objects.create(title="Opening day", home_team=lyon, away_team=nantes)
 
     # The queries are counted around the commit callbacks too, which run when
@@ -4463,8 +4460,8 @@ def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
 
     # Created outside the counted queries: only the match's update below is
     # observed.
-    lyon = Team.objects.create(name="Lyon")
-    nantes = Team.objects.create(name="Nantes")
+    lyon = _create_lyon()
+    nantes = _create_nantes()
     cup = Tournament.objects.create(name="Spring Cup")
     derby = Match.objects.create(
         title="Opening day", home_team=lyon, away_team=nantes, tournament=cup
