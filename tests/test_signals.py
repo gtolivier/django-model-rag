@@ -81,10 +81,11 @@ from tests.testapp.models import (
 # The logger the package reports a failed commit callback on.
 PACKAGE_LOGGER = "django_model_rag"
 
+# The replace calls an output receives, in call order.
+ReplaceCalls = list[Mapping[str, Sequence[NormalizedDocument]]]
 
-def _replaced(
-    built_outputs: list[TrackedRecordingOutput],
-) -> list[Mapping[str, Sequence[NormalizedDocument]]]:
+
+def _replaced(built_outputs: list[TrackedRecordingOutput]) -> ReplaceCalls:
     """Every replace call received, across every output built, in call order."""
     return [groups for output in built_outputs for groups in output.replaced]
 
@@ -257,16 +258,13 @@ def _register_teams_following_their_matches() -> None:
 
 def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
     """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
-    return hall, acoustics
+    hall = _create_the_halle_tony_garnier()
+    return hall, _create_a_seminar_at(hall)
 
 
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
     """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
-    Venue.objects.create(city="Lyon", name="Transbordeur")
+    _create_the_transbordeur()
     return Seminar.objects.create(
         title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
     )
@@ -534,9 +532,6 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
         ],
     }
 
-
-# The replace calls an output receives, in call order.
-ReplaceCalls = list[Mapping[str, Sequence[NormalizedDocument]]]
 
 # The model of the follower rows, and the model of the row holding the key.
 FollowerT = TypeVar("FollowerT", bound=Model)
