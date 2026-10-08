@@ -2148,6 +2148,60 @@ def test_removing_a_topic_from_a_course_its_custom_extractor_depends_on_replaces
 
 
 @pytest.mark.django_db
+def test_clearing_the_topics_of_a_course_custom_extractor_depends_on_replaces_each(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and adds never run, so only the clear below is observed.
+    # The course covers two topics, so that the clear removes more than one
+    # link; one of them is covered by another course too, so that its group
+    # keeps that course.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+
+    # Cleared from the course's side: Django sends m2m_changed with the course
+    # as its instance, and no primary keys at all. Neither row is saved again:
+    # the clear deletes only the links of the course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of both topics as committed, each without the
+    # cleared course's title: the one covered by another course keeps that
+    # course's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: ",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+        f"testapp.topic:{carving.pk}": [
+            NormalizedDocument(
+                text="Carving: Whittling",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=carving.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
