@@ -2146,6 +2146,74 @@ PATH_TWO_FORWARD_FOREIGN_KEYS: _TargetCase[Category, Offer] = _TargetCase(
 )
 
 
+def _register_sessions_reading_their_topic_two_links_deep() -> None:
+    """Register Session, reading its workshop's topic's title through a lookup
+    path two links deep, with no follow: neither Workshop nor Topic is
+    registered."""
+    rag.register(Session, fields=["title", "workshop__topic__title"])
+
+
+def _create_a_morning_session_of_a_pottery_workshop_on(topic: Topic) -> Session:
+    """Create a Pottery workshop on the given topic, then a Morning session of
+    it."""
+    return Session.objects.create(
+        title="Morning", workshop=_create_a_pottery_workshop(topic)
+    )
+
+
+def _group_of_a_morning_session_reading_its_topic(
+    session: Session, /, *, target: Topic
+) -> dict[str, list[NormalizedDocument]]:
+    """The morning session's group: its title, then its workshop's topic's
+    title."""
+    return {
+        f"testapp.session:{session.pk}": [
+            NormalizedDocument(
+                text=f"Morning\n\n{target.title}",
+                source_app_label="testapp",
+                source_model="session",
+                source_pk=session.pk,
+                title="Morning",
+            ),
+        ],
+    }
+
+
+def _group_of_a_morning_session_whose_topic_is_nulled(
+    session: Session,
+) -> dict[str, list[NormalizedDocument]]:
+    """The morning session's group once its workshop's topic is deleted and the
+    workshop's foreign key set to null: the topic's title is gone, only the
+    session's own title is left."""
+    return {
+        f"testapp.session:{session.pk}": [
+            NormalizedDocument(
+                text="Morning",
+                source_app_label="testapp",
+                source_model="session",
+                source_pk=session.pk,
+                title="Morning",
+            ),
+        ],
+    }
+
+
+# A lookup path two links deep, the last one nullable: only Session is
+# registered, reading its workshop's topic's title (neither Workshop nor Topic
+# is); the row written is the topic, the last link of the path, Session →
+# workshop (CASCADE on delete) → topic (SET_NULL on delete). The delete sets
+# the workshop's foreign key to null: the session is left, without the topic.
+PATH_TWO_LINKS_SET_NULL: _TargetCase[Topic, Session] = _TargetCase(
+    register=_register_sessions_reading_their_topic_two_links_deep,
+    create_target=_create_the_woodworking_topic,
+    create_other_target=_whatever_the_target(_create_the_carving_topic),
+    create_follower_on=_create_a_morning_session_of_a_pottery_workshop_on,
+    change_target=_retitle_the_topic,
+    group_of=_group_of_a_morning_session_reading_its_topic,
+    group_once_target_deleted=_group_of_a_morning_session_whose_topic_is_nulled,
+)
+
+
 def _register_talks_reading_their_venue_past_a_foreign_key() -> None:
     """Register Talk, reading its seminar's venue's name through a lookup path
     whose later link is the multi-column ForeignObject ``venue``, with no
@@ -2321,6 +2389,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (PATH_FORWARD_MULTI_COLUMN, "path-forward_multi_column"),
     (DEPENDS_ON_FORWARD_MULTI_COLUMN, "depends_on-forward_multi_column"),
     (PATH_TWO_FORWARD_FOREIGN_KEYS, "path-two_forward_foreign_keys"),
+    (PATH_TWO_LINKS_SET_NULL, "path-two_links_set_null"),
     (
         PATH_FORWARD_FOREIGN_KEY_THEN_MULTI_COLUMN,
         "path-forward_foreign_key_then_multi_column",
