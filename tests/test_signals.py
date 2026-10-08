@@ -190,6 +190,30 @@ def _register_venues_following_their_seminars() -> None:
     rag.register(Venue, fields=["name"], follow=["seminars"])
 
 
+def _register_suppliers_following_their_profile() -> None:
+    """Register only Supplier, following its profile by the reverse one-to-one
+    accessor ``profile``: SupplierProfile itself is not."""
+    rag.register(Supplier, follow=["profile"])
+
+
+def _register_warehouses_following_their_shelves() -> None:
+    """Register only Warehouse, following its shelves, whose foreign key holds
+    its code, not its primary key: Shelf itself is not."""
+    rag.register(Warehouse, follow=["shelves"])
+
+
+def _register_guilds_following_their_members() -> None:
+    """Register only Guild, by its name, following its members through its own
+    many-to-many ``members``: Craftsman itself is not."""
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+
+def _register_musicians_following_their_bands() -> None:
+    """Register only Musician, by its name, following its bands through the
+    reverse many-to-many ``bands``: Band itself is not."""
+    rag.register(Musician, fields=["name"], follow=["bands"])
+
+
 def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
     """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
     hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
@@ -3586,9 +3610,7 @@ def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Supplier is registered, following its profile by the reverse
-    # one-to-one accessor ``profile``: SupplierProfile itself is not.
-    rag.register(Supplier, follow=["profile"])
+    _register_suppliers_following_their_profile()
 
     # Created outside the captured callbacks: the commit callback of the
     # Supplier's own save never runs, so only the profile's save below is
@@ -3624,9 +3646,7 @@ def test_moving_a_followed_reverse_one_to_one_to_another_supplier_replaces_both_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Supplier is registered, following its profile by the reverse
-    # one-to-one accessor ``profile``: SupplierProfile itself is not.
-    rag.register(Supplier, follow=["profile"])
+    _register_suppliers_following_their_profile()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the profile's move below is observed.
@@ -3675,9 +3695,7 @@ def test_deleting_a_followed_reverse_one_to_one_replaces_the_group_that_follows_
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Supplier is registered, following its profile by the reverse
-    # one-to-one accessor ``profile``: SupplierProfile itself is not.
-    rag.register(Supplier, follow=["profile"])
+    _register_suppliers_following_their_profile()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the profile's delete below is observed.
@@ -3714,9 +3732,7 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Warehouse is registered, following its shelves: Shelf itself is
-    # not.
-    rag.register(Warehouse, follow=["shelves"])
+    _register_warehouses_following_their_shelves()
 
     # Created outside the captured callbacks: the commit callback of the
     # Warehouse's own save never runs, so only the shelf's save below is
@@ -3755,9 +3771,7 @@ def test_moving_a_followed_instance_linked_by_a_unique_column_replaces_both_grou
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Warehouse is registered, following its shelves: Shelf itself is
-    # not.
-    rag.register(Warehouse, follow=["shelves"])
+    _register_warehouses_following_their_shelves()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the shelf's move below is observed.
@@ -3810,9 +3824,7 @@ def test_deleting_a_followed_instance_linked_by_a_unique_column_replaces_the_gro
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Warehouse is registered, following its shelves: Shelf itself is
-    # not.
-    rag.register(Warehouse, follow=["shelves"])
+    _register_warehouses_following_their_shelves()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the shelf's delete below is observed.
@@ -4639,9 +4651,7 @@ def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_co
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Guild is registered, following its members through its own
-    # many-to-many ``members``: Craftsman itself is not.
-    rag.register(Guild, fields=["name"], follow=["members"])
+    _register_guilds_following_their_members()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the add below is observed. A
@@ -4687,9 +4697,7 @@ def test_removing_a_guild_from_a_craftsman_replaces_the_guilds_group_named_by_it
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Guild is registered, following its members through its own
-    # many-to-many ``members``: Craftsman itself is not.
-    rag.register(Guild, fields=["name"], follow=["members"])
+    _register_guilds_following_their_members()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and these adds never run, so only the remove below is observed. A
@@ -4792,9 +4800,7 @@ def test_adding_a_musician_to_a_band_replaces_the_musicians_group_named_by_its_h
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Musician is registered, following its bands through the reverse
-    # many-to-many ``bands``: Band itself is not.
-    rag.register(Musician, fields=["name"], follow=["bands"])
+    _register_musicians_following_their_bands()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the add below is observed. A
@@ -4839,9 +4845,7 @@ def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Musician is registered, following its bands through the reverse
-    # many-to-many ``bands``: Band itself is not.
-    rag.register(Musician, fields=["name"], follow=["bands"])
+    _register_musicians_following_their_bands()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and these adds never run, so only the clear below is observed. A
