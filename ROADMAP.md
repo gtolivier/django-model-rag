@@ -898,15 +898,28 @@ or a `GenericRelation` in `follow`.
     ahead, lookups on every write; whether deletes keep the in-memory read
     is decided in "Reverse relations onto lookups".
   - [x] **Fill the test gaps above**, before changing the code. Most
-    should pass today; one that fails is a bug found. 21 tests: 19
+    should pass today; one that fails is a bug found. 24 tests: 22
     passed as written; the two that failed — a plugin moved by `update()`
     after its own save, and one created then moved the same way in its
-    transaction — were fixed (see the second patch above).
+    transaction — were fixed (see the second patch above). The last three
+    came from the coverage matrix: moving and deleting a reverse
+    one-to-one in `depends_on`, and removing a musician from a band
+    through `Engagement`. That pair is still tested from the band's side
+    only.
   - [ ] **Reverse relations onto lookups**, the suite green after each
     change.
-  - [ ] **Many-to-many links onto lookups.**
+  - [ ] **Many-to-many links onto lookups.** Test the `Band` /
+    `Engagement` pair from the musician's side first —
+    `ada.bands.remove(quartet)`, and `set()` from either side — where the
+    handle-to-primary-key mapping runs the other way.
   - [ ] **Parametrize the signal tests** by declaration × relation ×
-    write, in place of one hand-written test per combination.
+    write, in place of one hand-written test per combination. Folds in
+    two leftovers: the save test of a profile under a `depends_on`
+    extractor keeps its own extractor rather than
+    `_register_suppliers_by_their_profile_body()`, whose fallback for a
+    missing profile would change its input; the move test of a reverse
+    one-to-one in `follow` checks the merged groups, not the exact
+    replace calls.
   - [ ] **Revisit the limits this may lift**: a lookup path past a reverse
     one-to-one, a `GenericRelation` in `follow`, 11c-quater.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |

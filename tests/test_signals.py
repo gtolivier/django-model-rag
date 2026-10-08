@@ -196,6 +196,22 @@ def _register_suppliers_following_their_profile() -> None:
     rag.register(Supplier, follow=["profile"])
 
 
+def _register_suppliers_by_their_profile_body() -> None:
+    """Register only Supplier, with a custom extractor reading its name, then its
+    profile's body if it has one: depends_on names the reverse one-to-one by its
+    accessor, ``profile``, while the relation's query name is
+    ``supplier_profile``. SupplierProfile itself is not registered."""
+
+    @rag.register_extractor(Supplier, depends_on=["profile"])
+    class SupplierExtractor(BaseExtractor[Supplier]):
+        def extract(self, instance: Supplier) -> NormalizedDocument:
+            try:
+                body = instance.profile.body
+            except SupplierProfile.DoesNotExist:
+                return self.build_document(instance, text=instance.name)
+            return self.build_document(instance, text=f"{instance.name}\n\n{body}")
+
+
 def _register_warehouses_following_their_shelves() -> None:
     """Register only Warehouse, following its shelves, whose foreign key holds
     its code, not its primary key: Shelf itself is not."""
@@ -2154,6 +2170,89 @@ def test_saving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_moving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_both(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_suppliers_by_their_profile_body()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's move below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    oak = Supplier.objects.create(name="Oak Yard")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.supplier = oak
+        profile.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call carrying both Suppliers' groups as committed, each sent
+    # once: the old Supplier is left with its name alone, the new Supplier
+    # gains the profile's text.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                ),
+            ],
+            f"testapp.supplier:{oak.pk}": [
+                NormalizedDocument(
+                    text="Oak Yard\n\nKiln-dried boards.",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=oak.pk,
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_suppliers_by_their_profile_body()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's delete below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Supplier's group as committed, sent once: the profile's text is
+    # gone, the Supplier's name stays alone.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
@@ -4827,6 +4926,56 @@ def test_adding_a_musician_to_a_band_replaces_the_musicians_group_named_by_its_h
             f"testapp.musician:{ada.pk}": [
                 NormalizedDocument(
                     text="Ada\n\nQuartet",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_removing_a_musician_from_a_band_replaces_its_group_named_by_its_handle(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # removed musician plays in another band too, so that its group keeps that
+    # band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician left in the band: the remove below does not change its group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+
+    # Removed from the band's side: Django sends m2m_changed with the band as
+    # its instance, and names the musician by the column Engagement.musician
+    # points to, its handle, not by its primary key. Neither row is saved
+    # again: the remove deletes only the engagement between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.remove(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The removed Musician's group as committed: the band's name is gone, only
+    # its own name and its other band's name are left. No group of the
+    # musician left in the band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
                     source_app_label="testapp",
                     source_model="musician",
                     source_pk=ada.pk,
