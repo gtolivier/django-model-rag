@@ -4317,6 +4317,58 @@ def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_co
 
 
 @pytest.mark.django_db
+def test_removing_a_guild_from_a_craftsman_replaces_the_guilds_group_named_by_its_code(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Guild is registered, following its members through its own
+    # many-to-many ``members``: Craftsman itself is not.
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed. A
+    # guild's code, a slug, can never equal its integer primary key. The guild
+    # has two members, so that its group keeps the one left.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    mason = Craftsman.objects.create(name="Mason")
+    north = Guild.objects.create(name="North guild", code="north")
+    north.members.add(carpenter, mason)
+    # A guild the craftsman still belongs to after the remove below: its group
+    # does not change.
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(carpenter)
+
+    # Removed from the craftsman's side: Django sends m2m_changed with the
+    # craftsman as its instance, and names the guild by the column
+    # Membership.guild points to, its code, not by its primary key. Neither row
+    # is saved again: the remove deletes only the membership between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        carpenter.guilds.remove(north)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The removed Guild's group as committed: the craftsman's name is gone,
+    # only the Guild's own name and its other member's name are left. No group
+    # of the guild the craftsman still belongs to.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.guild:{north.pk}": [
+                NormalizedDocument(
+                    text="North guild\n\nMason",
+                    source_app_label="testapp",
+                    source_model="guild",
+                    source_pk=north.pk,
+                    title="North guild",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_clearing_the_members_of_a_guild_replaces_the_group_of_each_craftsman_in_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
