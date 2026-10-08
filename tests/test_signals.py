@@ -1942,6 +1942,80 @@ PATH_FORWARD_MULTI_COLUMN: _TargetCase[Venue, Seminar] = _TargetCase(
 )
 
 
+def _register_seminars_by_their_venue_name() -> None:
+    """Register only Seminar, with a custom extractor reading its venue's name
+    before its title when its two columns name a venue, its title alone
+    otherwise: depends_on names the multi-column ForeignObject ``venue``, whose
+    saves change its documents. Venue itself is not registered."""
+
+    @rag.register_extractor(Seminar, depends_on=["venue"])
+    class SeminarExtractor(BaseExtractor[Seminar]):
+        def extract(self, instance: Seminar) -> NormalizedDocument:
+            try:
+                venue = instance.venue
+            except Venue.DoesNotExist:
+                return self.build_document(instance, text=instance.title)
+            return self.build_document(instance, text=f"{venue.name}: {instance.title}")
+
+
+def _group_of_a_seminar_by_its_venue_name(
+    seminar: Seminar, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The seminar's group, as its custom extractor builds it: its venue's
+    name, then its title; no title in the document."""
+    return {
+        f"testapp.seminar:{seminar.pk}": [
+            NormalizedDocument(
+                text=f"{target.name}: {_SEMINAR_TITLE}",
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=seminar.pk,
+            ),
+        ],
+    }
+
+
+def _group_of_a_seminar_by_its_renamed_venue(
+    seminar: Seminar, /, *, target: Venue
+) -> dict[str, list[NormalizedDocument]]:
+    """The seminar's group, as its custom extractor builds it once its venue is
+    renamed: its two columns now name no venue, so its title alone, not the
+    stale venue name; no title in the document."""
+    return {
+        f"testapp.seminar:{seminar.pk}": [
+            NormalizedDocument(
+                text=_SEMINAR_TITLE,
+                source_app_label="testapp",
+                source_model="seminar",
+                source_pk=seminar.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through a forward multi-column relation: only Seminar is
+# registered, with a custom extractor reading its venue's name (Venue is not);
+# the seminar holds the two columns naming the venue, its city and name,
+# through the ForeignObject ``venue``, the row written, CASCADE on delete. The
+# other venue is in the same city: only both columns together tell the venues
+# apart.
+DEPENDS_ON_FORWARD_MULTI_COLUMN: _TargetCase[Venue, Seminar] = _TargetCase(
+    register=_register_seminars_by_their_venue_name,
+    create_target=_create_the_halle_tony_garnier,
+    create_other_target=_whatever_the_target(_create_the_transbordeur),
+    create_follower_on=_create_a_seminar_at,
+    # Both columns are the key the seminars name the venue by: the save
+    # changes neither, so the venue's seminars still depend on it.
+    change_target=_leave_the_venue_unchanged,
+    group_of=_group_of_a_seminar_by_its_venue_name,
+    group_once_target_deleted=_group_of_a_seminar_deleted_by_cascade,
+    change_key=_KeyChange(
+        change=_rename_the_venue_leaving_its_seminars,
+        group_of=_group_of_a_seminar_by_its_renamed_venue,
+    ),
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -2026,6 +2100,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     ),
     (FOLLOW_FORWARD_MULTI_COLUMN, "follow-forward_multi_column"),
     (PATH_FORWARD_MULTI_COLUMN, "path-forward_multi_column"),
+    (DEPENDS_ON_FORWARD_MULTI_COLUMN, "depends_on-forward_multi_column"),
 ]
 
 
