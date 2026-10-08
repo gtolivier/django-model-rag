@@ -1,13 +1,14 @@
 import inspect
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 import pytest
 from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
-from django.db.models import QuerySet
+from django.db.models import Model, QuerySet
 from django.db.models.signals import m2m_changed, post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 from pytest_django import (
@@ -80,10 +81,11 @@ from tests.testapp.models import (
 # The logger the package reports a failed commit callback on.
 PACKAGE_LOGGER = "django_model_rag"
 
+# The replace calls an output receives, in call order.
+ReplaceCalls = list[Mapping[str, Sequence[NormalizedDocument]]]
 
-def _replaced(
-    built_outputs: list[TrackedRecordingOutput],
-) -> list[Mapping[str, Sequence[NormalizedDocument]]]:
+
+def _replaced(built_outputs: list[TrackedRecordingOutput]) -> ReplaceCalls:
     """Every replace call received, across every output built, in call order."""
     return [groups for output in built_outputs for groups in output.replaced]
 
@@ -193,6 +195,21 @@ def _register_venues_following_their_seminars() -> None:
     rag.register(Venue, fields=["name"], follow=["seminars"])
 
 
+def _register_venues_by_their_seminar_titles() -> None:
+    """Register only Venue, with a custom extractor reading its name, then the
+    titles of its seminars: depends_on names the reverse of the multi-column
+    ForeignObject ``venue``, ``seminars``, whose saves change its documents.
+    Seminar itself is not registered."""
+
+    @rag.register_extractor(Venue, depends_on=["seminars"])
+    class VenueExtractor(BaseExtractor[Venue]):
+        def extract(self, instance: Venue) -> NormalizedDocument:
+            titles = [seminar.title for seminar in instance.seminars.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.name, *titles])
+            )
+
+
 def _register_suppliers_following_their_profile() -> None:
     """Register only Supplier, following its profile by the reverse one-to-one
     accessor ``profile``: SupplierProfile itself is not."""
@@ -241,16 +258,13 @@ def _register_teams_following_their_matches() -> None:
 
 def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
     """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    acoustics = Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
-    return hall, acoustics
+    hall = _create_the_halle_tony_garnier()
+    return hall, _create_a_seminar_at(hall)
 
 
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
     """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
-    Venue.objects.create(city="Lyon", name="Transbordeur")
+    _create_the_transbordeur()
     return Seminar.objects.create(
         title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
     )
@@ -519,40 +533,546 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
     }
 
 
+# The model of the follower rows, and the model of the row holding the key.
+FollowerT = TypeVar("FollowerT", bound=Model)
+HolderT = TypeVar("HolderT", bound=Model)
+
+
+def _no_other_groups(
+    holder: Model, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """A holding row that names its follower alone: no other group."""
+    return {}
+
+
+@dataclass(frozen=True)
+class _FollowedCase(Generic[FollowerT, HolderT]):
+    """What a declaration and a relation provide to the writes of a row holding
+    the key to its follower: the writes themselves are generic over cases."""
+
+    # Registers the follower's model and its declaration.
+    register: Callable[[], None]
+    # The follower the holding row is first written on.
+    create_follower: Callable[[], FollowerT]
+    # Another follower, the holding row is moved to.
+    create_other_follower: Callable[[], FollowerT]
+    # Creates the row holding the key to the given follower.
+    create_holder: Callable[[FollowerT], HolderT]
+    # Points the holding row's key to the given follower, without saving it.
+    point_holder_to: Callable[[HolderT, FollowerT], None]
+    # The follower's group as committed, under its source key, whether the
+    # holding row's key points to it or not.
+    group_of: Callable[[FollowerT, bool], dict[str, list[NormalizedDocument]]]
+    # The groups of the other rows the holding row names, whose keys no write
+    # changes, as committed, whether the holding row still exists or not: none
+    # for a holding row that names its follower alone.
+    groups_of_the_others_named: Callable[
+        [HolderT, bool], dict[str, list[NormalizedDocument]]
+    ] = _no_other_groups
+
+
+def _create_the_about_page() -> Page:
+    """Create the About us page."""
+    return Page.objects.create(title="About us", slug="about-us")
+
+
+def _create_the_workshop_page() -> Page:
+    """Create the Our workshop page."""
+    return Page.objects.create(title="Our workshop", slug="our-workshop")
+
+
+def _create_a_plugin_on(page: Page) -> TextPlugin:
+    """Create a text plugin on the given page: it holds the key to the page."""
+    return TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+
+
+def _point_the_plugin_to(plugin: TextPlugin, page: Page) -> None:
+    """Point the plugin's foreign key to the given page, without saving it."""
+    plugin.page = page
+
+
+def _group_of_a_page_following_its_plugins(
+    page: Page, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The page's group: its title, then the plugin's text if the plugin is
+    on the page."""
+    text = f"{page.title}\n\nWe build chairs by hand." if holding else page.title
+    return {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+                title=page.title,
+                url=f"/pages/{page.slug}/",
+            ),
+        ],
+    }
+
+
+# `follow` through a reverse foreign key: only Page is registered, following
+# its text plugins (TextPlugin is not); a plugin holds the key to its Page.
+FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
+    register=_register_pages_following_their_plugins,
+    create_follower=_create_the_about_page,
+    create_other_follower=_create_the_workshop_page,
+    create_holder=_create_a_plugin_on,
+    point_holder_to=_point_the_plugin_to,
+    group_of=_group_of_a_page_following_its_plugins,
+)
+
+
+def _group_of_a_page_by_its_plugin_bodies(
+    page: Page, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The page's group, as its custom extractor builds it: its title, then the
+    plugin's body if the plugin is on the page; no title or URL of its own."""
+    text = f"{page.title}\n\nWe build chairs by hand." if holding else page.title
+    return {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through a reverse foreign key: only Page is registered, with a
+# custom extractor reading its plugins' bodies (TextPlugin is not); a plugin
+# holds the key to its Page.
+DEPENDS_ON_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
+    register=_register_pages_by_their_plugin_bodies,
+    create_follower=_create_the_about_page,
+    create_other_follower=_create_the_workshop_page,
+    create_holder=_create_a_plugin_on,
+    point_holder_to=_point_the_plugin_to,
+    group_of=_group_of_a_page_by_its_plugin_bodies,
+)
+
+
+def _create_birch_mill() -> Supplier:
+    """Create the Birch Mill supplier."""
+    return Supplier.objects.create(name="Birch Mill")
+
+
+def _create_oak_yard() -> Supplier:
+    """Create the Oak Yard supplier."""
+    return Supplier.objects.create(name="Oak Yard")
+
+
+def _create_a_profile_of(supplier: Supplier) -> SupplierProfile:
+    """Create the given supplier's profile: it holds the key to the supplier."""
+    return SupplierProfile.objects.create(supplier=supplier, body="Kiln-dried boards.")
+
+
+def _point_the_profile_to(profile: SupplierProfile, supplier: Supplier) -> None:
+    """Point the profile's one-to-one key to the given supplier, without saving
+    it."""
+    profile.supplier = supplier
+
+
+def _group_of_a_supplier_following_its_profile(
+    supplier: Supplier, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The supplier's group: its name, then the profile's body if the profile
+    is on the supplier."""
+    text = f"{supplier.name}\n\nKiln-dried boards." if holding else supplier.name
+    return {
+        f"testapp.supplier:{supplier.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=supplier.pk,
+                title=supplier.name,
+            ),
+        ],
+    }
+
+
+# `follow` through a reverse one-to-one: only Supplier is registered, following
+# its profile (SupplierProfile is not); a profile holds the key to its Supplier.
+FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedCase(
+    register=_register_suppliers_following_their_profile,
+    create_follower=_create_birch_mill,
+    create_other_follower=_create_oak_yard,
+    create_holder=_create_a_profile_of,
+    point_holder_to=_point_the_profile_to,
+    group_of=_group_of_a_supplier_following_its_profile,
+)
+
+
+def _group_of_a_supplier_by_its_profile_body(
+    supplier: Supplier, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The supplier's group, as its custom extractor builds it: its name, then
+    the profile's body if the profile is on the supplier; no title of its own."""
+    text = f"{supplier.name}\n\nKiln-dried boards." if holding else supplier.name
+    return {
+        f"testapp.supplier:{supplier.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=supplier.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through a reverse one-to-one: only Supplier is registered, with a
+# custom extractor reading its profile's body by the accessor `profile`
+# (SupplierProfile is not); a profile holds the key to its Supplier.
+DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedCase(
+    register=_register_suppliers_by_their_profile_body,
+    create_follower=_create_birch_mill,
+    create_other_follower=_create_oak_yard,
+    create_holder=_create_a_profile_of,
+    point_holder_to=_point_the_profile_to,
+    group_of=_group_of_a_supplier_by_its_profile_body,
+)
+
+
+def _create_the_north_depot() -> Warehouse:
+    """Create the North depot warehouse, coded "north"."""
+    return Warehouse.objects.create(name="North depot", code="north")
+
+
+def _create_the_south_depot() -> Warehouse:
+    """Create the South depot warehouse, coded "south"."""
+    return Warehouse.objects.create(name="South depot", code="south")
+
+
+def _create_a_shelf_in(warehouse: Warehouse) -> Shelf:
+    """Create a shelf in the given warehouse: its foreign key holds the
+    warehouse's code, not its primary key."""
+    return Shelf.objects.create(warehouse=warehouse, label="Timber")
+
+
+def _point_the_shelf_to(shelf: Shelf, warehouse: Warehouse) -> None:
+    """Point the shelf's foreign key to the given warehouse's code, without
+    saving it."""
+    shelf.warehouse = warehouse
+
+
+def _group_of_a_warehouse_following_its_shelves(
+    warehouse: Warehouse, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The warehouse's group, under its primary key, not its code: its name,
+    then the shelf's label if the shelf is in the warehouse."""
+    text = f"{warehouse.name}\n\nTimber" if holding else warehouse.name
+    return {
+        f"testapp.warehouse:{warehouse.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=warehouse.pk,
+                title=warehouse.name,
+            ),
+        ],
+    }
+
+
+# `follow` through a reverse foreign key to a unique column: only Warehouse is
+# registered, following its shelves (Shelf is not); a shelf holds the key to
+# its Warehouse, the Warehouse's code rather than its primary key.
+FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _FollowedCase(
+    register=_register_warehouses_following_their_shelves,
+    create_follower=_create_the_north_depot,
+    create_other_follower=_create_the_south_depot,
+    create_holder=_create_a_shelf_in,
+    point_holder_to=_point_the_shelf_to,
+    group_of=_group_of_a_warehouse_following_its_shelves,
+)
+
+
+def _create_the_halle_tony_garnier() -> Venue:
+    """Create the Halle Tony Garnier, a venue of Lyon."""
+    return Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+
+
+def _create_the_transbordeur() -> Venue:
+    """Create the Transbordeur, another venue of Lyon: only the name column
+    tells it apart from the Halle Tony Garnier."""
+    return Venue.objects.create(city="Lyon", name="Transbordeur")
+
+
+def _create_a_seminar_at(venue: Venue) -> Seminar:
+    """Create a seminar at the given venue: its two columns hold the venue's
+    city and name."""
+    return Seminar.objects.create(
+        title="Acoustics", venue_city=venue.city, venue_name=venue.name
+    )
+
+
+def _point_the_seminar_to(seminar: Seminar, venue: Venue) -> None:
+    """Point the seminar's two columns to the given venue's city and name,
+    without saving it."""
+    seminar.venue_city = venue.city
+    seminar.venue_name = venue.name
+
+
+def _group_of_a_venue_following_its_seminars(
+    venue: Venue, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The venue's group: its name, then the seminar's text fields, title first,
+    if the seminar is at the venue."""
+    text = (
+        f"{venue.name}\n\nAcoustics\n\n{venue.city}\n\n{venue.name}"
+        if holding
+        else venue.name
+    )
+    return {
+        f"testapp.venue:{venue.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=venue.pk,
+                title=venue.name,
+            ),
+        ],
+    }
+
+
+# `follow` through the reverse of a multi-column relation: only Venue is
+# registered, following its seminars (Seminar is not); a seminar holds the key
+# to its Venue in two columns, matched to the Venue's city and name.
+FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
+    register=_register_venues_following_their_seminars,
+    create_follower=_create_the_halle_tony_garnier,
+    create_other_follower=_create_the_transbordeur,
+    create_holder=_create_a_seminar_at,
+    point_holder_to=_point_the_seminar_to,
+    group_of=_group_of_a_venue_following_its_seminars,
+)
+
+
+def _group_of_a_venue_by_its_seminar_titles(
+    venue: Venue, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The venue's group, as its custom extractor builds it: its name, then the
+    seminar's title if the seminar is at the venue; no title of its own."""
+    text = f"{venue.name}\n\nAcoustics" if holding else venue.name
+    return {
+        f"testapp.venue:{venue.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=venue.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through the reverse of a multi-column relation: only Venue is
+# registered, with a custom extractor reading its seminars' titles (Seminar is
+# not); a seminar holds the key to its Venue in two columns, matched to the
+# Venue's city and name.
+DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
+    register=_register_venues_by_their_seminar_titles,
+    create_follower=_create_the_halle_tony_garnier,
+    create_other_follower=_create_the_transbordeur,
+    create_holder=_create_a_seminar_at,
+    point_holder_to=_point_the_seminar_to,
+    group_of=_group_of_a_venue_by_its_seminar_titles,
+)
+
+
+def _create_lyon_and_its_opponent() -> Team:
+    """Create the Lyon team, and Nantes, the opponent every match of Lyon's is
+    played against."""
+    Team.objects.create(name="Nantes")
+    return Team.objects.create(name="Lyon")
+
+
+def _create_marseille() -> Team:
+    """Create the Marseille team."""
+    return Team.objects.create(name="Marseille")
+
+
+def _create_a_match_at_home_of(team: Team) -> Match:
+    """Create a match with the given team at home, against Nantes away: it holds
+    the key to two different teams, one per foreign key."""
+    nantes = Team.objects.get(name="Nantes")
+    return Match.objects.create(title="Opening day", home_team=team, away_team=nantes)
+
+
+def _point_the_match_home_to(match: Match, team: Team) -> None:
+    """Point the match's home team key to the given team, without saving it:
+    its away team stays."""
+    match.home_team = team
+
+
+def _group_of_a_team_following_its_matches(
+    team: Team, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The team's group: its name, then the match's title if the match names
+    the team, at home or away."""
+    text = f"{team.name}\n\nOpening day" if holding else team.name
+    return {
+        f"testapp.team:{team.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="team",
+                source_pk=team.pk,
+                title=team.name,
+            ),
+        ],
+    }
+
+
+def _group_of_the_away_team(
+    match: Match, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The group of the match's away team, which no write changes."""
+    return _group_of_a_team_following_its_matches(match.away_team, holding)
+
+
+# `follow` through two reverse foreign keys to the same model: only Team is
+# registered, following its matches at home and away (Match is not); a match
+# holds the key to two different teams, the follower at home and Nantes away,
+# so each relation must be crossed for its team's group to be replaced.
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
+    register=_register_teams_following_their_matches,
+    create_follower=_create_lyon_and_its_opponent,
+    create_other_follower=_create_marseille,
+    create_holder=_create_a_match_at_home_of,
+    point_holder_to=_point_the_match_home_to,
+    group_of=_group_of_a_team_following_its_matches,
+    groups_of_the_others_named=_group_of_the_away_team,
+)
+
+
+# A write performed in the captured callbacks, returning the replace calls it
+# must send once its transaction commits.
+Act = Callable[[], ReplaceCalls]
+
+
+def _create(case: _FollowedCase[Any, Any]) -> Act:
+    """The holding row created on a follower: one call, the follower's group and
+    those of the other rows it names, each once."""
+    # Created before the write: the commit callback of its own save is not
+    # observed, so only the holding row's creation is.
+    follower = case.create_follower()
+
+    def act() -> ReplaceCalls:
+        holder = case.create_holder(follower)
+        return [
+            {
+                **case.group_of(follower, True),
+                **case.groups_of_the_others_named(holder, True),
+            }
+        ]
+
+    return act
+
+
+def _move(case: _FollowedCase[Any, Any]) -> Act:
+    """The holding row moved to another follower by ``save()``: one call, both
+    followers' groups and those of the other rows it names, each once."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the move is.
+    old = case.create_follower()
+    new = case.create_other_follower()
+    holder = case.create_holder(old)
+
+    def act() -> ReplaceCalls:
+        case.point_holder_to(holder, new)
+        holder.save()
+        # The old follower left without the holding row, the new one gaining
+        # it, the other rows it names keeping it.
+        return [
+            {
+                **case.group_of(old, False),
+                **case.group_of(new, True),
+                **case.groups_of_the_others_named(holder, True),
+            }
+        ]
+
+    return act
+
+
+def _delete(case: _FollowedCase[Any, Any]) -> Act:
+    """The holding row deleted: one call, the follower's group and those of the
+    other rows it named, each once."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the delete is.
+    follower = case.create_follower()
+    holder = case.create_holder(follower)
+
+    def act() -> ReplaceCalls:
+        holder.delete()
+        # The follower and the other rows it named left without the holding row.
+        return [
+            {
+                **case.group_of(follower, False),
+                **case.groups_of_the_others_named(holder, False),
+            }
+        ]
+
+    return act
+
+
 @pytest.mark.django_db
-def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
+@pytest.mark.parametrize(
+    "write",
+    [
+        pytest.param(_create, id="create"),
+        pytest.param(_move, id="move"),
+        pytest.param(_delete, id="delete"),
+    ],
+)
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(FOLLOW_REVERSE_FOREIGN_KEY, id="follow-reverse_foreign_key"),
+        pytest.param(
+            DEPENDS_ON_REVERSE_FOREIGN_KEY, id="depends_on-reverse_foreign_key"
+        ),
+        pytest.param(FOLLOW_REVERSE_ONE_TO_ONE, id="follow-reverse_one_to_one"),
+        pytest.param(DEPENDS_ON_REVERSE_ONE_TO_ONE, id="depends_on-reverse_one_to_one"),
+        pytest.param(
+            FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD,
+            id="follow-reverse_foreign_key_to_field",
+        ),
+        pytest.param(FOLLOW_REVERSE_MULTI_COLUMN, id="follow-reverse_multi_column"),
+        pytest.param(
+            DEPENDS_ON_REVERSE_MULTI_COLUMN, id="depends_on-reverse_multi_column"
+        ),
+        pytest.param(
+            FOLLOW_TWO_REVERSE_FOREIGN_KEYS, id="follow-two_reverse_foreign_keys"
+        ),
+    ],
+)
+def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
+    case: _FollowedCase[Any, Any],
+    write: Callable[[_FollowedCase[Any, Any]], Act],
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    _register_pages_following_their_plugins()
-
-    # Created outside the captured callbacks: the commit callback of the
-    # Page's own save never runs, so only the plugin's save below is observed.
-    page = Page.objects.create(title="About us", slug="about-us")
+    # The case registers its models; the write creates the rows it needs,
+    # outside the captured callbacks.
+    case.register()
+    act = write(case)
 
     with django_capture_on_commit_callbacks(execute=True):
-        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        expected = act()
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # The Page's group, with the plugin's text after the Page's own title.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.page:{page.pk}": [
-                NormalizedDocument(
-                    text="About us\n\nWe build chairs by hand.",
-                    source_app_label="testapp",
-                    source_model="page",
-                    source_pk=page.pk,
-                    title="About us",
-                    url="/pages/about-us/",
-                ),
-            ],
-        }
-    ]
+    # Exactly the replace calls the write must send, in call order.
+    assert _replaced(built_outputs) == expected
 
 
 @pytest.mark.django_db
@@ -1981,39 +2501,6 @@ def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replace
 
 
 @pytest.mark.django_db
-def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_page(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_pages_by_their_plugin_bodies()
-
-    # Created outside the captured callbacks: the commit callback of the
-    # Page's own save never runs, so only the plugin's save below is observed.
-    page = Page.objects.create(title="About us", slug="about-us")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # Merged across replace calls: how the groups are batched is not what this
-    # test is about. The Page's group, with the plugin's text after its title.
-    assert _received_groups(built_outputs) == {
-        f"testapp.page:{page.pk}": [
-            NormalizedDocument(
-                text="About us\n\nWe build chairs by hand.",
-                source_app_label="testapp",
-                source_model="page",
-                source_pk=page.pk,
-            ),
-        ],
-    }
-
-
-@pytest.mark.django_db
 def test_moving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_both_pages(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -2141,133 +2628,6 @@ def test_saving_a_remark_a_custom_extractor_depends_on_without_related_name_repl
             ),
         ],
     }
-
-
-@pytest.mark.django_db
-def test_saving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_it(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Supplier is registered, with a custom extractor reading its
-    # profile: depends_on names the reverse one-to-one by its accessor,
-    # "profile", while the relation's query name is "supplier_profile".
-    # SupplierProfile itself is not registered.
-    @rag.register_extractor(Supplier, depends_on=["profile"])
-    class SupplierExtractor(BaseExtractor[Supplier]):
-        def extract(self, instance: Supplier) -> NormalizedDocument:
-            return self.build_document(
-                instance, text=f"{instance.name}\n\n{instance.profile.body}"
-            )
-
-    # Created outside the captured callbacks: the commit callback of the
-    # Supplier's own save never runs, so only the profile's save below is
-    # observed.
-    birch = Supplier.objects.create(name="Birch Mill")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # Merged across replace calls: how the groups are batched is not what this
-    # test is about. The Supplier's group, with the profile's text after its
-    # name.
-    assert _received_groups(built_outputs) == {
-        f"testapp.supplier:{birch.pk}": [
-            NormalizedDocument(
-                text="Birch Mill\n\nKiln-dried boards.",
-                source_app_label="testapp",
-                source_model="supplier",
-                source_pk=birch.pk,
-            ),
-        ],
-    }
-
-
-@pytest.mark.django_db
-def test_moving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_both(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_suppliers_by_their_profile_body()
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the profile's move below is observed.
-    birch = Supplier.objects.create(name="Birch Mill")
-    oak = Supplier.objects.create(name="Oak Yard")
-    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        profile.supplier = oak
-        profile.save()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # One replace call carrying both Suppliers' groups as committed, each sent
-    # once: the old Supplier is left with its name alone, the new Supplier
-    # gains the profile's text.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.supplier:{birch.pk}": [
-                NormalizedDocument(
-                    text="Birch Mill",
-                    source_app_label="testapp",
-                    source_model="supplier",
-                    source_pk=birch.pk,
-                ),
-            ],
-            f"testapp.supplier:{oak.pk}": [
-                NormalizedDocument(
-                    text="Oak Yard\n\nKiln-dried boards.",
-                    source_app_label="testapp",
-                    source_model="supplier",
-                    source_pk=oak.pk,
-                ),
-            ],
-        }
-    ]
-
-
-@pytest.mark.django_db
-def test_deleting_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_it(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_suppliers_by_their_profile_body()
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the profile's delete below is observed.
-    birch = Supplier.objects.create(name="Birch Mill")
-    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        profile.delete()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The Supplier's group as committed, sent once: the profile's text is
-    # gone, the Supplier's name stays alone.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.supplier:{birch.pk}": [
-                NormalizedDocument(
-                    text="Birch Mill",
-                    source_app_label="testapp",
-                    source_model="supplier",
-                    source_pk=birch.pk,
-                ),
-            ],
-        }
-    ]
 
 
 @pytest.mark.django_db
@@ -3824,167 +4184,6 @@ def test_saving_an_instance_followed_by_two_models_replaces_the_group_of_each(
             ),
         ],
     }
-
-
-@pytest.mark.django_db
-def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_suppliers_following_their_profile()
-
-    # Created outside the captured callbacks: the commit callback of the
-    # Supplier's own save never runs, so only the profile's save below is
-    # observed.
-    birch = Supplier.objects.create(name="Birch Mill")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The Supplier's group, with the profile's text after the Supplier's name.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.supplier:{birch.pk}": [
-                NormalizedDocument(
-                    text="Birch Mill\n\nKiln-dried boards.",
-                    source_app_label="testapp",
-                    source_model="supplier",
-                    source_pk=birch.pk,
-                    title="Birch Mill",
-                ),
-            ],
-        }
-    ]
-
-
-@pytest.mark.django_db
-def test_moving_a_followed_reverse_one_to_one_to_another_supplier_replaces_both_groups(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_suppliers_following_their_profile()
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the profile's move below is observed.
-    birch = Supplier.objects.create(name="Birch Mill")
-    oak = Supplier.objects.create(name="Oak Yard")
-    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        profile.supplier = oak
-        profile.save()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # Merged across replace calls: whether the groups come in one call or one
-    # per Supplier is not what this test is about.
-    received = _received_groups(built_outputs)
-    # Both Suppliers' groups as committed: the old Supplier is left with its
-    # name alone, the new Supplier gains the profile's text.
-    assert received == {
-        f"testapp.supplier:{birch.pk}": [
-            NormalizedDocument(
-                text="Birch Mill",
-                source_app_label="testapp",
-                source_model="supplier",
-                source_pk=birch.pk,
-                title="Birch Mill",
-            ),
-        ],
-        f"testapp.supplier:{oak.pk}": [
-            NormalizedDocument(
-                text="Oak Yard\n\nKiln-dried boards.",
-                source_app_label="testapp",
-                source_model="supplier",
-                source_pk=oak.pk,
-                title="Oak Yard",
-            ),
-        ],
-    }
-
-
-@pytest.mark.django_db
-def test_deleting_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_suppliers_following_their_profile()
-
-    # Created outside the captured callbacks: the commit callbacks of these
-    # saves never run, so only the profile's delete below is observed.
-    birch = Supplier.objects.create(name="Birch Mill")
-    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        profile.delete()
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The Supplier's group as committed: the profile's text is gone, the
-    # Supplier's name stays alone.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.supplier:{birch.pk}": [
-                NormalizedDocument(
-                    text="Birch Mill",
-                    source_app_label="testapp",
-                    source_model="supplier",
-                    source_pk=birch.pk,
-                    title="Birch Mill",
-                ),
-            ],
-        }
-    ]
-
-
-@pytest.mark.django_db
-def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    _register_warehouses_following_their_shelves()
-
-    # Created outside the captured callbacks: the commit callback of the
-    # Warehouse's own save never runs, so only the shelf's save below is
-    # observed.
-    north = Warehouse.objects.create(name="North depot", code="north")
-
-    with django_capture_on_commit_callbacks(execute=True):
-        # The shelf's foreign key holds the Warehouse's code, "north", not its
-        # primary key.
-        Shelf.objects.create(warehouse=north, label="Timber")
-        # Nothing may reach the output before the commit.
-        assert _replaced(built_outputs) == []
-
-    # The Warehouse's group, under its primary key, not its code, with the
-    # shelf's label after the Warehouse's name.
-    assert _replaced(built_outputs) == [
-        {
-            f"testapp.warehouse:{north.pk}": [
-                NormalizedDocument(
-                    text="North depot\n\nTimber",
-                    source_app_label="testapp",
-                    source_model="warehouse",
-                    source_pk=north.pk,
-                    title="North depot",
-                ),
-            ],
-        }
-    ]
 
 
 @pytest.mark.django_db
