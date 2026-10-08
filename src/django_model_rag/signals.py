@@ -480,14 +480,7 @@ def _followers_reaching(sender: type[Model], instance: Model) -> list[_Follower]
     They reach it through one foreign key of their own, a chain of them, or a
     many-to-many.
     """
-    return [
-        (registered_model, follower_pk)
-        for registered_model in rag.registered_models()
-        for lookup, reached_model in _followed_lookups(registered_model, sender)
-        for follower_pk in _pks_reaching(
-            registered_model, lookup, _group_pk(instance, reached_model)
-        )
-    ]
+    return _followers_looked_up(_followed_lookups, sender, instance)
 
 
 def _followers_pointed_to(sender: type[Model], instance: Model) -> list[_Follower]:
@@ -502,17 +495,44 @@ def _followers_pointed_to(sender: type[Model], instance: Model) -> list[_Followe
         # stale id, which a row inserted since may have taken.
         return []
 
+    return _followers_looked_up(_followed_reverse_lookups, sender, instance)
+
+
+def _followers_looked_up(
+    followed_lookups: Callable[
+        [type[Model], type[Model]], list[tuple[str, type[Model]]]
+    ],
+    sender: type[Model],
+    instance: Model,
+) -> list[_Follower]:
+    """Return the registered rows reaching ``instance``'s row by a followed lookup.
+
+    ``followed_lookups`` gives, for a registered model and ``sender``, each
+    lookup it follows with the model it reaches, one ``sender``'s rows are
+    rows of.
+    """
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for relation in _followed_reverse_relations(registered_model, sender)
-        # The relation may start from a multi-table parent, whose row is
-        # reached by the parent link.
+        for lookup, reached_model in followed_lookups(registered_model, sender)
         for follower_pk in _pks_reaching(
-            registered_model,
-            query_name(relation),
-            _group_pk(instance, relation.related_model),
+            registered_model, lookup, _group_pk(instance, reached_model)
         )
+    ]
+
+
+def _followed_reverse_lookups(
+    registered_model: type[Model], sender: type[Model]
+) -> list[tuple[str, type[Model]]]:
+    """Return the lookups crossing the followed reverse relations to ``sender``.
+
+    They are ``registered_model``'s. Each comes with the model the relation
+    starts from, which may be a multi-table parent of ``sender``, whose row is
+    reached by the parent link.
+    """
+    return [
+        (query_name(relation), relation.related_model)
+        for relation in _followed_reverse_relations(registered_model, sender)
     ]
 
 
