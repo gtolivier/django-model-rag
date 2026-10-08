@@ -1538,6 +1538,85 @@ PATH_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Notice, Excerpt] = _TargetCase(
 )
 
 
+def _register_citations_reading_their_url_through_a_path() -> None:
+    """Register Citation, reading its url from its bookmark's link through a
+    lookup path, with no follow: Bookmark itself is not registered."""
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+
+def _create_the_docs_bookmark() -> Bookmark:
+    """Create the Docs bookmark, linking to /docs/a/."""
+    return Bookmark.objects.create(title="Docs", link="/docs/a/")
+
+
+def _create_the_example_bookmark() -> Bookmark:
+    """Create the Example bookmark, linking to /docs/b/."""
+    return Bookmark.objects.create(title="Example", link="/docs/b/")
+
+
+def _create_a_linked_citation(bookmark: Bookmark) -> Citation:
+    """Create a Linked citation of the given bookmark."""
+    return Citation.objects.create(title="Linked", bookmark=bookmark)
+
+
+def _relink_the_bookmark(bookmark: Bookmark) -> None:
+    """Point the given bookmark's link to /docs/c/, without saving it."""
+    bookmark.link = "/docs/c/"
+
+
+def _group_of_a_linked_citation_reading_its_bookmark(
+    citation: Citation, /, *, target: Bookmark
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group: its title, with its bookmark's link as its
+    url."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title="Linked",
+                url=target.link,
+            ),
+        ],
+    }
+
+
+def _group_of_a_linked_citation_whose_bookmark_is_nulled(
+    citation: Citation,
+) -> dict[str, list[NormalizedDocument]]:
+    """The linked citation's group once its bookmark is deleted and its foreign
+    key set to null: with no bookmark left, it has no url, an empty string."""
+    return {
+        f"testapp.citation:{citation.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=citation.pk,
+                title="Linked",
+                url="",
+            ),
+        ],
+    }
+
+
+# A lookup path read as the url, through a nullable forward foreign key: only
+# Citation is registered, reading its url from its bookmark's link (Bookmark is
+# not); the citation holds the key to the bookmark, the row written, SET_NULL
+# on delete.
+PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL: _TargetCase[Bookmark, Citation] = _TargetCase(
+    register=_register_citations_reading_their_url_through_a_path,
+    create_target=_create_the_docs_bookmark,
+    create_other_target=_whatever_the_target(_create_the_example_bookmark),
+    create_follower_on=_create_a_linked_citation,
+    change_target=_relink_the_bookmark,
+    group_of=_group_of_a_linked_citation_reading_its_bookmark,
+    group_once_target_deleted=_group_of_a_linked_citation_whose_bookmark_is_nulled,
+)
+
+
 def _retitle_the_page(page: Page) -> None:
     """Retitle the given page to Our story, without saving it."""
     page.title = "Our story"
@@ -2374,6 +2453,10 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL, "follow-forward_foreign_key_set_null"),
     (PATH_FORWARD_FOREIGN_KEY, "path-forward_foreign_key"),
     (PATH_FORWARD_FOREIGN_KEY_SET_NULL, "path-forward_foreign_key_set_null"),
+    (
+        PATH_FORWARD_FOREIGN_KEY_SET_NULL_AS_URL,
+        "path-forward_foreign_key_set_null_as_url",
+    ),
     (DEPENDS_ON_FORWARD_FOREIGN_KEY, "depends_on-forward_foreign_key"),
     (
         DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
