@@ -667,6 +667,58 @@ DEPENDS_ON_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
 )
 
 
+def _create_birch_mill() -> Supplier:
+    """Create the Birch Mill supplier."""
+    return Supplier.objects.create(name="Birch Mill")
+
+
+def _create_oak_yard() -> Supplier:
+    """Create the Oak Yard supplier."""
+    return Supplier.objects.create(name="Oak Yard")
+
+
+def _create_a_profile_of(supplier: Supplier) -> SupplierProfile:
+    """Create the given supplier's profile: it holds the key to the supplier."""
+    return SupplierProfile.objects.create(supplier=supplier, body="Kiln-dried boards.")
+
+
+def _point_the_profile_to(profile: SupplierProfile, supplier: Supplier) -> None:
+    """Point the profile's one-to-one key to the given supplier, without saving
+    it."""
+    profile.supplier = supplier
+
+
+def _group_of_a_supplier_following_its_profile(
+    supplier: Supplier, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The supplier's group: its name, then the profile's body if the profile
+    is on the supplier."""
+    text = f"{supplier.name}\n\nKiln-dried boards." if holding else supplier.name
+    return {
+        f"testapp.supplier:{supplier.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=supplier.pk,
+                title=supplier.name,
+            ),
+        ],
+    }
+
+
+# `follow` through a reverse one-to-one: only Supplier is registered, following
+# its profile (SupplierProfile is not); a profile holds the key to its Supplier.
+FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedCase(
+    register=_register_suppliers_following_their_profile,
+    create_follower=_create_birch_mill,
+    create_other_follower=_create_oak_yard,
+    create_holder=_create_a_profile_of,
+    point_holder_to=_point_the_profile_to,
+    group_of=_group_of_a_supplier_following_its_profile,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -734,6 +786,7 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
         pytest.param(
             DEPENDS_ON_REVERSE_FOREIGN_KEY, id="depends_on-reverse_foreign_key"
         ),
+        pytest.param(FOLLOW_REVERSE_ONE_TO_ONE, id="follow-reverse_one_to_one"),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
