@@ -201,8 +201,8 @@ def sync_saved_instance(
     Those are the instance's own group if ``sender`` feeds a registered model,
     and the groups of its followers — the registered rows following it, before
     the save and after it — whether or not ``sender`` is registered itself.
-    Those reaching a row saved before through foreign keys are looked up again
-    at the commit. The output configuration was checked before the save, by
+    The followers of a row saved before are looked up again at the commit. The
+    output configuration was checked before the save, by
     check_output_before_save.
     """
     if raw or not _signals_enabled():
@@ -217,8 +217,8 @@ def sync_saved_instance(
     )
     # A row just created has no follower pointing to it at its save.
     if not created and _is_followed(sender):
-        # Rows may be attached to it before the commit, by a write that sends
-        # no signal: its followers are looked up then.
+        # Rows may be attached to it, or it to other rows, before the commit,
+        # by a write that sends no signal: its followers are looked up then.
         transaction.on_commit(
             partial(
                 _replace_followers_as_committed,
@@ -399,10 +399,11 @@ def _replace_followers_as_committed(
     instance: Model,
     followers_at_save: list[_Follower],
 ) -> None:
-    """Replace the groups of ``followers_at_save`` and of the rows reaching it now.
+    """Replace the groups of ``followers_at_save`` and of the rows following it now.
 
-    Those reach the row through foreign keys at the commit: rows attached after
-    the save, in the same transaction, follow it too. If looking them up fails,
+    Those are looked up from the row as committed: rows attached after the
+    save, in the same transaction, follow it too, and so do the rows a write
+    sending no signal has since pointed it to. If looking them up fails,
     ``followers_at_save`` are still replaced.
     """
     followed_source_key = _followed_source_key(sender, instance)
