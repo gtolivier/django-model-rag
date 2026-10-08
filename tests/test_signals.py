@@ -266,7 +266,7 @@ def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
     """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
     transbordeur = _create_the_transbordeur()
-    return _create_a_seminar_at(transbordeur, title=_SIBLING_SEMINAR_TITLE)
+    return _create_a_seminar_at(transbordeur, title="Stage lighting")
 
 
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
@@ -1270,10 +1270,9 @@ class _KeyChange(Generic[TargetT, FollowerT]):
     # update, which sends no signal.
     change: Callable[[TargetT], None]
     # The follower's group as committed, under its source key, once its
-    # target's key changed: its own fields alone, for a follower left naming
-    # the old key; None, for a follower moved with its target, whose group is
-    # then the case's own group_of, on the target.
-    group_of: _GroupOnTarget[FollowerT, TargetT] | None = None
+    # target's key changed: on the target, for a follower moved with it; its
+    # own fields alone, for a follower left naming the old key.
+    group_of: _GroupOnTarget[FollowerT, TargetT]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1915,7 +1914,10 @@ FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD: _TargetCase[Warehouse, Shelf] = _TargetCase
     change_target=_rename_the_warehouse,
     group_of=_group_of_a_timber_shelf_following_its_warehouse,
     group_once_target_deleted=_group_of_a_shelf_deleted_by_cascade,
-    change_key=_KeyChange(change=_recode_the_warehouse_moving_its_shelves),
+    change_key=_KeyChange(
+        change=_recode_the_warehouse_moving_its_shelves,
+        group_of=_group_of_a_timber_shelf_following_its_warehouse,
+    ),
 )
 
 
@@ -2014,7 +2016,10 @@ FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD_SET_NULL: _TargetCase[Depot, Bin] = _TargetC
     change_target=_rename_the_depot,
     group_of=_group_of_a_spare_parts_bin_following_its_depot,
     group_once_target_deleted=_group_of_a_spare_parts_bin_whose_depot_is_nulled,
-    change_key=_KeyChange(change=_recode_the_depot_moving_its_bins),
+    change_key=_KeyChange(
+        change=_recode_the_depot_moving_its_bins,
+        group_of=_group_of_a_spare_parts_bin_following_its_depot,
+    ),
 )
 
 
@@ -2482,9 +2487,8 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     target, follower = _create_both_targets_with_their_followers(case)
 
     def act() -> ReplaceCalls:
-        expected: ReplaceCalls = [case.group_once_target_deleted(follower)]
         target.delete()
-        return expected
+        return [case.group_once_target_deleted(follower)]
 
     return act
 
@@ -2498,12 +2502,11 @@ def _change_the_target_key(case: _TargetCase[TargetT, FollowerT]) -> Act:
     assert change_key is not None
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the target's key change is.
-    group_of = change_key.group_of or case.group_of
     target, follower = _create_both_targets_with_their_followers(case)
 
     def act() -> ReplaceCalls:
         change_key.change(target)
-        return [group_of(follower, target=target)]
+        return [change_key.group_of(follower, target=target)]
 
     return act
 
@@ -2629,16 +2632,7 @@ def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups
     # calls: whether they are sent in one call or several is not what this
     # test is about. No group of the other notice's excerpt.
     assert _received_groups(built_outputs) == {
-        f"testapp.excerpt:{greeting.pk}": [
-            NormalizedDocument(
-                text="Bonjour",
-                source_app_label="testapp",
-                source_model="excerpt",
-                source_pk=greeting.pk,
-                title="Bonjour",
-                language=None,
-            ),
-        ],
+        **_group_of_a_greeting_excerpt_whose_notice_is_nulled(greeting),
         f"testapp.excerpt:{farewell.pk}": [
             NormalizedDocument(
                 text="Au revoir",
@@ -2686,16 +2680,7 @@ def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
     # replace calls: whether they are sent in one call or several is not what
     # this test is about. No group of the other bookmark's citation.
     assert _received_groups(built_outputs) == {
-        f"testapp.citation:{linked.pk}": [
-            NormalizedDocument(
-                text="Linked",
-                source_app_label="testapp",
-                source_model="citation",
-                source_pk=linked.pk,
-                title="Linked",
-                url="",
-            ),
-        ],
+        **_group_of_a_linked_citation_whose_bookmark_is_nulled(linked),
         f"testapp.citation:{quoted.pk}": [
             NormalizedDocument(
                 text="Quoted",
