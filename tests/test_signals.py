@@ -6745,6 +6745,31 @@ def test_a_plugin_saved_in_a_rolled_back_transaction_page_following_it_sends_not
     assert _replaced(built_outputs) == []
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_topic_added_to_a_course_in_a_rolled_back_transaction_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Created before Course is registered, and not linked: in autocommit
+    # (transaction=True), their own commit callbacks would otherwise run, and
+    # send the course's group.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    _register_courses_following_their_topics()
+
+    # A real transaction (transaction=True), so that leaving the atomic block
+    # on an exception rolls it back rather than a savepoint of the test's own.
+    with pytest.raises(_RolledBackError), transaction.atomic():
+        basics.topics.add(woodworking)
+        raise _RolledBackError
+
+    # Not the course's group, nor any other: no replace call at all.
+    assert _replaced(built_outputs) == []
+
+
 class _ExtractionError(Exception):
     """Raised by an extractor that fails on the instance it is given."""
 
