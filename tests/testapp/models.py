@@ -764,6 +764,35 @@ class Exhibit(models.Model):
     objects = ExhibitManager()
 
 
+# --- Two foreign keys to the same model ---------------------------------
+# A Match points to a Team twice, by its home team and by its away team: the
+# Team reaches its Matches by two reverse foreign keys, ``home_matches`` and
+# ``away_matches``, one per foreign key. A Match may also belong to a
+# Tournament, by a nullable foreign key: the Tournament reaches its Matches by
+# a third reverse foreign key, ``matches``, from another model than the Team.
+
+
+class Team(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class Tournament(models.Model):
+    name = models.CharField(max_length=200)
+
+
+class Match(models.Model):
+    title = models.CharField(max_length=200)
+    home_team = models.ForeignKey(
+        Team, related_name="home_matches", on_delete=models.CASCADE
+    )
+    away_team = models.ForeignKey(
+        Team, related_name="away_matches", on_delete=models.CASCADE
+    )
+    tournament = models.ForeignKey(
+        Tournament, null=True, related_name="matches", on_delete=models.SET_NULL
+    )
+
+
 # --- A many-to-many through a foreign key to a unique column ------------
 # A Guild reaches its Craftsmen by the many-to-many ``members``, through a
 # Membership model of its own whose foreign key points to the Guild by the

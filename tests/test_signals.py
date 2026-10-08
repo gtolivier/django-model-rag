@@ -43,6 +43,7 @@ from tests.testapp.models import (
     Guild,
     Lesson,
     MasterClass,
+    Match,
     Meetup,
     Musician,
     Note,
@@ -64,11 +65,13 @@ from tests.testapp.models import (
     SupplierProfile,
     Tag,
     Talk,
+    Team,
     TextPlugin,
     TextPluginProxy,
     Theme,
     Topic,
     TopicProxy,
+    Tournament,
     Venue,
     Warehouse,
     Workshop,
@@ -230,6 +233,12 @@ def _register_musicians_following_their_bands() -> None:
     rag.register(Musician, fields=["name"], follow=["bands"])
 
 
+def _register_teams_following_their_matches() -> None:
+    """Register Team, by its name, following its matches by both reverse foreign
+    keys, ``home_matches`` and ``away_matches``: Match itself is not."""
+    rag.register(Team, fields=["name"], follow=["home_matches", "away_matches"])
+
+
 def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
     """Create the Halle Tony Garnier, a venue of Lyon, and its Acoustics seminar."""
     hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
@@ -261,6 +270,18 @@ def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
 def _create_a_plain_desk_lamp(category: Category) -> Product:
     """Create a Desk lamp, a plain Product: a single row."""
     return Product.objects.create(
+        name="Desk lamp",
+        description="A lamp for the desk.",
+        price="25.00",
+        category=category,
+    )
+
+
+def _create_a_clearance_desk_lamp(category: Category) -> ClearanceProduct:
+    """Create a Desk lamp, a ClearanceProduct: a Product row and its child row,
+    whose primary key is its own code, ``CLR-1``, not the Product's."""
+    return ClearanceProduct.objects.create(
+        code="CLR-1",
         name="Desk lamp",
         description="A lamp for the desk.",
         price="25.00",
@@ -421,13 +442,7 @@ def test_saving_a_child_with_a_primary_key_of_its_own_replaces_its_parents_group
     # The child's primary key is its code, not the Product's: the parent row
     # is reached by the explicit parent link, ``product``.
     with django_capture_on_commit_callbacks(execute=True):
-        lamp = ClearanceProduct.objects.create(
-            code="CLR-1",
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-        )
+        lamp = _create_a_clearance_desk_lamp(lighting)
         assert _replaced(built_outputs) == []
 
     # The group is the parent row's, under the parent's label and the parent's
@@ -3509,6 +3524,61 @@ def test_a_change_left_unsaved_after_a_move_does_not_change_the_groups_replaced(
 
 
 @pytest.mark.django_db
+def test_a_product_saved_then_moved_by_update_skips_the_category_it_only_passed_by(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # A Product is followed by its Category, through the reverse relation
+    # ``products``. Product itself is not registered.
+    rag.register(Category, follow=["products"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the product's moves below are observed.
+    lighting = Category.objects.create(name="Lighting")
+    tools = Category.objects.create(name="Tools")
+    garden = Category.objects.create(name="Garden")
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.category = tools
+        lamp.save()
+        # Moved again after the save, in the same transaction, by a write that
+        # sends no signal: the Tools category never has the product in any
+        # committed state.
+        Product.objects.filter(pk=lamp.pk).update(category=garden)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of the category the product left and of the
+    # one it ends in, both as committed; no group of the category it only
+    # passed by before the commit.
+    assert _received_groups(built_outputs) == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+        f"testapp.category:{garden.pk}": [
+            NormalizedDocument(
+                text="Garden\n\nDesk lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=garden.pk,
+                title="Garden",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_updating_a_followed_instance_in_place_replaces_the_group_once(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -3649,6 +3719,61 @@ def test_saving_a_multi_table_child_of_a_followed_model_replaces_the_group(
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_moving_a_child_with_a_primary_key_of_its_own_replaces_both_categories(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither Product nor ClearanceProduct is registered: a Category follows
+    # its products through the reverse relation ``products``.
+    rag.register(Category, follow=["products"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the clearance product's move below is observed.
+    lighting = Category.objects.create(name="Lighting")
+    tools = Category.objects.create(name="Tools")
+    # The child's primary key is its code, not the Product's: its Product row
+    # is reached by the explicit parent link, ``product``, whose value is the
+    # Product's integer primary key, never the code.
+    lamp = _create_a_clearance_desk_lamp(lighting)
+
+    # Django sends pre_save and post_save with ClearanceProduct as their
+    # sender, not Product: the category the Product row had before the save
+    # is found from the parent link, not from the code.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.category = tools
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Both categories' groups as committed: the old one loses
+    # the product's text, the new one gains it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.category:{lighting.pk}": [
+            NormalizedDocument(
+                text="Lighting",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=lighting.pk,
+                title="Lighting",
+            ),
+        ],
+        f"testapp.category:{tools.pk}": [
+            NormalizedDocument(
+                text="Tools\n\nDesk lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="category",
+                source_pk=tools.pk,
+                title="Tools",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
@@ -3913,6 +4038,197 @@ def test_moving_a_followed_instance_linked_by_a_unique_column_replaces_both_grou
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_updating_a_followed_instance_linked_by_a_unique_column_reads_it_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_warehouses_following_their_shelves()
+
+    # Created outside the counted queries: only the shelf's update below is
+    # observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    shelf = Shelf.objects.create(warehouse=north, label="Timber")
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: the lookup of the Warehouse before the save,
+    # the save's UPDATE, the lookup of the Warehouse from the row as
+    # committed, then the three reads of the Warehouse's group. The Warehouse
+    # is not also read at post_save by the code the shelf holds in memory: the
+    # lookup at the commit already finds it.
+    with (
+        django_assert_num_queries(6) as queries,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the shelf's foreign key still holds the
+        # Warehouse's code, "north", not its primary key.
+        shelf.label = "Paint"
+        shelf.save()
+
+    # No query turns the code the shelf holds into the Warehouse's primary key.
+    by_code = 'FROM "testapp_warehouse" WHERE "testapp_warehouse"."code"'
+    assert not [query for query in queries.captured_queries if by_code in query["sql"]]
+    # The Warehouse's group, once, under its primary key, not its code.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.warehouse:{north.pk}": [
+                NormalizedDocument(
+                    text="North depot\n\nPaint",
+                    source_app_label="testapp",
+                    source_model="warehouse",
+                    source_pk=north.pk,
+                    title="North depot",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_each(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Team is registered.
+    _register_teams_following_their_matches()
+
+    # Created outside the counted queries: only the match's update below is
+    # observed.
+    lyon = Team.objects.create(name="Lyon")
+    nantes = Team.objects.create(name="Nantes")
+    derby = Match.objects.create(title="Opening day", home_team=lyon, away_team=nantes)
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: one lookup of the Teams before the save, the
+    # save's UPDATE, one lookup of the Teams from the row as committed, then
+    # the four reads of the Teams' groups. Each lookup crosses both reverse
+    # relations at once, not one query per relation: two queries fewer than
+    # one lookup per relation at each moment.
+    with (
+        django_assert_num_queries(7),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the match keeps its home and away teams.
+        derby.title = "Season opener"
+        derby.save()
+
+    # The groups replaced do not change: each Team's group, once, in one call,
+    # with the match's title as committed after the Team's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.team:{lyon.pk}": [
+                NormalizedDocument(
+                    text="Lyon\n\nSeason opener",
+                    source_app_label="testapp",
+                    source_model="team",
+                    source_pk=lyon.pk,
+                    title="Lyon",
+                ),
+            ],
+            f"testapp.team:{nantes.pk}": [
+                NormalizedDocument(
+                    text="Nantes\n\nSeason opener",
+                    source_app_label="testapp",
+                    source_model="team",
+                    source_pk=nantes.pk,
+                    title="Nantes",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Two registered models follow Match in reverse: the Team by both its
+    # reverse foreign keys, ``home_matches`` and ``away_matches``, and the
+    # Tournament by its own, ``matches``. Match itself is not registered.
+    _register_teams_following_their_matches()
+    rag.register(Tournament, fields=["name"], follow=["matches"])
+
+    # Created outside the counted queries: only the match's update below is
+    # observed.
+    lyon = Team.objects.create(name="Lyon")
+    nantes = Team.objects.create(name="Nantes")
+    cup = Tournament.objects.create(name="Spring Cup")
+    derby = Match.objects.create(
+        title="Opening day", home_team=lyon, away_team=nantes, tournament=cup
+    )
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: one lookup per registered model before the
+    # save (two), the save's UPDATE, one lookup per registered model from the
+    # row as committed (two), then the reads of the groups: the Teams' four
+    # and the Tournament's three. Three reverse relations, but two registered
+    # models: the lookups grow with the models, not with the relations.
+    with (
+        django_assert_num_queries(12),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the match keeps its teams and its tournament.
+        derby.title = "Season opener"
+        derby.save()
+
+    # Each following row's group, with the match's title as committed after
+    # the row's own name, merged across replace calls: whether the groups come
+    # in one call or one per registered model is not what this test is about.
+    assert _received_groups(built_outputs) == {
+        f"testapp.team:{lyon.pk}": [
+            NormalizedDocument(
+                text="Lyon\n\nSeason opener",
+                source_app_label="testapp",
+                source_model="team",
+                source_pk=lyon.pk,
+                title="Lyon",
+            ),
+        ],
+        f"testapp.team:{nantes.pk}": [
+            NormalizedDocument(
+                text="Nantes\n\nSeason opener",
+                source_app_label="testapp",
+                source_model="team",
+                source_pk=nantes.pk,
+                title="Nantes",
+            ),
+        ],
+        f"testapp.tournament:{cup.pk}": [
+            NormalizedDocument(
+                text="Spring Cup\n\nSeason opener",
+                source_app_label="testapp",
+                source_model="tournament",
+                source_pk=cup.pk,
+                title="Spring Cup",
+            ),
+        ],
+    }
+    # Each group sent once: no following row is replaced twice.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [
+            f"testapp.team:{lyon.pk}",
+            f"testapp.team:{nantes.pk}",
+            f"testapp.tournament:{cup.pk}",
+        ]
+    )
 
 
 @pytest.mark.django_db
@@ -5567,6 +5883,62 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
 
 
 @pytest.mark.django_db
+def test_updating_a_seminar_of_a_venue_following_by_multi_column_reads_it_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_venues_following_their_seminars()
+
+    # Created outside the counted queries: only the seminar's update below is
+    # observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: the lookup of the Venue before the save, the
+    # save's UPDATE, the lookup of the Venue from the row as committed, then
+    # the reads of the Venue's group. The Venue is not also read at post_save
+    # by the two columns the seminar holds in memory: the lookup at the commit
+    # already finds it.
+    with (
+        django_assert_num_queries(6) as queries,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the seminar's two columns still name the same
+        # venue, neither of them its primary key.
+        acoustics.title = "Acoustics of large halls"
+        acoustics.save()
+
+    # No query turns the two columns the seminar holds into the Venue's
+    # primary key.
+    by_columns = 'FROM "testapp_venue" WHERE ("testapp_venue"."city"'
+    assert not [
+        query for query in queries.captured_queries if by_columns in query["sql"]
+    ]
+    # The Venue's group, once, with the seminar's text fields as committed
+    # after the Venue's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.venue:{hall.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Halle Tony Garnier\n\nAcoustics of large halls"
+                        "\n\nLyon\n\nHalle Tony Garnier"
+                    ),
+                    source_app_label="testapp",
+                    source_model="venue",
+                    source_pk=hall.pk,
+                    title="Halle Tony Garnier",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_a_seminar_naming_no_venue_of_a_venue_following_by_multi_column_sends_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -6313,13 +6685,7 @@ def test_deleting_a_child_with_a_primary_key_of_its_own_empties_its_parents_grou
     # observed below.
     with django_capture_on_commit_callbacks(execute=True):
         lighting = Category.objects.create(name="Lighting")
-        lamp = ClearanceProduct.objects.create(
-            code="CLR-1",
-            name="Desk lamp",
-            description="A lamp for the desk.",
-            price="25.00",
-            category=lighting,
-        )
+        lamp = _create_a_clearance_desk_lamp(lighting)
     # The child's primary key is its code, not the Product's: the parent row
     # is reached by the explicit parent link, ``product``.
     product_pk = lamp.product_id
