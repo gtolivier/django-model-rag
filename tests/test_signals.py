@@ -25,6 +25,7 @@ from tests.recording import (
 )
 from tests.testapp.models import (
     Album,
+    Band,
     Banner,
     Bin,
     BonusTrack,
@@ -43,6 +44,7 @@ from tests.testapp.models import (
     Lesson,
     MasterClass,
     Meetup,
+    Musician,
     Note,
     Notice,
     Offer,
@@ -152,6 +154,21 @@ def _register_plugins_by_their_page_title() -> None:
             )
 
 
+def _register_pages_by_their_plugin_bodies() -> None:
+    """Register only Page, with a custom extractor reading its title, then the
+    bodies of its text plugins: depends_on names the reverse relation
+    ``text_plugins``, whose saves change its documents. TextPlugin itself is
+    not registered."""
+
+    @rag.register_extractor(Page, depends_on=["text_plugins"])
+    class PageExtractor(BaseExtractor[Page]):
+        def extract(self, instance: Page) -> NormalizedDocument:
+            bodies = [plugin.body for plugin in instance.text_plugins.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.title, *bodies])
+            )
+
+
 def _register_topics_by_their_course_titles() -> None:
     """Register only Topic, with a custom extractor reading its title, then the
     titles of its courses: depends_on names its reverse many-to-many
@@ -171,6 +188,30 @@ def _register_venues_following_their_seminars() -> None:
     """Register only Venue, by its name, following its seminars by the reverse of
     the multi-column ForeignObject ``venue``: Seminar itself is not."""
     rag.register(Venue, fields=["name"], follow=["seminars"])
+
+
+def _register_suppliers_following_their_profile() -> None:
+    """Register only Supplier, following its profile by the reverse one-to-one
+    accessor ``profile``: SupplierProfile itself is not."""
+    rag.register(Supplier, follow=["profile"])
+
+
+def _register_warehouses_following_their_shelves() -> None:
+    """Register only Warehouse, following its shelves, whose foreign key holds
+    its code, not its primary key: Shelf itself is not."""
+    rag.register(Warehouse, follow=["shelves"])
+
+
+def _register_guilds_following_their_members() -> None:
+    """Register only Guild, by its name, following its members through its own
+    many-to-many ``members``: Craftsman itself is not."""
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+
+def _register_musicians_following_their_bands() -> None:
+    """Register only Musician, by its name, following its bands through the
+    reverse many-to-many ``bands``: Band itself is not."""
+    rag.register(Musician, fields=["name"], follow=["bands"])
 
 
 def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
@@ -607,6 +648,63 @@ def test_saving_a_notice_read_as_language_through_a_lookup_path_replaces_the_gro
 
 
 @pytest.mark.django_db
+def test_deleting_a_notice_read_as_language_through_set_null_replaces_the_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Excerpt is registered, reading its language from its notice
+    # through a lookup path over its nullable foreign key, SET_NULL on delete,
+    # with no follow: Notice itself is not registered.
+    rag.register(Excerpt, fields=["title"], language_field="notice__language")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the notice's delete below is observed.
+    notice = Notice.objects.create(title="Avis", language="fr")
+    greeting = Excerpt.objects.create(title="Bonjour", notice=notice)
+    farewell = Excerpt.objects.create(title="Au revoir", notice=notice)
+    # Another notice and its excerpt, untouched by the delete.
+    other_notice = Notice.objects.create(title="Notice", language="en")
+    Excerpt.objects.create(title="Hello", notice=other_notice)
+
+    # The delete sets the excerpts' foreign key to null before the notice's
+    # row goes: by post_delete, the excerpts no longer point to the notice.
+    with django_capture_on_commit_callbacks(execute=True):
+        notice.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of the excerpts that pointed to the notice, as committed:
+    # with no notice left, they have no language. Merged across replace
+    # calls: whether they are sent in one call or several is not what this
+    # test is about. No group of the other notice's excerpt.
+    assert _received_groups(built_outputs) == {
+        f"testapp.excerpt:{greeting.pk}": [
+            NormalizedDocument(
+                text="Bonjour",
+                source_app_label="testapp",
+                source_model="excerpt",
+                source_pk=greeting.pk,
+                title="Bonjour",
+                language=None,
+            ),
+        ],
+        f"testapp.excerpt:{farewell.pk}": [
+            NormalizedDocument(
+                text="Au revoir",
+                source_app_label="testapp",
+                source_model="excerpt",
+                source_pk=farewell.pk,
+                title="Au revoir",
+                language=None,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -645,6 +743,63 @@ def test_saving_a_bookmark_read_as_url_through_a_lookup_path_replaces_the_group(
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_bookmark_read_as_url_through_set_null_replaces_the_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Citation is registered, reading its url from its bookmark
+    # through a lookup path over its nullable foreign key, SET_NULL on delete,
+    # with no follow: Bookmark itself is not registered.
+    rag.register(Citation, fields=["title"], url_field="bookmark__link")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the bookmark's delete below is observed.
+    bookmark = Bookmark.objects.create(title="Docs", link="/docs/a/")
+    linked = Citation.objects.create(title="Linked", bookmark=bookmark)
+    quoted = Citation.objects.create(title="Quoted", bookmark=bookmark)
+    # Another bookmark and its citation, untouched by the delete.
+    other_bookmark = Bookmark.objects.create(title="Example", link="/docs/b/")
+    Citation.objects.create(title="Elsewhere", bookmark=other_bookmark)
+
+    # The delete sets the citations' foreign key to null before the bookmark's
+    # row goes: by post_delete, the citations no longer point to the bookmark.
+    with django_capture_on_commit_callbacks(execute=True):
+        bookmark.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of the citations that pointed to the bookmark, as committed:
+    # with no bookmark left, they have no url, an empty string. Merged across
+    # replace calls: whether they are sent in one call or several is not what
+    # this test is about. No group of the other bookmark's citation.
+    assert _received_groups(built_outputs) == {
+        f"testapp.citation:{linked.pk}": [
+            NormalizedDocument(
+                text="Linked",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=linked.pk,
+                title="Linked",
+                url="",
+            ),
+        ],
+        f"testapp.citation:{quoted.pk}": [
+            NormalizedDocument(
+                text="Quoted",
+                source_app_label="testapp",
+                source_model="citation",
+                source_pk=quoted.pk,
+                title="Quoted",
+                url="",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
@@ -1299,6 +1454,61 @@ def test_saving_a_depot_with_a_null_code_replaces_no_group_of_the_bins_with_no_d
 
 
 @pytest.mark.django_db
+def test_deleting_a_depot_followed_through_set_null_replaces_the_groups_of_its_bins(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Bin is registered, following its depot through its own nullable
+    # foreign key, which holds the Depot's code, not its primary key, SET_NULL
+    # on delete: Depot itself is not.
+    rag.register(Bin, follow=["depot"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the depot's delete below is observed.
+    north = Depot.objects.create(name="North depot", code="north")
+    spare_parts = Bin.objects.create(depot=north, label="Spare parts")
+    fasteners = Bin.objects.create(depot=north, label="Fasteners")
+    # Another depot and its bin, untouched by the delete.
+    south = Depot.objects.create(name="South depot", code="south")
+    Bin.objects.create(depot=south, label="Paint")
+
+    # The delete sets the bins' foreign key to null before the depot's row
+    # goes: by post_delete, the bins no longer hold the depot's code.
+    with django_capture_on_commit_callbacks(execute=True):
+        north.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of the bins that pointed to the depot, as committed: the
+    # depot's name is gone, only each bin's own label is left. Merged across
+    # replace calls: whether they are sent in one call or several is not what
+    # this test is about. No group of the other depot's bin.
+    assert _received_groups(built_outputs) == {
+        f"testapp.bin:{spare_parts.pk}": [
+            NormalizedDocument(
+                text="Spare parts",
+                source_app_label="testapp",
+                source_model="bin",
+                source_pk=spare_parts.pk,
+                title="Spare parts",
+            ),
+        ],
+        f"testapp.bin:{fasteners.pk}": [
+            NormalizedDocument(
+                text="Fasteners",
+                source_app_label="testapp",
+                source_model="bin",
+                source_pk=fasteners.pk,
+                title="Fasteners",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_followed_by_a_forward_one_to_one_replaces_the_group_of_its_intro(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -1501,6 +1711,198 @@ def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_co
 
 
 @pytest.mark.django_db
+def test_a_plugin_moved_by_update_after_its_own_save_replaces_both_pages_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The plugin starts on one page; the page it moves to has none.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        chairs.body = "We build chairs and tables by hand."
+        chairs.save()
+        # Moved to the other page after its own save, in the same transaction,
+        # by a write that sends no signal: only the save, still on its first
+        # page, is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=workshop)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Both pages are replaced, as committed: the page the plugin
+    # moved to with the plugin's text after its own title, and the page it left
+    # with its title alone, the plugin's text gone.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs and tables by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_plugin_created_then_moved_by_update_replaces_both_pages_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_following_their_plugins()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. Neither page has a plugin yet.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+        # Moved to the other page after its creation, in the same transaction,
+        # by a write that sends no signal: only the creation, on its first
+        # page, is observed.
+        TextPlugin.objects.filter(pk=chairs.pk).update(page=workshop)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Both pages are replaced, as committed: the page the plugin
+    # moved to with the plugin's text after its own title, and the page it was
+    # created on with its title alone, the plugin's text gone.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+                title="Our workshop",
+                url="/pages/our-workshop/",
+            ),
+        ],
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+                title="About us",
+                url="/pages/about-us/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    rag.register(Product, fields=["name"], follow=["category"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The product starts in another category; the category it moves to
+    # has none.
+    tools = Category.objects.create(name="Tools")
+    lamp = _create_a_plain_desk_lamp(tools)
+    lighting = Category.objects.create(name="Lighting")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Moved to the category after the category's save, in the same
+        # transaction, by a write that sends no signal: only the category's
+        # save is observed.
+        Product.objects.filter(pk=lamp.pk).update(category=lighting)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The product moved after the save is a follower of the
+    # category at the commit, so its group is replaced, as committed: with the
+    # new name of the category it moved to.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Desk lamp\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title="Desk lamp",
+                url=f"/products/{lamp.pk}/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_product_moved_by_update_after_its_category_save_is_replaced_via_lookup_path(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its category's name through a
+    # lookup path, with no follow: Category itself is not registered.
+    rag.register(Product, fields=["name", "category__name"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The product starts in another category; the category it moves to
+    # has none.
+    tools = Category.objects.create(name="Tools")
+    lamp = _create_a_plain_desk_lamp(tools)
+    lighting = Category.objects.create(name="Lighting")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Moved to the category after the category's save, in the same
+        # transaction, by a write that sends no signal: only the category's
+        # save is observed.
+        Product.objects.filter(pk=lamp.pk).update(category=lighting)
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The product moved after the save reads the category
+    # through the path at the commit, so its group is replaced, as committed:
+    # with the new name of the category it moved to.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Desk lamp\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title="Desk lamp",
+                url=f"/products/{lamp.pk}/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -1555,16 +1957,7 @@ def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_p
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Page is registered, with a custom extractor reading its text
-    # plugins: depends_on names the reverse relation, whose saves change its
-    # documents. TextPlugin itself is not registered.
-    @rag.register_extractor(Page, depends_on=["text_plugins"])
-    class PageExtractor(BaseExtractor[Page]):
-        def extract(self, instance: Page) -> NormalizedDocument:
-            bodies = [plugin.body for plugin in instance.text_plugins.order_by("pk")]
-            return self.build_document(
-                instance, text="\n\n".join([instance.title, *bodies])
-            )
+    _register_pages_by_their_plugin_bodies()
 
     # Created outside the captured callbacks: the commit callback of the
     # Page's own save never runs, so only the plugin's save below is observed.
@@ -1581,6 +1974,93 @@ def test_saving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_p
         f"testapp.page:{page.pk}": [
             NormalizedDocument(
                 text="About us\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=page.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_moving_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_both_pages(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_by_their_plugin_bodies()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's move below is observed.
+    about = Page.objects.create(title="About us", slug="about-us")
+    workshop = Page.objects.create(title="Our workshop", slug="our-workshop")
+    moved_plugin = TextPlugin.objects.create(
+        page=about, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=about, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        moved_plugin.page = workshop
+        moved_plugin.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Page is not what this test is about. Both Pages' groups as
+    # committed: the old Page keeps only its remaining plugin's text, the new
+    # Page gains the moved plugin's text.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{about.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=about.pk,
+            ),
+        ],
+        f"testapp.page:{workshop.pk}": [
+            NormalizedDocument(
+                text="Our workshop\n\nWe build chairs by hand.",
+                source_app_label="testapp",
+                source_model="page",
+                source_pk=workshop.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_deleting_a_plugin_a_custom_extractor_depends_on_in_reverse_replaces_the_page(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_pages_by_their_plugin_bodies()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the plugin's delete below is observed.
+    page = Page.objects.create(title="About us", slug="about-us")
+    deleted_plugin = TextPlugin.objects.create(
+        page=page, body="We build chairs by hand."
+    )
+    TextPlugin.objects.create(page=page, body="We ship worldwide.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        deleted_plugin.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Page's group as committed: the deleted plugin's text
+    # is gone, the remaining plugin's text stays after the Page's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.page:{page.pk}": [
+            NormalizedDocument(
+                text="About us\n\nWe ship worldwide.",
                 source_app_label="testapp",
                 source_model="page",
                 source_pk=page.pk,
@@ -2006,6 +2486,103 @@ def test_deleting_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_t
                 source_app_label="testapp",
                 source_model="topic",
                 source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_removing_a_topic_from_a_course_its_custom_extractor_depends_on_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and adds never run, so only the remove below is observed.
+    # The topic is covered by two courses, so that its group keeps the one
+    # left.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    joinery = Course.objects.create(title="Joinery")
+    basics.topics.add(woodworking)
+    joinery.topics.add(woodworking)
+
+    # Removed from the course's side: Django sends m2m_changed with the course
+    # as its instance, and the topic among the primary keys it names. Neither
+    # row is saved again: the remove deletes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.remove(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Topic's group as committed: the removed course's
+    # title is gone, only the other course's title is left.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: Joinery",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_clearing_the_topics_of_a_course_custom_extractor_depends_on_replaces_each(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and adds never run, so only the clear below is observed.
+    # The course covers two topics, so that the clear removes more than one
+    # link; one of them is covered by another course too, so that its group
+    # keeps that course.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+
+    # Cleared from the course's side: Django sends m2m_changed with the course
+    # as its instance, and no primary keys at all. Neither row is saved again:
+    # the clear deletes only the links of the course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of both topics as committed, each without the
+    # cleared course's title: the one covered by another course keeps that
+    # course's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: ",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+        f"testapp.topic:{carving.pk}": [
+            NormalizedDocument(
+                text="Carving: Whittling",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=carving.pk,
             ),
         ],
     }
@@ -3033,9 +3610,7 @@ def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Supplier is registered, following its profile by the reverse
-    # one-to-one accessor ``profile``: SupplierProfile itself is not.
-    rag.register(Supplier, follow=["profile"])
+    _register_suppliers_following_their_profile()
 
     # Created outside the captured callbacks: the commit callback of the
     # Supplier's own save never runs, so only the profile's save below is
@@ -3064,6 +3639,92 @@ def test_saving_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it
 
 
 @pytest.mark.django_db
+def test_moving_a_followed_reverse_one_to_one_to_another_supplier_replaces_both_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_suppliers_following_their_profile()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's move below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    oak = Supplier.objects.create(name="Oak Yard")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.supplier = oak
+        profile.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Supplier is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Suppliers' groups as committed: the old Supplier is left with its
+    # name alone, the new Supplier gains the profile's text.
+    assert received == {
+        f"testapp.supplier:{birch.pk}": [
+            NormalizedDocument(
+                text="Birch Mill",
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=birch.pk,
+                title="Birch Mill",
+            ),
+        ],
+        f"testapp.supplier:{oak.pk}": [
+            NormalizedDocument(
+                text="Oak Yard\n\nKiln-dried boards.",
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=oak.pk,
+                title="Oak Yard",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_deleting_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_suppliers_following_their_profile()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's delete below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Supplier's group as committed: the profile's text is gone, the
+    # Supplier's name stays alone.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                    title="Birch Mill",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -3071,9 +3732,7 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Warehouse is registered, following its shelves: Shelf itself is
-    # not.
-    rag.register(Warehouse, follow=["shelves"])
+    _register_warehouses_following_their_shelves()
 
     # Created outside the captured callbacks: the commit callback of the
     # Warehouse's own save never runs, so only the shelf's save below is
@@ -3094,6 +3753,100 @@ def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group
             f"testapp.warehouse:{north.pk}": [
                 NormalizedDocument(
                     text="North depot\n\nTimber",
+                    source_app_label="testapp",
+                    source_model="warehouse",
+                    source_pk=north.pk,
+                    title="North depot",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_moving_a_followed_instance_linked_by_a_unique_column_replaces_both_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_warehouses_following_their_shelves()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the shelf's move below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    south = Warehouse.objects.create(name="South depot", code="south")
+    moved_shelf = Shelf.objects.create(warehouse=north, label="Timber")
+    Shelf.objects.create(warehouse=north, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The shelf's foreign key goes from the code "north" to the code
+        # "south", neither of them a primary key.
+        moved_shelf.warehouse = south
+        moved_shelf.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: whether the groups come in one call or one
+    # per Warehouse is not what this test is about.
+    received = _received_groups(built_outputs)
+    # Both Warehouses' groups as committed, under their primary keys, not their
+    # codes: the old Warehouse keeps only its remaining shelf's label, the new
+    # Warehouse gains the moved shelf's label.
+    assert received == {
+        f"testapp.warehouse:{north.pk}": [
+            NormalizedDocument(
+                text="North depot\n\nPaint",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=north.pk,
+                title="North depot",
+            ),
+        ],
+        f"testapp.warehouse:{south.pk}": [
+            NormalizedDocument(
+                text="South depot\n\nTimber",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=south.pk,
+                title="South depot",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_deleting_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_warehouses_following_their_shelves()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the shelf's delete below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    deleted_shelf = Shelf.objects.create(warehouse=north, label="Timber")
+    Shelf.objects.create(warehouse=north, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The deleted shelf's foreign key holds the Warehouse's code, "north",
+        # not its primary key.
+        deleted_shelf.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Warehouse's group as committed, under its primary key, not its code:
+    # the deleted shelf's label is gone, the remaining shelf's label stays
+    # after the Warehouse's name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.warehouse:{north.pk}": [
+                NormalizedDocument(
+                    text="North depot\n\nPaint",
                     source_app_label="testapp",
                     source_model="warehouse",
                     source_pk=north.pk,
@@ -3898,9 +4651,7 @@ def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_co
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Guild is registered, following its members through its own
-    # many-to-many ``members``: Craftsman itself is not.
-    rag.register(Guild, fields=["name"], follow=["members"])
+    _register_guilds_following_their_members()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and this add never run, so only the add below is observed. A
@@ -3928,6 +4679,56 @@ def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_co
             f"testapp.guild:{north.pk}": [
                 NormalizedDocument(
                     text="North guild\n\nCarpenter",
+                    source_app_label="testapp",
+                    source_model="guild",
+                    source_pk=north.pk,
+                    title="North guild",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_removing_a_guild_from_a_craftsman_replaces_the_guilds_group_named_by_its_code(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_guilds_following_their_members()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed. A
+    # guild's code, a slug, can never equal its integer primary key. The guild
+    # has two members, so that its group keeps the one left.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    mason = Craftsman.objects.create(name="Mason")
+    north = Guild.objects.create(name="North guild", code="north")
+    north.members.add(carpenter, mason)
+    # A guild the craftsman still belongs to after the remove below: its group
+    # does not change.
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(carpenter)
+
+    # Removed from the craftsman's side: Django sends m2m_changed with the
+    # craftsman as its instance, and names the guild by the column
+    # Membership.guild points to, its code, not by its primary key. Neither row
+    # is saved again: the remove deletes only the membership between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        carpenter.guilds.remove(north)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The removed Guild's group as committed: the craftsman's name is gone,
+    # only the Guild's own name and its other member's name are left. No group
+    # of the guild the craftsman still belongs to.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.guild:{north.pk}": [
+                NormalizedDocument(
+                    text="North guild\n\nMason",
                     source_app_label="testapp",
                     source_model="guild",
                     source_pk=north.pk,
@@ -3989,6 +4790,112 @@ def test_clearing_the_members_of_a_guild_replaces_the_group_of_each_craftsman_in
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_adding_a_musician_to_a_band_replaces_the_musicians_group_named_by_its_handle(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key.
+    quartet = Band.objects.create(name="Quartet")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician already in the band: the add below does not change its group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ben)
+
+    # Added from the band's side: Django sends m2m_changed with the band as its
+    # instance, and names the musician by the column Engagement.musician points
+    # to, its handle, not by its primary key. Neither row is saved again: the
+    # add writes only the engagement between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.add(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Musician's group as committed: its name, then its new band's
+    # name. No group of the musician already in the band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nQuartet",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # band holds two musicians, so that the clear removes more than one link;
+    # one of them plays in another band too, so that its group keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A musician not in the band: the clear below does not change its group.
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    trio.musicians.add(cleo)
+
+    # Cleared from the band's side: Django sends m2m_changed with the band as
+    # its instance and no primary keys at all, so its musicians can only be
+    # found before the clear, by the engagements naming them by the column
+    # Engagement.musician points to, their handle, not by their primary key. No
+    # row is saved again: the clear deletes only the engagements of the band.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of both musicians as committed, each without
+    # the cleared band's name: the one playing in another band keeps that
+    # band's name. No group of the musician never in the band.
+    assert _received_groups(built_outputs) == {
+        f"testapp.musician:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nTrio",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.musician:{ben.pk}": [
+            NormalizedDocument(
+                text="Ben",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=ben.pk,
+                title="Ben",
+            ),
+        ],
+    }
 
 
 @pytest.mark.django_db
@@ -4634,6 +5541,55 @@ def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_sem
             ],
         }
     ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_venue_read_through_a_multi_column_lookup_path_sends_only_seminars(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, reading its venue's name through a lookup
+    # path across the multi-column ForeignObject ``venue``, CASCADE on delete:
+    # Venue itself is not.
+    rag.register(Seminar, fields=["title", "venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's delete below is observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+    rigging = Seminar.objects.create(
+        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
+    )
+    acoustics_pk = acoustics.pk
+    rigging_pk = rigging.pk
+    # Another venue of the same city: only both columns together name a venue,
+    # so its seminar is neither deleted with the hall nor sent.
+    _create_the_transbordeur_and_its_seminar()
+
+    # The seminars are deleted with the venue by cascade: they are found as its
+    # readers before the delete, yet no longer exist at the commit.
+    with django_capture_on_commit_callbacks(execute=True):
+        hall.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The seminars' empty groups, merged across replace calls: whether they
+    # come in one call or one per seminar is not what this test is about. No
+    # group still carrying the deleted venue's name, none for the venue.
+    assert _received_groups(built_outputs) == {
+        f"testapp.seminar:{acoustics_pk}": [],
+        f"testapp.seminar:{rigging_pk}": [],
+    }
+    # Each group sent once: no replacement of a seminar's group follows its
+    # empty one.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [f"testapp.seminar:{acoustics_pk}", f"testapp.seminar:{rigging_pk}"]
+    )
 
 
 @pytest.mark.django_db
@@ -5825,6 +6781,56 @@ def test_saving_a_registered_instance_in_a_rolled_back_transaction_sends_nothing
         Category.objects.create(name="Lighting")
         raise _RolledBackError
 
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_plugin_saved_in_a_rolled_back_transaction_page_following_it_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Created before Page is registered: in autocommit (transaction=True),
+    # their own commit callbacks would otherwise run, and send the page's group.
+    about = Page.objects.create(title="About us", slug="about-us")
+    chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+
+    _register_pages_following_their_plugins()
+
+    # A real transaction (transaction=True), so that leaving the atomic block
+    # on an exception rolls it back rather than a savepoint of the test's own.
+    with pytest.raises(_RolledBackError), transaction.atomic():
+        chairs.body = "We build chairs and tables by hand."
+        chairs.save()
+        raise _RolledBackError
+
+    # Not the page's group, nor any other: no replace call at all.
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_topic_added_to_a_course_in_a_rolled_back_transaction_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Created before Course is registered, and not linked: in autocommit
+    # (transaction=True), their own commit callbacks would otherwise run, and
+    # send the course's group.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    _register_courses_following_their_topics()
+
+    # A real transaction (transaction=True), so that leaving the atomic block
+    # on an exception rolls it back rather than a savepoint of the test's own.
+    with pytest.raises(_RolledBackError), transaction.atomic():
+        basics.topics.add(woodworking)
+        raise _RolledBackError
+
+    # Not the course's group, nor any other: no replace call at all.
     assert _replaced(built_outputs) == []
 
 

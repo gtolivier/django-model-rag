@@ -162,24 +162,42 @@ def remember_followers_before_save(
     # Followers reaching the row through foreign keys are looked up by its
     # primary key, joined against the columns still in the database: pre_save
     # runs before the UPDATE, so they are those naming the row as committed,
-    # even by columns the save changes, without loading it. The lookup at the
-    # commit finds only those naming the row as saved.
+    # even by columns the save changes, without loading it. At the commit, both
+    # these and the reverse followers are looked up from the row as saved: only
+    # the lookups made here find the followers it had before the save.
     setattr(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-        _committed_reverse_followers(sender, instance.pk)
-        + _followers_reaching(sender, instance),
+        _committed_followers(sender, instance),
+    )
+
+
+def _committed_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance``'s row as committed.
+
+    Those reaching it through foreign keys are looked up by its primary key,
+    and those it points to through a reverse relation from the committed row.
+    """
+    return _followers_reaching(sender, instance) + _committed_reverse_followers(
+        sender, instance.pk
     )
 
 
 def _committed_reverse_followers(sender: type[Model], pk: Any) -> list[_Follower]:
     """Return the rows following, through a reverse relation, the committed row.
 
-    The save may change the foreign keys the row points to them by: those it
-    pointed to before are found from the row as committed.
+    The row points to them by its foreign keys, read as committed: before the
+    save, they are those it pointed to before, even if the save changes them;
+    at the commit, those it points to then, even through a write sending no
+    signal.
     """
-    # A model followed only through foreign keys costs the save no row loading.
+    # A model followed only through foreign keys costs no row loading.
     if not _is_followed_through_reverse_relations(sender):
+        return []
+
+    if pk is None:
+        # A row deleted since its save has lost its primary key: no committed
+        # row has it, and looking for one would query for nothing.
         return []
 
     committed_instance = _committed_instance(sender._base_manager.all(), pk)
@@ -201,9 +219,9 @@ def sync_saved_instance(
     Those are the instance's own group if ``sender`` feeds a registered model,
     and the groups of its followers — the registered rows following it, before
     the save and after it — whether or not ``sender`` is registered itself.
-    Those reaching a row saved before through foreign keys are looked up again
-    at the commit. The output configuration was checked before the save, by
-    check_output_before_save.
+    The followers of a row saved before, or of a new row that already has
+    some, are looked up again at the commit. The output configuration was
+    checked before the save, by check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
@@ -215,10 +233,11 @@ def sync_saved_instance(
     followers_at_save = _reverse_followers(sender, instance) + instance.__dict__.pop(
         _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
     )
-    # A row just created has no follower pointing to it at its save.
-    if not created and _is_followed_through_lookups(sender):
-        # Rows may be attached to it before the commit, by a write that sends
-        # no signal: its followers are looked up then.
+    # A row just created has no follower pointing to it at its save, and
+    # costs the commit no lookup unless it points to a follower.
+    if (followers_at_save or not created) and _is_followed(sender):
+        # Rows may be attached to it, or it to other rows, before the commit,
+        # by a write that sends no signal: its followers are looked up then.
         transaction.on_commit(
             partial(
                 _replace_followers_as_committed,
@@ -399,15 +418,16 @@ def _replace_followers_as_committed(
     instance: Model,
     followers_at_save: list[_Follower],
 ) -> None:
-    """Replace the groups of ``followers_at_save`` and of the rows reaching it now.
+    """Replace the groups of ``followers_at_save`` and of the rows following it now.
 
-    Those reach the row through foreign keys at the commit: rows attached after
-    the save, in the same transaction, follow it too. If looking them up fails,
+    Those are looked up from the row as committed: rows attached after the
+    save, in the same transaction, follow it too, and so do the rows a write
+    sending no signal has since pointed it to. If looking them up fails,
     ``followers_at_save`` are still replaced.
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = _followers_reaching(sender, instance) + followers_at_save
+        followers = _committed_followers(sender, instance) + followers_at_save
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)

@@ -839,9 +839,20 @@ or a `GenericRelation` in `follow`.
   - Converting a `to_field` value to a primary key is written twice: in
     `_follower_pks`, next to a branch for multi-column relations, and in
     `_primary_keys_named`.
-  - Only forward followers are looked up again at the commit: the branch
-    `if not created and _is_followed_through_lookups(sender)` in
-    `sync_saved_instance`.
+  - Only forward followers were looked up again at the commit. Filling the
+    test gaps found the bug: a plugin moved by `update()` after its own
+    save left its new page stale. The commit now also loads the committed
+    reverse followers (`_committed_reverse_followers`): on each update of a
+    row followed in reverse, one more query loading the whole row, plus one
+    per relation with a `to_field` or several columns (`_follower_pks`).
+    A row just created is looked up again at the commit only when it
+    already points to a follower — a plugin created on one page, then moved
+    by `update()` to another in the same transaction. One that points to
+    none still costs its creation nothing more than the INSERT: rows
+    attached to it by `update()` before the commit are not seen, as with
+    any `update()` that no save follows.
+    In autocommit the commit callback runs at once and finds nothing the
+    save did not; the lookups will need the same care.
   - `_pks_reaching` returns nothing for a `None` primary key, that of a row
     deleted since its save.
   - Every `pre_add`, `pre_remove` and `pre_clear` drops the keys a failed
@@ -873,11 +884,24 @@ or a `GenericRelation` in `follow`.
 
   Planned before 12a, which then rewires one mechanism rather than three.
   Steps, each small enough for one session:
-  - [ ] **Spike**, on a throwaway branch: find the reverse followers
+  - [x] **Spike**, on a throwaway branch: find the reverse followers
     through lookups, tests unchanged; count the failing tests, the lines
     removed and the queries added. Decides whether the rest goes ahead.
-  - [ ] **Fill the test gaps above**, before changing the code. Most
-    should pass today; one that fails is a bug found.
+    Results: 539 of 540 tests pass unchanged; the one failure checked a
+    shortcut (a row created with a null foreign key scheduled nothing for
+    the commit), not a result. `src/` loses 101 lines (`signals.py` 669 →
+    593). Reverse multi-column relations need no code of their own. Each
+    write costs one more query (a plugin saved: 6 → 7), but a cascade
+    costs one lookup per deleted row (a page with 20 plugins: 25 → 45
+    queries), where main read the foreign key in memory. Five more lines
+    follow a `GenericRelation` through the same lookups. Decision: go
+    ahead, lookups on every write; whether deletes keep the in-memory read
+    is decided in "Reverse relations onto lookups".
+  - [x] **Fill the test gaps above**, before changing the code. Most
+    should pass today; one that fails is a bug found. 21 tests: 19
+    passed as written; the two that failed — a plugin moved by `update()`
+    after its own save, and one created then moved the same way in its
+    transaction — were fixed (see the second patch above).
   - [ ] **Reverse relations onto lookups**, the suite green after each
     change.
   - [ ] **Many-to-many links onto lookups.**
