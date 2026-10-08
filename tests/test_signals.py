@@ -1176,6 +1176,156 @@ def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_gr
     assert _replaced(built_outputs) == expected
 
 
+# The model of the row a follower's path ends on, the row written.
+TargetT = TypeVar("TargetT", bound=Model)
+# The model of the follower whose group is built, and of the target it is on.
+FollowerT_contra = TypeVar("FollowerT_contra", bound=Model, contravariant=True)
+TargetT_contra = TypeVar("TargetT_contra", bound=Model, contravariant=True)
+
+
+class _GroupOnTarget(Protocol[FollowerT_contra, TargetT_contra]):
+    """The group a follower leaves as committed, its path ending on the given
+    target: ``target`` is keyword-only, so that each write says which."""
+
+    def __call__(
+        self, follower: FollowerT_contra, /, *, target: TargetT_contra
+    ) -> dict[str, list[NormalizedDocument]]: ...
+
+
+@dataclass(frozen=True, kw_only=True)
+class _TargetCase(Generic[TargetT, FollowerT]):
+    """What a declaration and a relation provide to the writes of a row its
+    follower's path ends on: the writes themselves are generic over cases."""
+
+    # Registers the follower's model and its declaration.
+    register: Callable[[], None]
+    # The target the writes are performed on.
+    create_target: Callable[[], TargetT]
+    # Another target, with a follower of its own, that no write touches.
+    create_other_target: Callable[[], TargetT]
+    # Creates a follower whose path ends on the given target.
+    create_follower_on: Callable[[TargetT], FollowerT]
+    # Changes a value of the target its follower reads, without saving it.
+    change_target: Callable[[TargetT], None]
+    # The follower's group as committed, under its source key, its path ending
+    # on the given target.
+    group_of: _GroupOnTarget[FollowerT, TargetT]
+
+
+def _create_the_lighting_category() -> Category:
+    """Create the Lighting category."""
+    return Category.objects.create(name="Lighting")
+
+
+def _create_the_tools_category() -> Category:
+    """Create the Tools category."""
+    return Category.objects.create(name="Tools")
+
+
+def _rename_the_category(category: Category) -> None:
+    """Rename the given category to Lamps, without saving it."""
+    category.name = "Lamps"
+
+
+def _register_products_following_their_category() -> None:
+    """Register Product, following its category through its own foreign key:
+    Category itself is not registered."""
+    rag.register(Product, fields=["name"], follow=["category"])
+
+
+def _group_of_a_desk_lamp_following_its_category(
+    product: Product, /, *, target: Category
+) -> dict[str, list[NormalizedDocument]]:
+    """The desk lamp's group: its name, then its category's name."""
+    return {
+        f"testapp.product:{product.pk}": [
+            NormalizedDocument(
+                text=f"Desk lamp\n\n{target.name}",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=product.pk,
+                title="Desk lamp",
+                url=f"/products/{product.pk}/",
+            ),
+        ],
+    }
+
+
+# `follow` through a forward foreign key: only Product is registered,
+# following its category (Category is not); the product holds the key to the
+# category, the row written.
+FOLLOW_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
+    register=_register_products_following_their_category,
+    create_target=_create_the_lighting_category,
+    create_other_target=_create_the_tools_category,
+    create_follower_on=_create_a_plain_desk_lamp,
+    change_target=_rename_the_category,
+    group_of=_group_of_a_desk_lamp_following_its_category,
+)
+
+
+class _TargetWrite(Protocol):
+    """A write of a target, generic over the case it is performed on."""
+
+    def __call__(self, case: _TargetCase[TargetT, FollowerT], /) -> Act: ...
+
+
+def _save_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
+    """The target changed and saved: one call, its follower's group."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the target's save is. The other target and its
+    # follower are left untouched.
+    target = case.create_target()
+    follower = case.create_follower_on(target)
+    case.create_follower_on(case.create_other_target())
+
+    def act() -> ReplaceCalls:
+        case.change_target(target)
+        target.save()
+        return [case.group_of(follower, target=target)]
+
+    return act
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "write",
+    [
+        pytest.param(_save_the_target, id="save"),
+    ],
+)
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(FOLLOW_FORWARD_FOREIGN_KEY, id="follow-forward_foreign_key"),
+    ],
+)
+def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
+    # Any: the cases pair different models, and _TargetCase is invariant in
+    # both, so no single precise type covers them all.
+    case: _TargetCase[Any, Any],
+    write: _TargetWrite,
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # The case registers its models; the write creates the rows it needs,
+    # outside the captured callbacks.
+    case.register()
+    act = write(case)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        expected = act()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Exactly the replace calls the write must send, in call order: none for
+    # the other target's follower.
+    assert _replaced(built_outputs) == expected
+
+
 @pytest.mark.django_db
 def test_saving_a_category_followed_by_foreign_key_replaces_the_group_that_follows_it(
     settings: Settings,
