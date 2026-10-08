@@ -818,6 +818,72 @@ or a `GenericRelation` in `follow`.
   would fix it, but a `remove()` would then resync twice: once through
   `m2m_changed`, once through the deletes of its join rows, which the
   listeners would make Django send.
+- [ ] **11e. One way to find the rows following a written row.** Features
+  11a to 11d answered one question — which registered rows read the row
+  being written, before the write and at the commit — in three ways, one
+  per kind of relation, and solved the before/after problem once in each:
+  - **Reverse relations (11a)**: `_reverse_followers` reads the foreign key
+    the written row holds, in memory. To find the follower of a row being
+    moved, `pre_save` loads the committed row
+    (`_committed_reverse_followers`). Nothing is looked up at the commit.
+  - **Forward foreign keys, lookup paths, `depends_on` (11b to 11c-ter)**:
+    `_followers_reaching` runs `filter(<lookup>__pk=pk)`, in `pre_save` and
+    again at the commit. The ORM does the joins: `to_field`, multi-column
+    relations, chains, parent links and proxies need no code of their own.
+  - **Many-to-many links (11d)**: `sync_changed_relation` reads `pk_set`,
+    or the join rows in `pre_clear` (`_remember_cleared_pks`), through the
+    keys of the through model (`_through_keys`).
+
+  The patches this left, found while mapping the signal tests:
+  - Converting a `to_field` value to a primary key is written twice: in
+    `_follower_pks`, next to a branch for multi-column relations, and in
+    `_primary_keys_named`.
+  - Only forward followers are looked up again at the commit: the branch
+    `if not created and _is_followed_through_lookups(sender)` in
+    `sync_saved_instance`.
+  - `_pks_reaching` returns nothing for a `None` primary key, that of a row
+    deleted since its save.
+  - Every `pre_add`, `pre_remove` and `pre_clear` drops the keys a failed
+    clear left behind.
+  - The tests follow the same split. A reverse foreign key in `follow` is
+    tested on save, move and delete; a reverse one-to-one, a reverse
+    foreign key with a `to_field` and a reverse relation in `depends_on`
+    only on save. Not tested either: a remove or a clear through
+    `depends_on`; a remove through a custom through model; the
+    `Band` / `Engagement` pair, with a `to_field` on the far side of the
+    through model; deleting a `Venue`, a `Depot`, or the target of a
+    language or URL path; writes that send no signal after a save, through
+    `follow` or a lookup path; a rollback with followers or many-to-many
+    links.
+
+  The hypothesis: a reverse relation is a lookup too.
+  `Page._base_manager.filter(text_plugins__pk=plugin.pk)` finds the
+  plugin's old page in `pre_save`, the database still holding the old row,
+  and its new page at the commit. A clear is the same lookup from the other
+  side, run in `pre_clear`. A lookup before the write and one at the
+  commit, over every kind of relation, would replace
+  `_committed_reverse_followers`, both conversions, the multi-column branch
+  and most of the many-to-many code. Cost: one more lookup at the commit
+  per reverse relation followed; saving a row followed in reverse already
+  loads its committed row today. Unverified: lookups through a reverse
+  multi-column relation, and through a `GenericRelation`
+  (`Photo._base_manager.filter(tags__pk=...)`), which would lift a
+  documented limit.
+
+  Its place in the order above is not decided yet. Steps, each small
+  enough for one session:
+  - [ ] **Spike**, on a throwaway branch: find the reverse followers
+    through lookups, tests unchanged; count the failing tests, the lines
+    removed and the queries added. Decides whether the rest goes ahead.
+  - [ ] **Fill the test gaps above**, before changing the code. Most
+    should pass today; one that fails is a bug found.
+  - [ ] **Reverse relations onto lookups**, the suite green after each
+    change.
+  - [ ] **Many-to-many links onto lookups.**
+  - [ ] **Parametrize the signal tests** by declaration × relation ×
+    write, in place of one hand-written test per combination.
+  - [ ] **Revisit the limits this may lift**: a lookup path past a reverse
+    one-to-one, a `GenericRelation` in `follow`, 11c-quater.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `m2m_changed` receiver of 11d and the `post_delete` listeners
