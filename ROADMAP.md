@@ -845,6 +845,12 @@ or a `GenericRelation` in `follow`.
     reverse followers (`_committed_reverse_followers`): on each update of a
     row followed in reverse, one more query loading the whole row, plus one
     per relation with a `to_field` or several columns (`_follower_pks`).
+    A row just created is looked up again at the commit only when it
+    already points to a follower — a plugin created on one page, then moved
+    by `update()` to another in the same transaction. One that points to
+    none still costs its creation nothing more than the INSERT: rows
+    attached to it by `update()` before the commit are not seen, as with
+    any `update()` that no save follows.
     In autocommit the commit callback runs at once and finds nothing the
     save did not; the lookups will need the same care.
   - `_pks_reaching` returns nothing for a `None` primary key, that of a row
@@ -892,9 +898,10 @@ or a `GenericRelation` in `follow`.
     ahead, lookups on every write; whether deletes keep the in-memory read
     is decided in "Reverse relations onto lookups".
   - [x] **Fill the test gaps above**, before changing the code. Most
-    should pass today; one that fails is a bug found. 20 tests: 19
-    passed as written; the one that failed — a plugin moved by `update()`
-    after its own save — was fixed (see the second patch above).
+    should pass today; one that fails is a bug found. 21 tests: 19
+    passed as written; the two that failed — a plugin moved by `update()`
+    after its own save, and one created then moved the same way in its
+    transaction — were fixed (see the second patch above).
   - [ ] **Reverse relations onto lookups**, the suite green after each
     change.
   - [ ] **Many-to-many links onto lookups.**
