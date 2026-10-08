@@ -1040,7 +1040,13 @@ FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY: _FollowedCase[Team, Match] = _FollowedCase
 Act = Callable[[], ReplaceCalls]
 
 
-def _create(case: _FollowedCase[Any, Any]) -> Act:
+class _Write(Protocol):
+    """A write of a holding row, generic over the case it is performed on."""
+
+    def __call__(self, case: _FollowedCase[FollowerT, HolderT], /) -> Act: ...
+
+
+def _create(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row created on a follower: one call, the follower's group and
     those of the other rows it names, each once."""
     # Created before the write: the commit callback of its own save is not
@@ -1060,7 +1066,7 @@ def _create(case: _FollowedCase[Any, Any]) -> Act:
     return act
 
 
-def _move(case: _FollowedCase[Any, Any]) -> Act:
+def _move(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row moved to another follower by ``save()``: one call, both
     followers' groups and those of the other rows it names, each once."""
     # Created before the write: the commit callbacks of these saves are not
@@ -1086,7 +1092,7 @@ def _move(case: _FollowedCase[Any, Any]) -> Act:
     return act
 
 
-def _delete(case: _FollowedCase[Any, Any]) -> Act:
+def _delete(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row deleted: one call, the follower's group and those of the
     other rows it named, each once."""
     # Created before the write: the commit callbacks of these saves are not
@@ -1144,8 +1150,10 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
+    # Any: the cases pair different models, and _FollowedCase is invariant in
+    # both, so no single precise type covers them all.
     case: _FollowedCase[Any, Any],
-    write: Callable[[_FollowedCase[Any, Any]], Act],
+    write: _Write,
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
