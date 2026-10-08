@@ -2194,28 +2194,29 @@ def test_moving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # Merged across replace calls: whether the groups come in one call or one
-    # per Supplier is not what this test is about. Both Suppliers' groups as
-    # committed: the old Supplier is left with its name alone, the new
-    # Supplier gains the profile's text.
-    assert _received_groups(built_outputs) == {
-        f"testapp.supplier:{birch.pk}": [
-            NormalizedDocument(
-                text="Birch Mill",
-                source_app_label="testapp",
-                source_model="supplier",
-                source_pk=birch.pk,
-            ),
-        ],
-        f"testapp.supplier:{oak.pk}": [
-            NormalizedDocument(
-                text="Oak Yard\n\nKiln-dried boards.",
-                source_app_label="testapp",
-                source_model="supplier",
-                source_pk=oak.pk,
-            ),
-        ],
-    }
+    # One replace call carrying both Suppliers' groups as committed, each sent
+    # once: the old Supplier is left with its name alone, the new Supplier
+    # gains the profile's text.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                ),
+            ],
+            f"testapp.supplier:{oak.pk}": [
+                NormalizedDocument(
+                    text="Oak Yard\n\nKiln-dried boards.",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=oak.pk,
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
@@ -2238,19 +2239,20 @@ def test_deleting_a_profile_a_custom_extractor_depends_on_by_its_accessor_replac
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # Merged across replace calls: how the groups are batched is not what this
-    # test is about. The Supplier's group as committed: the profile's text is
+    # The Supplier's group as committed, sent once: the profile's text is
     # gone, the Supplier's name stays alone.
-    assert _received_groups(built_outputs) == {
-        f"testapp.supplier:{birch.pk}": [
-            NormalizedDocument(
-                text="Birch Mill",
-                source_app_label="testapp",
-                source_model="supplier",
-                source_pk=birch.pk,
-            ),
-        ],
-    }
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db
