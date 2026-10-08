@@ -3977,6 +3977,56 @@ def test_moving_a_followed_instance_linked_by_a_unique_column_replaces_both_grou
 
 
 @pytest.mark.django_db
+def test_updating_a_followed_instance_linked_by_a_unique_column_reads_it_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_warehouses_following_their_shelves()
+
+    # Created outside the counted queries: only the shelf's update below is
+    # observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    shelf = Shelf.objects.create(warehouse=north, label="Timber")
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: the lookup of the Warehouse before the save,
+    # the save's UPDATE, the lookup of the Warehouse from the row as
+    # committed, then the three reads of the Warehouse's group. The Warehouse
+    # is not also read at post_save by the code the shelf holds in memory: the
+    # lookup at the commit already finds it.
+    with (
+        django_assert_num_queries(6) as queries,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the shelf's foreign key still holds the
+        # Warehouse's code, "north", not its primary key.
+        shelf.label = "Paint"
+        shelf.save()
+
+    # No query turns the code the shelf holds into the Warehouse's primary key.
+    by_code = 'FROM "testapp_warehouse" WHERE "testapp_warehouse"."code"'
+    assert not [query for query in queries.captured_queries if by_code in query["sql"]]
+    # The Warehouse's group, once, under its primary key, not its code.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.warehouse:{north.pk}": [
+                NormalizedDocument(
+                    text="North depot\n\nPaint",
+                    source_app_label="testapp",
+                    source_model="warehouse",
+                    source_pk=north.pk,
+                    title="North depot",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_deleting_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
