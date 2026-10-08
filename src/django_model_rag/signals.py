@@ -18,7 +18,7 @@ from django.db.models import (
 )
 
 from django_model_rag.documents import model_source_key
-from django_model_rag.extractors import through_key_to_parent
+from django_model_rag.extractors import query_name, through_key_to_parent
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag
@@ -500,11 +500,11 @@ def _followers_pointed_to(sender: type[Model], instance: Model) -> list[_Followe
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         for relation in _followed_reverse_relations(registered_model, sender)
-        # The relation's query name, not its accessor, is the lookup; it may
-        # start from a multi-table parent, whose row is reached by the parent link.
+        # The relation may start from a multi-table parent, whose row is
+        # reached by the parent link.
         for follower_pk in _pks_reaching(
             registered_model,
-            relation.name,
+            query_name(relation),
             _group_pk(instance, relation.related_model),
         )
     ]
