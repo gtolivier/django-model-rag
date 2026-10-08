@@ -6123,7 +6123,7 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
     _create_a_seminar_at(hall)
 
     with django_capture_on_commit_callbacks(execute=True):
-        moved_seminar.venue_name = "Transbordeur"
+        moved_seminar.venue_name = transbordeur.name
         moved_seminar.save()
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
