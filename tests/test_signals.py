@@ -1216,6 +1216,11 @@ class _TargetCase(Generic[TargetT, FollowerT]):
     group_once_target_deleted: Callable[
         [FollowerT], dict[str, list[NormalizedDocument]]
     ]
+    # For a follower pointing to its target by a column other than its primary
+    # key only: changes that column on the target, saves it, then moves its
+    # followers to the new value by a queryset update, which sends no signal.
+    # A case that provides it gets the "change key" write too.
+    change_key: Callable[[TargetT], None] | None = None
 
 
 def _whatever_the_target(
@@ -1651,6 +1656,21 @@ def _group_of_a_shelf_deleted_by_cascade(
     return {f"testapp.shelf:{shelf.pk}": []}
 
 
+def _recode_the_warehouse_moving_its_shelves(warehouse: Warehouse) -> None:
+    """Change the given warehouse's code to north-hall and save it, then move
+    its shelves to the new code."""
+    old_code = warehouse.code
+    # The code is the column the shelves point to the warehouse by: at the
+    # save, the warehouse's shelf still holds the old code, so only the
+    # warehouse as it was before the save tells which shelves named it.
+    warehouse.code = "north-hall"
+    warehouse.save()
+    # The shelves are then moved to the new code, in the same transaction, by
+    # an update that sends no signal: the foreign key constraint is checked at
+    # the commit, and the shelf's own save is not observed.
+    Shelf.objects.filter(warehouse_id=old_code).update(warehouse_id=warehouse.code)
+
+
 # `follow` through a forward foreign key to a unique column: only Shelf is
 # registered, following its warehouse (Warehouse is not); the shelf holds the
 # key to the warehouse, the Warehouse's code rather than its primary key, the
@@ -1664,6 +1684,7 @@ FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD: _TargetCase[Warehouse, Shelf] = _TargetCase
     change_target=_rename_the_warehouse,
     group_of=_group_of_a_timber_shelf_following_its_warehouse,
     group_once_target_deleted=_group_of_a_shelf_deleted_by_cascade,
+    change_key=_recode_the_warehouse_moving_its_shelves,
 )
 
 
@@ -1710,39 +1731,64 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     return act
 
 
+def _change_the_target_key(case: _TargetCase[TargetT, FollowerT]) -> Act:
+    """The target's key changed and saved, its followers then moved to the new
+    key without a signal: one call, its follower's group as committed."""
+    change_key = case.change_key
+    # Paired only with the cases that provide a key change.
+    assert change_key is not None
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the target's key change is. The other target and its
+    # follower are left untouched.
+    target = case.create_target()
+    follower = case.create_follower_on(target)
+    case.create_follower_on(case.create_other_target(target))
+
+    def act() -> ReplaceCalls:
+        change_key(target)
+        return [case.group_of(follower, target=target)]
+
+    return act
+
+
+# Any: the cases pair different models, and _TargetCase is invariant in both,
+# so no single precise type covers them all.
+_TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
+    (FOLLOW_FORWARD_FOREIGN_KEY, "follow-forward_foreign_key"),
+    (FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL, "follow-forward_foreign_key_set_null"),
+    (PATH_FORWARD_FOREIGN_KEY, "path-forward_foreign_key"),
+    (PATH_FORWARD_FOREIGN_KEY_SET_NULL, "path-forward_foreign_key_set_null"),
+    (DEPENDS_ON_FORWARD_FOREIGN_KEY, "depends_on-forward_foreign_key"),
+    (
+        DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
+        "depends_on-forward_foreign_key_set_null",
+    ),
+    (FOLLOW_FORWARD_ONE_TO_ONE, "follow-forward_one_to_one"),
+    (FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD, "follow-forward_foreign_key_to_field"),
+]
+
+
+def _target_writes_of(
+    case: _TargetCase[TargetT, FollowerT],
+) -> list[tuple[_TargetWrite, str]]:
+    """The writes the given case is performed with: every case is saved and
+    deleted; only a case providing a key change gets its key changed."""
+    writes: list[tuple[_TargetWrite, str]] = [
+        (_save_the_target, "save"),
+        (_delete_the_target, "delete"),
+    ]
+    if case.change_key is not None:
+        writes.append((_change_the_target_key, "change_key"))
+    return writes
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
-    "write",
+    ("case", "write"),
     [
-        pytest.param(_save_the_target, id="save"),
-        pytest.param(_delete_the_target, id="delete"),
-    ],
-)
-@pytest.mark.parametrize(
-    "case",
-    [
-        pytest.param(FOLLOW_FORWARD_FOREIGN_KEY, id="follow-forward_foreign_key"),
-        pytest.param(
-            FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL,
-            id="follow-forward_foreign_key_set_null",
-        ),
-        pytest.param(PATH_FORWARD_FOREIGN_KEY, id="path-forward_foreign_key"),
-        pytest.param(
-            PATH_FORWARD_FOREIGN_KEY_SET_NULL,
-            id="path-forward_foreign_key_set_null",
-        ),
-        pytest.param(
-            DEPENDS_ON_FORWARD_FOREIGN_KEY, id="depends_on-forward_foreign_key"
-        ),
-        pytest.param(
-            DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
-            id="depends_on-forward_foreign_key_set_null",
-        ),
-        pytest.param(FOLLOW_FORWARD_ONE_TO_ONE, id="follow-forward_one_to_one"),
-        pytest.param(
-            FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD,
-            id="follow-forward_foreign_key_to_field",
-        ),
+        pytest.param(case, write, id=f"{case_id}-{write_id}")
+        for case, case_id in _TARGET_CASES
+        for write, write_id in _target_writes_of(case)
     ],
 )
 def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
