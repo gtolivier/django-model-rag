@@ -555,6 +555,78 @@ def test_saving_a_followed_related_instance_replaces_the_group_that_follows_it(
     ]
 
 
+# The replace calls an output receives, in call order.
+ReplaceCalls = list[Mapping[str, Sequence[NormalizedDocument]]]
+
+# A write and the replace calls it must send once its transaction commits.
+Write = Callable[[], ReplaceCalls]
+
+
+def _create_a_plugin_on_a_page_following_its_plugins() -> Write:
+    """Arrange `follow` through a reverse foreign key, written by a creation.
+
+    Only Page is registered, following its text plugins: TextPlugin is not.
+    The plugin created holds the key to its Page.
+    """
+    _register_pages_following_their_plugins()
+
+    # Created before the write: the commit callback of the Page's own save is
+    # not observed, so only the plugin's creation is.
+    page = Page.objects.create(title="About us", slug="about-us")
+
+    def write() -> ReplaceCalls:
+        TextPlugin.objects.create(page=page, body="We build chairs by hand.")
+        # One call: the Page's group as committed, with the plugin's text
+        # after the Page's own title.
+        return [
+            {
+                f"testapp.page:{page.pk}": [
+                    NormalizedDocument(
+                        text="About us\n\nWe build chairs by hand.",
+                        source_app_label="testapp",
+                        source_model="page",
+                        source_pk=page.pk,
+                        title="About us",
+                        url="/pages/about-us/",
+                    ),
+                ],
+            }
+        ]
+
+    return write
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        pytest.param(
+            _create_a_plugin_on_a_page_following_its_plugins,
+            id="follow-reverse_foreign_key-create",
+        ),
+    ],
+)
+def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
+    arrange: Callable[[], Write],
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Each case registers its models and creates the rows the write needs,
+    # outside the captured callbacks.
+    write = arrange()
+
+    with django_capture_on_commit_callbacks(execute=True):
+        expected = write()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Exactly the replace calls the write must send, in call order.
+    assert _replaced(built_outputs) == expected
+
+
 @pytest.mark.django_db
 def test_saving_a_category_followed_by_foreign_key_replaces_the_group_that_follows_it(
     settings: Settings,
