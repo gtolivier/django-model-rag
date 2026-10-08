@@ -1688,6 +1688,105 @@ FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD: _TargetCase[Warehouse, Shelf] = _TargetCase
 )
 
 
+def _register_bins_following_their_depot() -> None:
+    """Register Bin, following its depot through its own nullable foreign key,
+    which holds the Depot's code: Depot itself is not registered."""
+    rag.register(Bin, follow=["depot"])
+
+
+def _create_the_north_bin_depot() -> Depot:
+    """Create the North depot, coded "north"."""
+    return Depot.objects.create(name="North depot", code="north")
+
+
+def _create_a_bin_depot_coded_by_the_pk_of(depot: Depot) -> Depot:
+    """Create the South depot, coded by the given depot's primary key as text:
+    a bin matched by comparing that primary key with the stored code would be
+    this one's, not the given depot's."""
+    return Depot.objects.create(name="South depot", code=str(depot.pk))
+
+
+def _create_a_spare_parts_bin_in(depot: Depot) -> Bin:
+    """Create a Spare parts bin in the given depot: its foreign key holds the
+    depot's code, not its primary key."""
+    return Bin.objects.create(depot=depot, label="Spare parts")
+
+
+def _rename_the_depot(depot: Depot) -> None:
+    """Rename the given depot to North hall, without saving it."""
+    depot.name = "North hall"
+
+
+def _group_of_a_spare_parts_bin_following_its_depot(
+    bin_: Bin, /, *, target: Depot
+) -> dict[str, list[NormalizedDocument]]:
+    """The spare parts bin's group: its label, then its depot's name; its
+    label is its title too."""
+    return {
+        f"testapp.bin:{bin_.pk}": [
+            NormalizedDocument(
+                text=f"Spare parts\n\n{target.name}",
+                source_app_label="testapp",
+                source_model="bin",
+                source_pk=bin_.pk,
+                title="Spare parts",
+            ),
+        ],
+    }
+
+
+def _group_of_a_spare_parts_bin_whose_depot_is_nulled(
+    bin_: Bin,
+) -> dict[str, list[NormalizedDocument]]:
+    """The spare parts bin's group once its depot is deleted and its foreign
+    key set to null: the depot's name is gone, only its own label is left."""
+    return {
+        f"testapp.bin:{bin_.pk}": [
+            NormalizedDocument(
+                text="Spare parts",
+                source_app_label="testapp",
+                source_model="bin",
+                source_pk=bin_.pk,
+                title="Spare parts",
+            ),
+        ],
+    }
+
+
+def _recode_the_depot_moving_its_bins(depot: Depot) -> None:
+    """Change the given depot's code to north-hall and save it, then move its
+    bins to the new code."""
+    old_code = depot.code
+    # The depot is created with a code: its bins point to it by that code.
+    assert old_code is not None
+    # The code is the column the bins point to the depot by: at the save, the
+    # depot's bin still holds the old code, so only the depot as it was before
+    # the save tells which bins named it.
+    depot.code = "north-hall"
+    depot.save()
+    # The bins are then moved to the new code, in the same transaction, by an
+    # update that sends no signal: the foreign key constraint is checked at
+    # the commit, and the bin's own save is not observed.
+    Bin.objects.filter(depot_id=old_code).update(depot_id=depot.code)
+
+
+# `follow` through a nullable forward foreign key to a unique column: only Bin
+# is registered, following its depot (Depot is not); the bin holds the key to
+# the depot, the Depot's code rather than its primary key, the row written,
+# SET_NULL on delete. The other depot's code is the depot's primary key as
+# text.
+FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD_SET_NULL: _TargetCase[Depot, Bin] = _TargetCase(
+    register=_register_bins_following_their_depot,
+    create_target=_create_the_north_bin_depot,
+    create_other_target=_create_a_bin_depot_coded_by_the_pk_of,
+    create_follower_on=_create_a_spare_parts_bin_in,
+    change_target=_rename_the_depot,
+    group_of=_group_of_a_spare_parts_bin_following_its_depot,
+    group_once_target_deleted=_group_of_a_spare_parts_bin_whose_depot_is_nulled,
+    change_key=_recode_the_depot_moving_its_bins,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1765,6 +1864,10 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     ),
     (FOLLOW_FORWARD_ONE_TO_ONE, "follow-forward_one_to_one"),
     (FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD, "follow-forward_foreign_key_to_field"),
+    (
+        FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD_SET_NULL,
+        "follow-forward_foreign_key_to_field_set_null",
+    ),
 ]
 
 
