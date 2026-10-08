@@ -253,9 +253,10 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-What is left, in the order planned: 12a, which rewires every receiver, the
-`m2m_changed` one of 11d included. Then 12b, which needs the
-`MODEL_RAG_SYNC` setting of 12a. 10c stays postponed, 11c-quater and
+What is left, in the order planned: 11e, which brings the ways of finding
+followers down to one before 12a rewires them. Then 12a, which rewires
+every receiver, the `m2m_changed` one of 11d included. Then 12b, which
+needs the `MODEL_RAG_SYNC` setting of 12a. 10c stays postponed, 11c-quater and
 11d-bis are not planned, and neither is a path past a reverse one-to-one
 or a `GenericRelation` in `follow`.
 
@@ -870,8 +871,8 @@ or a `GenericRelation` in `follow`.
   (`Photo._base_manager.filter(tags__pk=...)`), which would lift a
   documented limit.
 
-  Its place in the order above is not decided yet. Steps, each small
-  enough for one session:
+  Planned before 12a, which then rewires one mechanism rather than three.
+  Steps, each small enough for one session:
   - [ ] **Spike**, on a throwaway branch: find the reverse followers
     through lookups, tests unchanged; count the failing tests, the lines
     removed and the queries added. Decides whether the rest goes ahead.
