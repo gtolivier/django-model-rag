@@ -209,7 +209,8 @@ def sync_saved_instance(
     Those are the instance's own group if ``sender`` feeds a registered model,
     and the groups of its followers — the registered rows following it, before
     the save and after it — whether or not ``sender`` is registered itself.
-    The followers of a row saved before are looked up again at the commit. The
+    The followers of a row saved before, or of a new row that already has
+    some, are looked up again at the commit. The
     output configuration was checked before the save, by
     check_output_before_save.
     """
