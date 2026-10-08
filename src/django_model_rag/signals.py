@@ -208,9 +208,10 @@ def sync_saved_instance(
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
     # At post_save the instance is the row as saved: a change left unsaved in
     # memory afterwards is not followed.
-    followers_at_save = _reverse_followers(sender, instance) + instance.__dict__.pop(
-        _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
-    )
+    followers_at_save = instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
+    # The commit looks up again the followers a row saved before points to.
+    if created or not _is_followed(sender):
+        followers_at_save = _reverse_followers(sender, instance) + followers_at_save
     # A row just created has no follower pointing to it at its save, and
     # costs the commit no lookup unless it points to a follower.
     if (followers_at_save or not created) and _is_followed(sender):
