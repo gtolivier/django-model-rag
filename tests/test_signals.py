@@ -194,6 +194,21 @@ def _register_venues_following_their_seminars() -> None:
     rag.register(Venue, fields=["name"], follow=["seminars"])
 
 
+def _register_venues_by_their_seminar_titles() -> None:
+    """Register only Venue, with a custom extractor reading its name, then the
+    titles of its seminars: depends_on names the reverse of the multi-column
+    ForeignObject ``venue``, ``seminars``, whose saves change its documents.
+    Seminar itself is not registered."""
+
+    @rag.register_extractor(Venue, depends_on=["seminars"])
+    class VenueExtractor(BaseExtractor[Venue]):
+        def extract(self, instance: Venue) -> NormalizedDocument:
+            titles = [seminar.title for seminar in instance.seminars.order_by("pk")]
+            return self.build_document(
+                instance, text="\n\n".join([instance.name, *titles])
+            )
+
+
 def _register_suppliers_following_their_profile() -> None:
     """Register only Supplier, following its profile by the reverse one-to-one
     accessor ``profile``: SupplierProfile itself is not."""
@@ -866,6 +881,38 @@ FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
 )
 
 
+def _group_of_a_venue_by_its_seminar_titles(
+    venue: Venue, holding: bool
+) -> dict[str, list[NormalizedDocument]]:
+    """The venue's group, as its custom extractor builds it: its name, then the
+    seminar's title if the seminar is at the venue; no title of its own."""
+    text = f"{venue.name}\n\nAcoustics" if holding else venue.name
+    return {
+        f"testapp.venue:{venue.pk}": [
+            NormalizedDocument(
+                text=text,
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=venue.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through the reverse of a multi-column relation: only Venue is
+# registered, with a custom extractor reading its seminars' titles (Seminar is
+# not); a seminar holds the key to its Venue in two columns, matched to the
+# Venue's city and name.
+DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
+    register=_register_venues_by_their_seminar_titles,
+    create_follower=_create_the_halle_tony_garnier,
+    create_other_follower=_create_the_transbordeur,
+    create_holder=_create_a_seminar_at,
+    point_holder_to=_point_the_seminar_to,
+    group_of=_group_of_a_venue_by_its_seminar_titles,
+)
+
+
 # A write performed in the captured callbacks, returning the replace calls it
 # must send once its transaction commits.
 Act = Callable[[], ReplaceCalls]
@@ -940,6 +987,9 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
             id="follow-reverse_foreign_key_to_field",
         ),
         pytest.param(FOLLOW_REVERSE_MULTI_COLUMN, id="follow-reverse_multi_column"),
+        pytest.param(
+            DEPENDS_ON_REVERSE_MULTI_COLUMN, id="depends_on-reverse_multi_column"
+        ),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
