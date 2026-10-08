@@ -4941,6 +4941,56 @@ def test_adding_a_musician_to_a_band_replaces_the_musicians_group_named_by_its_h
 
 
 @pytest.mark.django_db
+def test_removing_a_musician_from_a_band_replaces_its_group_named_by_its_handle(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # removed musician plays in another band too, so that its group keeps that
+    # band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician left in the band: the remove below does not change its group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+
+    # Removed from the band's side: Django sends m2m_changed with the band as
+    # its instance, and names the musician by the column Engagement.musician
+    # points to, its handle, not by its primary key. Neither row is saved
+    # again: the remove deletes only the engagement between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.remove(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The removed Musician's group as committed: the band's name is gone, only
+    # its own name and its other band's name are left. No group of the
+    # musician left in the band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
