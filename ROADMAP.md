@@ -842,8 +842,11 @@ or a `GenericRelation` in `follow`.
   - Only forward followers were looked up again at the commit. Filling the
     test gaps found the bug: a plugin moved by `update()` after its own
     save left its new page stale. The commit now also loads the committed
-    reverse followers (`_committed_reverse_followers`), one more query per
-    update of a row followed in reverse — the cost the lookups will have.
+    reverse followers (`_committed_reverse_followers`): on each update of a
+    row followed in reverse, one more query loading the whole row, plus one
+    per relation with a `to_field` or several columns (`_follower_pks`).
+    In autocommit the commit callback runs at once and finds nothing the
+    save did not; the lookups will need the same care.
   - `_pks_reaching` returns nothing for a `None` primary key, that of a row
     deleted since its save.
   - Every `pre_add`, `pre_remove` and `pre_clear` drops the keys a failed
