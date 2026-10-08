@@ -2,7 +2,7 @@ import inspect
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Protocol, TypeVar
 
 import pytest
 from django.core import serializers
@@ -534,10 +534,21 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
 # The model of the follower rows, and the model of the row holding the key.
 FollowerT = TypeVar("FollowerT", bound=Model)
 HolderT = TypeVar("HolderT", bound=Model)
+# The model of the row whose groups are built: a follower, or a holding row.
+RowT_contra = TypeVar("RowT_contra", bound=Model, contravariant=True)
+
+
+class _GroupsOf(Protocol[RowT_contra]):
+    """The groups a row leaves as committed, whether the holding row is on it
+    or not: ``holding`` is keyword-only, so that each write says which."""
+
+    def __call__(
+        self, row: RowT_contra, /, *, holding: bool
+    ) -> dict[str, list[NormalizedDocument]]: ...
 
 
 def _no_other_groups(
-    holder: Model, holding: bool
+    holder: Model, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """A holding row that names its follower alone: no other group."""
     return {}
@@ -565,13 +576,11 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     point_holder_to: Callable[[HolderT, FollowerT], None]
     # The follower's group as committed, under its source key, whether the
     # holding row's key points to it or not.
-    group_of: Callable[[FollowerT, bool], dict[str, list[NormalizedDocument]]]
+    group_of: _GroupsOf[FollowerT]
     # The groups of the other rows the holding row names, whose keys no write
     # changes, as committed, whether the holding row still exists or not: none
     # for a holding row that names its follower alone.
-    groups_of_the_others_named: Callable[
-        [HolderT, bool], dict[str, list[NormalizedDocument]]
-    ] = _no_other_groups
+    groups_of_the_others_named: _GroupsOf[HolderT] = _no_other_groups
 
     def prepare_holder(self) -> Callable[[FollowerT], HolderT]:
         """Create the other rows the holding row names, if any, and return the
@@ -605,7 +614,7 @@ def _point_the_plugin_to(plugin: TextPlugin, page: Page) -> None:
 
 
 def _group_of_a_page_following_its_plugins(
-    page: Page, holding: bool
+    page: Page, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The page's group: its title, then the plugin's text if the plugin is
     on the page."""
@@ -637,7 +646,7 @@ FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
 
 
 def _group_of_a_page_by_its_plugin_bodies(
-    page: Page, holding: bool
+    page: Page, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The page's group, as its custom extractor builds it: its title, then the
     plugin's body if the plugin is on the page; no title or URL of its own."""
@@ -689,7 +698,7 @@ def _point_the_profile_to(profile: SupplierProfile, supplier: Supplier) -> None:
 
 
 def _group_of_a_supplier_following_its_profile(
-    supplier: Supplier, holding: bool
+    supplier: Supplier, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The supplier's group: its name, then the profile's body if the profile
     is on the supplier."""
@@ -720,7 +729,7 @@ FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedC
 
 
 def _group_of_a_supplier_by_its_profile_body(
-    supplier: Supplier, holding: bool
+    supplier: Supplier, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The supplier's group, as its custom extractor builds it: its name, then
     the profile's body if the profile is on the supplier; no title of its own."""
@@ -773,7 +782,7 @@ def _point_the_shelf_to(shelf: Shelf, warehouse: Warehouse) -> None:
 
 
 def _group_of_a_warehouse_following_its_shelves(
-    warehouse: Warehouse, holding: bool
+    warehouse: Warehouse, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The warehouse's group, under its primary key, not its code: its name,
     then the shelf's label if the shelf is in the warehouse."""
@@ -831,7 +840,7 @@ def _point_the_seminar_to(seminar: Seminar, venue: Venue) -> None:
 
 
 def _group_of_a_venue_following_its_seminars(
-    venue: Venue, holding: bool
+    venue: Venue, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The venue's group: its name, then the seminar's text fields, title first,
     if the seminar is at the venue."""
@@ -867,7 +876,7 @@ FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
 
 
 def _group_of_a_venue_by_its_seminar_titles(
-    venue: Venue, holding: bool
+    venue: Venue, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The venue's group, as its custom extractor builds it: its name, then the
     seminar's title if the seminar is at the venue; no title of its own."""
@@ -937,7 +946,7 @@ def _point_the_match_home_to(match: Match, team: Team) -> None:
 
 
 def _group_of_a_team_following_its_matches(
-    team: Team, holding: bool
+    team: Team, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The team's group: its name, then the match's title if the match names
     the team, at home or away."""
@@ -956,10 +965,10 @@ def _group_of_a_team_following_its_matches(
 
 
 def _group_of_the_away_team(
-    match: Match, holding: bool
+    match: Match, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The group of the match's away team, which no write changes."""
-    return _group_of_a_team_following_its_matches(match.away_team, holding)
+    return _group_of_a_team_following_its_matches(match.away_team, holding=holding)
 
 
 # `follow` through two reverse foreign keys to the same model: only Team is
@@ -1007,10 +1016,10 @@ def _point_the_match_away_to(match: Match, team: Team) -> None:
 
 
 def _group_of_the_home_team(
-    match: Match, holding: bool
+    match: Match, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The group of the match's home team, which no write changes."""
-    return _group_of_a_team_following_its_matches(match.home_team, holding)
+    return _group_of_a_team_following_its_matches(match.home_team, holding=holding)
 
 
 # The mirror of the case above: the follower plays away and Nantes at home,
@@ -1043,8 +1052,8 @@ def _create(case: _FollowedCase[Any, Any]) -> Act:
         holder = create_holder(follower)
         return [
             {
-                **case.group_of(follower, True),
-                **case.groups_of_the_others_named(holder, True),
+                **case.group_of(follower, holding=True),
+                **case.groups_of_the_others_named(holder, holding=True),
             }
         ]
 
@@ -1068,9 +1077,9 @@ def _move(case: _FollowedCase[Any, Any]) -> Act:
         # it, the other rows it names keeping it.
         return [
             {
-                **case.group_of(old, False),
-                **case.group_of(new, True),
-                **case.groups_of_the_others_named(holder, True),
+                **case.group_of(old, holding=False),
+                **case.group_of(new, holding=True),
+                **case.groups_of_the_others_named(holder, holding=True),
             }
         ]
 
@@ -1091,8 +1100,8 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
         # The follower and the other rows it named left without the holding row.
         return [
             {
-                **case.group_of(follower, False),
-                **case.groups_of_the_others_named(holder, False),
+                **case.group_of(follower, holding=False),
+                **case.groups_of_the_others_named(holder, holding=False),
             }
         ]
 
