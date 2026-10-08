@@ -159,12 +159,11 @@ def remember_followers_before_save(
     if not _is_followed(sender):
         return
 
-    # Followers reaching the row through foreign keys are looked up by its
-    # primary key, joined against the columns still in the database: pre_save
-    # runs before the UPDATE, so they are those naming the row as committed,
-    # even by columns the save changes, without loading it. At the commit, both
-    # these and the reverse followers are looked up from the row as saved: only
-    # the lookups made here find the followers it had before the save.
+    # Followers are looked up by the row's primary key, joined against the
+    # columns still in the database: pre_save runs before the UPDATE, so they
+    # are those of the row as committed, even by columns the save changes. At
+    # the commit, they are looked up again from the row as saved: only the
+    # lookups made here find the followers it had before the save.
     setattr(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
@@ -175,36 +174,15 @@ def remember_followers_before_save(
 def _committed_followers(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered rows following ``instance``'s row as committed.
 
-    Those reaching it through foreign keys are looked up by its primary key,
-    and those it points to through a reverse relation from the committed row.
+    Both those reaching it through foreign keys and those it points to through
+    a reverse relation are looked up by its primary key, joined against the
+    columns in the database: before the save, they are those of the row as it
+    was, even if the save changes them; at the commit, those of the row then,
+    even through a write sending no signal.
     """
-    return _followers_reaching(sender, instance) + _committed_reverse_followers(
-        sender, instance.pk
+    return _followers_reaching(sender, instance) + _followers_pointed_to(
+        sender, instance
     )
-
-
-def _committed_reverse_followers(sender: type[Model], pk: Any) -> list[_Follower]:
-    """Return the rows following, through a reverse relation, the committed row.
-
-    The row points to them by its foreign keys, read as committed: before the
-    save, they are those it pointed to before, even if the save changes them;
-    at the commit, those it points to then, even through a write sending no
-    signal.
-    """
-    # A model followed only through foreign keys costs no row loading.
-    if not _is_followed_through_reverse_relations(sender):
-        return []
-
-    if pk is None:
-        # A row deleted since its save has lost its primary key: no committed
-        # row has it, and looking for one would query for nothing.
-        return []
-
-    committed_instance = _committed_instance(sender._base_manager.all(), pk)
-    if committed_instance is None:
-        return []
-
-    return _reverse_followers(sender, committed_instance)
 
 
 def sync_saved_instance(
@@ -508,6 +486,26 @@ def _followers_reaching(sender: type[Model], instance: Model) -> list[_Follower]
         for lookup, reached_model in _followed_lookups(registered_model, sender)
         for follower_pk in _pks_reaching(
             registered_model, lookup, _group_pk(instance, reached_model)
+        )
+    ]
+
+
+def _followers_pointed_to(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows ``instance``'s row points to, looked up.
+
+    It points to them through the foreign key behind a reverse relation they
+    follow; the lookup reads that key as stored, not as ``instance`` holds it.
+    """
+    return [
+        (registered_model, follower_pk)
+        for registered_model in rag.registered_models()
+        for relation in _followed_reverse_relations(registered_model, sender)
+        # The relation's query name, not its accessor, is the lookup; it may
+        # start from a multi-table parent, whose row is reached by the parent link.
+        for follower_pk in _pks_reaching(
+            registered_model,
+            relation.name,
+            _group_pk(instance, relation.related_model),
         )
     ]
 
