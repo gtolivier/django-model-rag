@@ -43,6 +43,7 @@ from tests.testapp.models import (
     Guild,
     Lesson,
     MasterClass,
+    Match,
     Meetup,
     Musician,
     Note,
@@ -64,6 +65,7 @@ from tests.testapp.models import (
     SupplierProfile,
     Tag,
     Talk,
+    Team,
     TextPlugin,
     TextPluginProxy,
     Theme,
@@ -4075,6 +4077,65 @@ def test_updating_a_followed_instance_linked_by_a_unique_column_reads_it_at_comm
                     source_model="warehouse",
                     source_pk=north.pk,
                     title="North depot",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_each(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    django_assert_num_queries: DjangoAssertNumQueries,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Team is registered, following its matches by both reverse
+    # foreign keys, ``home_matches`` and ``away_matches``: Match itself is not.
+    rag.register(Team, fields=["name"], follow=["home_matches", "away_matches"])
+
+    # Created outside the counted queries: only the match's update below is
+    # observed.
+    lyon = Team.objects.create(name="Lyon")
+    nantes = Team.objects.create(name="Nantes")
+    derby = Match.objects.create(title="Opening day", home_team=lyon, away_team=nantes)
+
+    # The queries are counted around the commit callbacks too, which run when
+    # the inner context exits: one lookup of the Teams before the save, the
+    # save's UPDATE, one lookup of the Teams from the row as committed, then
+    # the four reads of the Teams' groups. Each lookup crosses both reverse
+    # relations at once, not one query per relation: two queries fewer than
+    # one lookup per relation at each moment.
+    with (
+        django_assert_num_queries(7),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saved again in place: the match keeps its home and away teams.
+        derby.title = "Season opener"
+        derby.save()
+
+    # The groups replaced do not change: each Team's group, once, in one call,
+    # with the match's title as committed after the Team's own name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.team:{lyon.pk}": [
+                NormalizedDocument(
+                    text="Lyon\n\nSeason opener",
+                    source_app_label="testapp",
+                    source_model="team",
+                    source_pk=lyon.pk,
+                    title="Lyon",
+                ),
+            ],
+            f"testapp.team:{nantes.pk}": [
+                NormalizedDocument(
+                    text="Nantes\n\nSeason opener",
+                    source_app_label="testapp",
+                    source_model="team",
+                    source_pk=nantes.pk,
+                    title="Nantes",
                 ),
             ],
         }
