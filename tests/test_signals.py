@@ -3115,6 +3115,45 @@ def test_moving_a_followed_reverse_one_to_one_to_another_supplier_replaces_both_
 
 
 @pytest.mark.django_db
+def test_deleting_a_followed_reverse_one_to_one_replaces_the_group_that_follows_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Supplier is registered, following its profile by the reverse
+    # one-to-one accessor ``profile``: SupplierProfile itself is not.
+    rag.register(Supplier, follow=["profile"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's delete below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Supplier's group as committed: the profile's text is gone, the
+    # Supplier's name stays alone.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.supplier:{birch.pk}": [
+                NormalizedDocument(
+                    text="Birch Mill",
+                    source_app_label="testapp",
+                    source_model="supplier",
+                    source_pk=birch.pk,
+                    title="Birch Mill",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_saving_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
