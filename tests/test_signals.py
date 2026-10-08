@@ -1201,8 +1201,9 @@ class _TargetCase(Generic[TargetT, FollowerT]):
     register: Callable[[], None]
     # The target the writes are performed on.
     create_target: Callable[[], TargetT]
-    # Another target, with a follower of its own, that no write touches.
-    create_other_target: Callable[[], TargetT]
+    # Another target, with a follower of its own, that no write touches: it is
+    # created knowing the target, for a case whose other target must name it.
+    create_other_target: Callable[[TargetT], TargetT]
     # Creates a follower whose path ends on the given target.
     create_follower_on: Callable[[TargetT], FollowerT]
     # Changes a value of the target its follower reads, without saving it.
@@ -1215,6 +1216,14 @@ class _TargetCase(Generic[TargetT, FollowerT]):
     group_once_target_deleted: Callable[
         [FollowerT], dict[str, list[NormalizedDocument]]
     ]
+
+
+def _whatever_the_target(
+    create_other_target: Callable[[], TargetT],
+) -> Callable[[TargetT], TargetT]:
+    """For another target that does not depend on the target: created by the
+    given function, the target ignored."""
+    return lambda _target: create_other_target()
 
 
 def _create_the_lighting_category() -> Category:
@@ -1269,7 +1278,7 @@ def _group_of_a_product_deleted_by_cascade(
 FOLLOW_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
     register=_register_products_following_their_category,
     create_target=_create_the_lighting_category,
-    create_other_target=_create_the_tools_category,
+    create_other_target=_whatever_the_target(_create_the_tools_category),
     create_follower_on=_create_a_plain_desk_lamp,
     change_target=_rename_the_category,
     group_of=_group_of_a_desk_lamp_following_its_category,
@@ -1335,7 +1344,7 @@ def _group_of_a_pottery_workshop_whose_topic_is_nulled(
 FOLLOW_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Topic, Workshop] = _TargetCase(
     register=_register_workshops_following_their_topic,
     create_target=_create_the_woodworking_topic,
-    create_other_target=_create_the_carving_topic,
+    create_other_target=_whatever_the_target(_create_the_carving_topic),
     create_follower_on=_create_a_pottery_workshop,
     change_target=_retitle_the_topic,
     group_of=_group_of_a_pottery_workshop_following_its_topic,
@@ -1356,7 +1365,7 @@ def _register_products_reading_their_category_through_a_path() -> None:
 PATH_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
     register=_register_products_reading_their_category_through_a_path,
     create_target=_create_the_lighting_category,
-    create_other_target=_create_the_tools_category,
+    create_other_target=_whatever_the_target(_create_the_tools_category),
     create_follower_on=_create_a_plain_desk_lamp,
     change_target=_rename_the_category,
     group_of=_group_of_a_desk_lamp_following_its_category,
@@ -1433,7 +1442,7 @@ def _group_of_a_greeting_excerpt_whose_notice_is_nulled(
 PATH_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Notice, Excerpt] = _TargetCase(
     register=_register_excerpts_reading_their_language_through_a_path,
     create_target=_create_the_french_notice,
-    create_other_target=_create_the_english_notice,
+    create_other_target=_whatever_the_target(_create_the_english_notice),
     create_follower_on=_create_a_greeting_excerpt,
     change_target=_switch_the_notice_to_english,
     group_of=_group_of_a_greeting_excerpt_reading_its_notice,
@@ -1476,7 +1485,7 @@ def _group_of_a_plugin_deleted_by_cascade(
 DEPENDS_ON_FORWARD_FOREIGN_KEY: _TargetCase[Page, TextPlugin] = _TargetCase(
     register=_register_plugins_by_their_page_title,
     create_target=_create_the_about_page,
-    create_other_target=_create_the_workshop_page,
+    create_other_target=_whatever_the_target(_create_the_workshop_page),
     create_follower_on=_create_a_plugin_on,
     change_target=_retitle_the_page,
     group_of=_group_of_a_plugin_by_its_page_title,
@@ -1540,7 +1549,7 @@ def _group_of_a_pottery_workshop_by_its_nulled_topic(
 DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Topic, Workshop] = _TargetCase(
     register=_register_workshops_by_their_topic_title,
     create_target=_create_the_woodworking_topic,
-    create_other_target=_create_the_carving_topic,
+    create_other_target=_whatever_the_target(_create_the_carving_topic),
     create_follower_on=_create_a_pottery_workshop,
     change_target=_retitle_the_topic,
     group_of=_group_of_a_pottery_workshop_by_its_topic_title,
@@ -1591,11 +1600,70 @@ def _group_of_an_intro_deleted_by_cascade(
 FOLLOW_FORWARD_ONE_TO_ONE: _TargetCase[Page, PageIntro] = _TargetCase(
     register=_register_intros_following_their_page,
     create_target=_create_the_about_page,
-    create_other_target=_create_the_workshop_page,
+    create_other_target=_whatever_the_target(_create_the_workshop_page),
     create_follower_on=_create_an_intro_on,
     change_target=_retitle_the_page,
     group_of=_group_of_an_intro_following_its_page,
     group_once_target_deleted=_group_of_an_intro_deleted_by_cascade,
+)
+
+
+def _register_shelves_following_their_warehouse() -> None:
+    """Register Shelf, following its warehouse through its own foreign key,
+    which holds the Warehouse's code: Warehouse itself is not registered."""
+    rag.register(Shelf, follow=["warehouse"])
+
+
+def _create_a_depot_coded_by_the_pk_of(warehouse: Warehouse) -> Warehouse:
+    """Create the South depot warehouse, coded by the given warehouse's primary
+    key as text: a shelf matched by comparing that primary key with the stored
+    code would be this one's, not the given warehouse's."""
+    return Warehouse.objects.create(name="South depot", code=str(warehouse.pk))
+
+
+def _rename_the_warehouse(warehouse: Warehouse) -> None:
+    """Rename the given warehouse to North hall, without saving it."""
+    warehouse.name = "North hall"
+
+
+def _group_of_a_timber_shelf_following_its_warehouse(
+    shelf: Shelf, /, *, target: Warehouse
+) -> dict[str, list[NormalizedDocument]]:
+    """The timber shelf's group: its label, then its warehouse's name; its
+    label is its title too."""
+    return {
+        f"testapp.shelf:{shelf.pk}": [
+            NormalizedDocument(
+                text=f"Timber\n\n{target.name}",
+                source_app_label="testapp",
+                source_model="shelf",
+                source_pk=shelf.pk,
+                title="Timber",
+            ),
+        ],
+    }
+
+
+def _group_of_a_shelf_deleted_by_cascade(
+    shelf: Shelf,
+) -> dict[str, list[NormalizedDocument]]:
+    """The shelf's group once deleted with its warehouse by cascade: empty."""
+    return {f"testapp.shelf:{shelf.pk}": []}
+
+
+# `follow` through a forward foreign key to a unique column: only Shelf is
+# registered, following its warehouse (Warehouse is not); the shelf holds the
+# key to the warehouse, the Warehouse's code rather than its primary key, the
+# row written, CASCADE on delete. The other warehouse's code is the
+# warehouse's primary key as text.
+FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD: _TargetCase[Warehouse, Shelf] = _TargetCase(
+    register=_register_shelves_following_their_warehouse,
+    create_target=_create_the_north_depot,
+    create_other_target=_create_a_depot_coded_by_the_pk_of,
+    create_follower_on=_create_a_shelf_in,
+    change_target=_rename_the_warehouse,
+    group_of=_group_of_a_timber_shelf_following_its_warehouse,
+    group_once_target_deleted=_group_of_a_shelf_deleted_by_cascade,
 )
 
 
@@ -1612,7 +1680,7 @@ def _save_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     # follower are left untouched.
     target = case.create_target()
     follower = case.create_follower_on(target)
-    case.create_follower_on(case.create_other_target())
+    case.create_follower_on(case.create_other_target(target))
 
     def act() -> ReplaceCalls:
         case.change_target(target)
@@ -1630,7 +1698,7 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     # follower are left untouched.
     target = case.create_target()
     follower = case.create_follower_on(target)
-    case.create_follower_on(case.create_other_target())
+    case.create_follower_on(case.create_other_target(target))
 
     def act() -> ReplaceCalls:
         # Expected before the delete: a follower deleted with its target may
@@ -1671,6 +1739,10 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
             id="depends_on-forward_foreign_key_set_null",
         ),
         pytest.param(FOLLOW_FORWARD_ONE_TO_ONE, id="follow-forward_one_to_one"),
+        pytest.param(
+            FOLLOW_FORWARD_FOREIGN_KEY_TO_FIELD,
+            id="follow-forward_foreign_key_to_field",
+        ),
     ],
 )
 def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
