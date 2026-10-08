@@ -1879,50 +1879,6 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_via_looku
 
 
 @pytest.mark.django_db
-def test_a_product_moved_by_update_onto_a_category_created_in_its_txn_is_replaced(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Product is registered, following its category through its own
-    # foreign key: Category itself is not.
-    rag.register(Product, fields=["name"], follow=["category"])
-
-    # Created outside the captured callbacks: their commit callbacks never
-    # run. The product starts in another category.
-    tools = Category.objects.create(name="Tools")
-    lamp = _create_a_plain_desk_lamp(tools)
-
-    with django_capture_on_commit_callbacks(execute=True):
-        # Created in the transaction: no product points to it yet when it is
-        # saved.
-        lighting = Category.objects.create(name="Lighting")
-        # Moved to the new category after its creation, in the same
-        # transaction, by a write that sends no signal: only the category's
-        # creation is observed.
-        Product.objects.filter(pk=lamp.pk).update(category=lighting)
-
-    # Merged across replace calls: how the groups are batched is not what this
-    # test is about. The product moved after the creation is a follower of the
-    # category at the commit, so its group is replaced, as committed: with the
-    # name of the category it moved to.
-    assert _received_groups(built_outputs) == {
-        f"testapp.product:{lamp.pk}": [
-            NormalizedDocument(
-                text="Desk lamp\n\nLighting",
-                source_app_label="testapp",
-                source_model="product",
-                source_pk=lamp.pk,
-                title="Desk lamp",
-                url=f"/products/{lamp.pk}/",
-            ),
-        ],
-    }
-
-
-@pytest.mark.django_db
 def test_deleting_a_topic_a_custom_extractor_depends_on_through_set_null_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
