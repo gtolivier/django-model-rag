@@ -5179,6 +5179,56 @@ def test_saving_a_venue_read_through_a_multi_column_lookup_path_replaces_its_sem
 
 
 @pytest.mark.django_db
+def test_deleting_a_venue_read_through_a_multi_column_lookup_path_sends_only_seminars(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Seminar is registered, reading its venue's name through a lookup
+    # path across the multi-column ForeignObject ``venue``, CASCADE on delete:
+    # Venue itself is not.
+    rag.register(Seminar, fields=["title", "venue__name"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the venue's delete below is observed.
+    hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
+    rigging_pk = (
+        Seminar.objects.create(
+            title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
+        )
+    ).pk
+    acoustics_pk = acoustics.pk
+    # Another venue of the same city: only both columns together name a venue,
+    # so its seminar is neither deleted with the hall nor sent.
+    _create_the_transbordeur_and_its_seminar()
+
+    # The seminars are deleted with the venue by cascade: they are found as its
+    # readers before the delete, yet no longer exist at the commit.
+    with django_capture_on_commit_callbacks(execute=True):
+        hall.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The seminars' empty groups, merged across replace calls: whether they
+    # come in one call or one per seminar is not what this test is about. No
+    # group still carrying the deleted venue's name, none for the venue.
+    assert _received_groups(built_outputs) == {
+        f"testapp.seminar:{acoustics_pk}": [],
+        f"testapp.seminar:{rigging_pk}": [],
+    }
+    # Each group sent once: no replacement of a seminar's group follows its
+    # empty one.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [f"testapp.seminar:{acoustics_pk}", f"testapp.seminar:{rigging_pk}"]
+    )
+
+
+@pytest.mark.django_db
 def test_saving_a_venue_a_custom_extractor_depends_on_by_multi_column_replaces_seminars(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
