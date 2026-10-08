@@ -1210,6 +1210,11 @@ class _TargetCase(Generic[TargetT, FollowerT]):
     # The follower's group as committed, under its source key, its path ending
     # on the given target.
     group_of: _GroupOnTarget[FollowerT, TargetT]
+    # The follower's group as committed once its target is deleted, under its
+    # source key: what is left depends on the relation's on_delete.
+    group_once_target_deleted: Callable[
+        [FollowerT], dict[str, list[NormalizedDocument]]
+    ]
 
 
 def _create_the_lighting_category() -> Category:
@@ -1251,9 +1256,16 @@ def _group_of_a_desk_lamp_following_its_category(
     }
 
 
+def _group_of_a_product_deleted_by_cascade(
+    product: Product,
+) -> dict[str, list[NormalizedDocument]]:
+    """The product's group once deleted with its category by cascade: empty."""
+    return {f"testapp.product:{product.pk}": []}
+
+
 # `follow` through a forward foreign key: only Product is registered,
 # following its category (Category is not); the product holds the key to the
-# category, the row written.
+# category, the row written, CASCADE on delete.
 FOLLOW_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
     register=_register_products_following_their_category,
     create_target=_create_the_lighting_category,
@@ -1261,6 +1273,7 @@ FOLLOW_FORWARD_FOREIGN_KEY: _TargetCase[Category, Product] = _TargetCase(
     create_follower_on=_create_a_plain_desk_lamp,
     change_target=_rename_the_category,
     group_of=_group_of_a_desk_lamp_following_its_category,
+    group_once_target_deleted=_group_of_a_product_deleted_by_cascade,
 )
 
 
@@ -1287,11 +1300,32 @@ def _save_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
     return act
 
 
+def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
+    """The target deleted: one call, its follower's group as the delete leaves
+    it."""
+    # Created before the write: the commit callbacks of these saves are not
+    # observed, so only the target's delete is. The other target and its
+    # follower are left untouched.
+    target = case.create_target()
+    follower = case.create_follower_on(target)
+    case.create_follower_on(case.create_other_target())
+
+    def act() -> ReplaceCalls:
+        # Expected before the delete: a follower deleted with its target may
+        # lose its pk.
+        expected: ReplaceCalls = [case.group_once_target_deleted(follower)]
+        target.delete()
+        return expected
+
+    return act
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     "write",
     [
         pytest.param(_save_the_target, id="save"),
+        pytest.param(_delete_the_target, id="delete"),
     ],
 )
 @pytest.mark.parametrize(
