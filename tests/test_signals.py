@@ -8,7 +8,7 @@ from django.core import serializers
 from django.core.exceptions import ImproperlyConfigured
 from django.db import DatabaseError, connection, transaction
 from django.db.models import QuerySet
-from django.db.models.signals import post_delete, pre_delete
+from django.db.models.signals import m2m_changed, post_delete, pre_delete
 from django.test.utils import CaptureQueriesContext
 from pytest_django import (
     DjangoAssertNumQueries,
@@ -34,17 +34,21 @@ from tests.testapp.models import (
     Citation,
     ClearanceProduct,
     Course,
+    Craftsman,
     Depot,
     Excerpt,
     Exhibit,
     FeaturedProduct,
+    Guild,
     Lesson,
+    MasterClass,
     Meetup,
     Note,
     Notice,
     Offer,
     Page,
     PageIntro,
+    Person,
     Photo,
     Product,
     Remark,
@@ -123,6 +127,18 @@ def _register_pages_following_their_plugins() -> None:
     rag.register(Page, follow=["text_plugins"])
 
 
+def _register_courses_following_their_topics() -> None:
+    """Register only Course, following its topics through its own many-to-many
+    ``topics``: Topic itself is not."""
+    rag.register(Course, follow=["topics"])
+
+
+def _register_topics_following_their_courses() -> None:
+    """Register only Topic, following its courses by the reverse many-to-many
+    ``courses``: Course itself is not."""
+    rag.register(Topic, follow=["courses"])
+
+
 def _register_plugins_by_their_page_title() -> None:
     """Register only TextPlugin, with a custom extractor reading its page's title
     before its body: depends_on names the page, whose saves change its
@@ -133,6 +149,21 @@ def _register_plugins_by_their_page_title() -> None:
         def extract(self, instance: TextPlugin) -> NormalizedDocument:
             return self.build_document(
                 instance, text=f"{instance.page.title}: {instance.body}"
+            )
+
+
+def _register_topics_by_their_course_titles() -> None:
+    """Register only Topic, with a custom extractor reading its title, then the
+    titles of its courses: depends_on names its reverse many-to-many
+    ``courses``, whose saves, links and deletes change its documents. Course
+    itself is not registered."""
+
+    @rag.register_extractor(Topic, depends_on=["courses"])
+    class TopicExtractor(BaseExtractor[Topic]):
+        def extract(self, instance: Topic) -> NormalizedDocument:
+            titles = [course.title for course in instance.courses.order_by("pk")]
+            return self.build_document(
+                instance, text=f"{instance.title}: {', '.join(titles)}"
             )
 
 
@@ -204,6 +235,13 @@ def _create_the_woodworking_topic() -> Topic:
     """Create the Woodworking topic."""
     return Topic.objects.create(
         summary="Joints and finishes.", title="Woodworking", slug="woodworking"
+    )
+
+
+def _create_the_carving_topic() -> Topic:
+    """Create the Carving topic."""
+    return Topic.objects.create(
+        summary="Knives and gouges.", title="Carving", slug="carving"
     )
 
 
@@ -1814,6 +1852,166 @@ def test_saving_a_category_a_custom_extractor_depends_on_then_parent_link_replac
 
 
 @pytest.mark.django_db
+def test_saving_a_topic_a_custom_extractor_depends_on_by_many_to_many_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, with a custom extractor reading the
+    # titles of its topics: depends_on names its own many-to-many ``topics``,
+    # whose saves change its documents. Topic itself is not registered.
+    @rag.register_extractor(Course, depends_on=["topics"])
+    class CourseExtractor(BaseExtractor[Course]):
+        def extract(self, instance: Course) -> NormalizedDocument:
+            titles = [topic.title for topic in instance.topics.order_by("pk")]
+            return self.build_document(
+                instance, text=f"{instance.title}: {', '.join(titles)}"
+            )
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's save below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.title = "Joinery"
+        woodworking.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Course's group, with the topic's new title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics: Joinery",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # Added from the course's side: Django sends m2m_changed with the course as
+    # its instance, and the topic among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Topic's group, with the added course's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: Woodworking basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_saving_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and of the add never run, so only the course's save below
+    # is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.title = "Joinery basics"
+        basics.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Topic's group, with the course's new title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: Joinery basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_deleting_a_course_a_custom_extractor_of_topic_depends_on_replaces_the_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_by_their_course_titles()
+
+    # Created and linked outside the captured callbacks: the commit callbacks
+    # of these saves and adds never run, so only the course's delete below is
+    # observed. The topic is covered by two courses, so that its group keeps
+    # the one left.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    joinery = Course.objects.create(title="Joinery")
+    basics.topics.add(woodworking)
+    joinery.topics.add(woodworking)
+
+    # The delete removes the course's link to the topic before the course's
+    # row goes: by post_delete, the topic no longer has the course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Topic's group as committed: the deleted course's
+    # title is gone, only the other course's title is left.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking: Joinery",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_page_empties_the_groups_of_depending_plugins_get_queryset_leaves_out(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -2979,40 +3177,1161 @@ def test_saving_a_followed_instance_with_no_follower_defers_nothing_to_the_commi
 
 
 @pytest.mark.django_db
-def test_a_course_of_a_topic_following_a_reverse_many_to_many_sends_nothing(
+def test_saving_a_course_followed_by_reverse_many_to_many_replaces_the_topics_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
-    # A working output, so that only the kind of relation can keep the save
-    # and the delete from sending anything.
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Only the Topic is registered, following its courses by the reverse
-    # many-to-many ``courses``: Course itself is not.
-    rag.register(Topic, follow=["courses"])
+    _register_topics_following_their_courses()
 
-    # Created outside the captured callbacks: the commit callback of the
-    # Topic's own save never runs, so only the course's saves and delete below
-    # are observed.
-    joinery = Topic.objects.create(
-        summary="Joining wood.", title="Joinery", slug="joinery"
-    )
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the course's save below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
 
-    # The commit callbacks run, and an error escaping them would fail the test.
     with django_capture_on_commit_callbacks(execute=True):
-        course = Course.objects.create(title="Woodworking basics")
-        course.topics.add(joinery)
-        course.title = "Woodworking for beginners"
-        course.save()
-        course.delete()
+        basics.title = "Furniture making"
+        basics.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
 
-    # A Course row holds no key of a Topic: its saves and deletes send nothing
-    # for the Topic.
+    # The Topic's group, with the course's new title after the Topic's own
+    # title and summary.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nFurniture making",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_saving_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's save below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.title = "Joinery"
+        woodworking.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group, with the topic's new title and its summary after the
+    # Course's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nJoinery\n\nJoints and finishes.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_topic_to_a_course_following_its_topics_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group as committed: its own title, then the added topic's
+    # title and summary.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nWoodworking\n\nJoints and finishes.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_course_to_a_topic_replaces_the_group_of_the_course_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # A course already covering the topic: the add below does not change its
+    # group.
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+
+    # Added from the reverse side: Django sends m2m_changed with the topic as
+    # its instance, and the course among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Course's group as committed: its own title, then the topic's
+    # title and summary. No group of the course already covering the topic.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nWoodworking\n\nJoints and finishes.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_removing_a_topic_from_a_course_following_its_topics_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the remove below is observed. The
+    # course covers two topics, so that its group keeps the one left.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+
+    # Neither row is saved again: the remove deletes only the link between
+    # them.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.remove(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group as committed: the removed topic's text is gone, only
+    # the Course's own title and the other topic's text are left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_removing_a_course_from_a_topic_replaces_the_group_of_the_course_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed.
+    # The course covers two topics, so that its group keeps the one left.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    # A course still covering the topic after the remove below: its group does
+    # not change.
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+
+    # Removed from the reverse side: Django sends m2m_changed with the topic as
+    # its instance, and the course among the primary keys it names. Neither row
+    # is saved again: the remove deletes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.remove(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The removed Course's group as committed: the topic's text is gone, only
+    # the Course's own title and the other topic's text are left. No group of
+    # the course still covering the topic.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_topics_of_a_course_following_them_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the clear below is observed. The
+    # course covers two topics, so that the clear removes more than one link.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+
+    # Neither row is saved again: the clear deletes only the links of the
+    # course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group as committed: no topic's text is left, only the
+    # Course's own title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_courses_of_a_topic_replaces_the_group_of_each_course_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Two courses cover the topic: one covers another topic too, so that its
+    # group keeps the one left, the other covers it alone.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+    # A course not covering the topic: the clear below does not change its
+    # group.
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+
+    # Cleared from the reverse side: Django sends m2m_changed with the topic as
+    # its instance and no primary keys at all, so the courses covering it can
+    # only be found before the clear. No row is saved again: the clear deletes
+    # only the links of the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both courses as committed, each without the topic's text,
+    # and no group of the course that never covered it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+                title="Woodworking basics",
+            ),
+        ],
+        f"testapp.course:{joinery.pk}": [
+            NormalizedDocument(
+                text="Joinery",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=joinery.pk,
+                title="Joinery",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_topic_to_a_course_replaces_the_group_of_the_topic_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # A topic the course already covers: the add below does not change its
+    # group.
+    carving = _create_the_carving_topic()
+    basics.topics.add(carving)
+
+    # Added from the course's side: Django sends m2m_changed with the course as
+    # its instance, and the topic among the primary keys it names. Neither row
+    # is saved again: the add writes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Topic's group as committed: its own title and summary, then the
+    # course's title. No group of the topic the course already covered.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_course_to_a_topic_following_its_courses_replaces_the_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # Another topic the course already covers: the add below does not change
+    # its group.
+    carving = _create_the_carving_topic()
+    basics.topics.add(carving)
+
+    # Added from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, and the course among the primary keys it names. Neither row
+    # is saved again: the add writes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Topic's group as committed: its own title and summary, then the added
+    # course's title. No group of the other topic the course covers.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_course_to_a_topic_through_a_proxy_replaces_the_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # TopicProxy is not registered either.
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # The same Topic's row, read under the proxy's class.
+    proxy_woodworking = TopicProxy.objects.get(pk=woodworking.pk)
+
+    # Added from the proxy's side: Django sends m2m_changed with the proxy
+    # instance as its instance, not a Topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        proxy_woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Topic's group as committed: its own title and summary, then the added
+    # course's title.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_courses_of_a_topic_through_a_proxy_replaces_the_courses_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # TopicProxy is not registered either.
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Two courses cover the topic: one covers another topic too, so that its
+    # group keeps the one left, the other covers it alone.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+    joinery = Course.objects.create(title="Joinery")
+    joinery.topics.add(woodworking)
+    # A course not covering the topic: the clear below does not change its
+    # group.
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+    # The same Topic's row, read under the proxy's class.
+    proxy_woodworking = TopicProxy.objects.get(pk=woodworking.pk)
+
+    # Cleared from the proxy's side: Django sends m2m_changed with the proxy
+    # instance as its instance, not a Topic, and no primary keys at all.
+    with django_capture_on_commit_callbacks(execute=True):
+        proxy_woodworking.courses.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both courses as committed, each without the topic's text,
+    # and no group of the course that never covered it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+                title="Woodworking basics",
+            ),
+        ],
+        f"testapp.course:{joinery.pk}": [
+            NormalizedDocument(
+                text="Joinery",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=joinery.pk,
+                title="Joinery",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_it_held(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Neither Course nor MasterClass is registered.
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. The
+    # master class covers two topics, so that the clear removes more than one
+    # link; one of them is covered by another course too, so that its group
+    # keeps that course.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+    masterclass.topics.add(woodworking, carving)
+    whittling = Course.objects.create(title="Whittling")
+    whittling.topics.add(carving)
+
+    # Cleared from the child's side: Django sends m2m_changed with the
+    # MasterClass as its instance, not a Course, while the links name its
+    # Course row, and no primary keys at all. No row is saved again: the clear
+    # deletes only the links of the master class.
+    with django_capture_on_commit_callbacks(execute=True):
+        masterclass.topics.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both topics as committed, each without the master class's
+    # title: the one covered by another course keeps that course's title.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+                title="Woodworking",
+            ),
+        ],
+        f"testapp.topic:{carving.pk}": [
+            NormalizedDocument(
+                text="Carving\n\nKnives and gouges.\n\nWhittling",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=carving.pk,
+                title="Carving",
+            ),
+        ],
+    }
+
+
+class _FailedClearError(Exception):
+    """Raised by a receiver of pre_clear, to make a clear fail before its DELETE."""
+
+
+@pytest.mark.django_db
+def test_adding_a_topic_after_a_failed_clear_replaces_only_the_added_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed. The
+    # course covers one topic, the one the failed clear reads; the other is
+    # the one the add below links.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    def fail_on_pre_clear(action: str, **kwargs: Any) -> None:
+        if action == "pre_clear":
+            raise _FailedClearError
+
+    # Connected after the package's receiver, connected at app ready: that one
+    # reads the keys of the links before this one makes the clear fail, so
+    # post_clear never comes.
+    m2m_changed.connect(fail_on_pre_clear, sender=Course.topics.through)
+    try:
+        # A savepoint of its own, so that the failure rolls back only the clear.
+        with pytest.raises(_FailedClearError), transaction.atomic():
+            basics.topics.clear()
+    finally:
+        m2m_changed.disconnect(fail_on_pre_clear, sender=Course.topics.through)
+
+    # Added from the course's side: Django sends m2m_changed with the same
+    # course instance the failed clear had, and only the added topic among the
+    # primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(carving)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Topic's group as committed, and no group of the topic the
+    # failed clear read: the course still covers it, unchanged.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{carving.pk}": [
+                NormalizedDocument(
+                    text="Carving\n\nKnives and gouges.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=carving.pk,
+                    title="Carving",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_two_topics_to_a_course_replaces_the_group_of_each_topic_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    # A topic the course already covers: the add below does not change its
+    # group.
+    finishing = Topic.objects.create(
+        summary="Oils and waxes.", title="Finishing", slug="finishing"
+    )
+    basics.topics.add(finishing)
+
+    # Two topics added at once from the course's side: Django sends one
+    # m2m_changed with the course as its instance, and both topics among the
+    # primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking, carving)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The group of each added Topic as committed, each ending with the course's
+    # title. No group of the topic the course already covered.
+    assert _received_groups(built_outputs) == {
+        f"testapp.topic:{woodworking.pk}": [
+            NormalizedDocument(
+                text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=woodworking.pk,
+                title="Woodworking",
+            ),
+        ],
+        f"testapp.topic:{carving.pk}": [
+            NormalizedDocument(
+                text="Carving\n\nKnives and gouges.\n\nWoodworking basics",
+                source_app_label="testapp",
+                source_model="topic",
+                source_pk=carving.pk,
+                title="Carving",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_guild_to_a_craftsman_replaces_the_guilds_group_named_by_its_code(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Guild is registered, following its members through its own
+    # many-to-many ``members``: Craftsman itself is not.
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed. A
+    # guild's code, a slug, can never equal its integer primary key.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    north = Guild.objects.create(name="North guild", code="north")
+    # A guild the craftsman already belongs to: the add below does not change
+    # its group.
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(carpenter)
+
+    # Added from the craftsman's side: Django sends m2m_changed with the
+    # craftsman as its instance, and names the guild by the column
+    # Membership.guild points to, its code, not by its primary key. Neither row
+    # is saved again: the add writes only the membership between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        carpenter.guilds.add(north)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The added Guild's group as committed: its name, then its new member's
+    # name. No group of the guild the craftsman already belonged to.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.guild:{north.pk}": [
+                NormalizedDocument(
+                    text="North guild\n\nCarpenter",
+                    source_app_label="testapp",
+                    source_model="guild",
+                    source_pk=north.pk,
+                    title="North guild",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_members_of_a_guild_replaces_the_group_of_each_craftsman_in_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Craftsman is registered, following its guilds through the
+    # reverse many-to-many ``guilds``: Guild itself is not.
+    rag.register(Craftsman, fields=["name"], follow=["guilds"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. A
+    # guild's code, a slug, can never equal its integer primary key. The
+    # craftsman belongs to another guild too, so that its group keeps the one
+    # left.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    north = Guild.objects.create(name="North guild", code="north")
+    south = Guild.objects.create(name="South guild", code="south")
+    north.members.add(carpenter)
+    south.members.add(carpenter)
+    # A craftsman not in the guild: the clear below does not change its group.
+    mason = Craftsman.objects.create(name="Mason")
+    south.members.add(mason)
+
+    # Cleared from the guild's side: Django sends m2m_changed with the guild as
+    # its instance and no primary keys at all, so its members can only be found
+    # before the clear, by the memberships naming the guild by the column
+    # Membership.guild points to, its code, not by its primary key. No row is
+    # saved again: the clear deletes only the memberships of the guild.
+    with django_capture_on_commit_callbacks(execute=True):
+        north.members.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Craftsman's group as committed: its name, then the name of the guild
+    # it still belongs to. No group of the craftsman never in the guild.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.craftsman:{carpenter.pk}": [
+                NormalizedDocument(
+                    text="Carpenter\n\nSouth guild",
+                    source_app_label="testapp",
+                    source_model="craftsman",
+                    source_pk=carpenter.pk,
+                    title="Carpenter",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Person is registered following its mentees, the reverse side of its own
+    # many-to-many ``mentors``: both sides of the links are Persons.
+    rag.register(Person, fields=["name"], follow=["mentees"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. Ada
+    # has two mentors: one mentors another person too, so that its group keeps
+    # the mentee left, the other mentors her alone.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    ada.mentors.add(grace, linus)
+    alan.mentors.add(grace)
+    # A person not mentoring Ada: the clear below does not change Barbara's
+    # group.
+    barbara = Person.objects.create(name="Barbara")
+    alan.mentors.add(barbara)
+
+    # Cleared from the mentee's side: Django sends m2m_changed with Ada as its
+    # instance and no primary keys at all, so her mentors can only be found
+    # before the clear, by the join rows naming her as the mentee, not as the
+    # mentor. No row is saved again: the clear deletes only Ada's links to her
+    # mentors.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both former mentors as committed, each without Ada's name,
+    # and no group of the person who never mentored her. Ada's own group, which
+    # follows her mentees, not her mentors, is left out of the comparison: the
+    # clear leaves its text unchanged.
+    received_groups = _received_groups(built_outputs)
+    received_groups.pop(f"testapp.person:{ada.pk}", None)
+    assert received_groups == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+        f"testapp.person:{linus.pk}": [
+            NormalizedDocument(
+                text="Linus",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=linus.pk,
+                title="Linus",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_topic_to_a_course_neither_side_following_the_link_defers_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only what each side follows can keep the add
+    # from deferring anything to the commit.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Both sides of the link are registered, neither following it: the Course
+    # does not follow its topics, nor the Topic its courses.
+    rag.register(Course)
+    rag.register(Topic)
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # The commit callbacks run: one sending anything would reach the output.
+    with django_capture_on_commit_callbacks(execute=True) as callbacks:
+        basics.topics.add(woodworking)
+
+    # The link is part of neither group: nothing is deferred to the commit,
+    # and nothing reaches the output.
+    assert callbacks == []
     assert _replaced(built_outputs) == []
-    # Django's deletion Collector fast-deletes a model with no post_delete
-    # listener: nothing listens to Course's deletes.
-    assert not post_delete.has_listeners(Course)
+
+
+@pytest.mark.django_db
+def test_adding_a_topic_to_a_course_following_its_topics_with_signals_off_sends_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the setting can keep the add from sending
+    # to it.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    settings.MODEL_RAG_SIGNALS = False
+
+    # The commit callbacks run: one sending anything would reach the output.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking)
+
+    # The link is written, yet nothing reaches the output.
+    assert list(basics.topics.all()) == [woodworking]
+    assert _replaced(built_outputs) == []
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_topic_added_to_a_course_following_it_with_no_output_writes_no_link() -> None:
+    # Created before Course is registered: with no MODEL_RAG_OUTPUT, their own
+    # saves would fail otherwise.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    _register_courses_following_their_topics()
+
+    # No transaction around the add (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the add must fail before its
+    # INSERT of the join row does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        basics.topics.add(woodworking)
+
+    assert not basics.topics.exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_following_course_added_to_a_topic_with_no_output_writes_no_link() -> None:
+    # Created before Course is registered: with no MODEL_RAG_OUTPUT, their own
+    # saves would fail otherwise.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    _register_courses_following_their_topics()
+
+    # Added from the topic's side: the course following the link is among the
+    # rows the add names, not its instance. No transaction around the add
+    # (transaction=True): in autocommit, each query commits as soon as it
+    # runs, so the add must fail before its INSERT of the join row does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        woodworking.courses.add(basics)
+
+    assert not basics.topics.exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_a_topic_removed_from_a_course_following_it_with_no_output_keeps_the_link() -> (
+    None
+):
+    # Created and linked before Course is registered: with no MODEL_RAG_OUTPUT,
+    # their own saves and the add would fail otherwise.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    _register_courses_following_their_topics()
+
+    # No transaction around the remove (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the remove must fail before its
+    # DELETE of the join row does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        basics.topics.remove(woodworking)
+
+    assert list(basics.topics.all()) == [woodworking]
+
+
+@pytest.mark.django_db(transaction=True)
+def test_the_topics_of_a_course_following_them_cleared_with_no_output_stay_linked() -> (
+    None
+):
+    # Created and linked before Course is registered: with no MODEL_RAG_OUTPUT,
+    # their own saves and the add would fail otherwise. The course covers two
+    # topics, so that the clear would delete more than one link.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT.
+
+    _register_courses_following_their_topics()
+
+    # No transaction around the clear (transaction=True): in autocommit, each
+    # query commits as soon as it runs, so the clear must fail before its
+    # DELETE of the join rows does.
+    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+        basics.topics.clear()
+
+    assert set(basics.topics.all()) == {woodworking, carving}
+
+
+@pytest.mark.django_db
+def test_an_output_failing_on_a_course_added_to_a_topic_logs_the_course_and_the_topic(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.course:{basics.pk}"},
+    }
+
+    # Added from the reverse side: Django sends m2m_changed with the topic as
+    # its instance. An error escaping the commit callbacks would fail the test:
+    # the commit itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        woodworking.courses.add(basics)
+
+    # The link is committed all the same.
+    assert list(basics.topics.all()) == [woodworking]
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the followers' model and the topic the add came from,
+    # and carries the error.
+    assert record.getMessage() == (
+        f"Syncing testapp.course instances that follow "
+        f"testapp.topic:{woodworking.pk} failed"
+    )
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+
+
+@pytest.mark.django_db
+def test_deleting_a_topic_followed_by_forward_many_to_many_replaces_the_courses_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_courses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the topic's delete below is observed. The
+    # course covers two topics, so that its group keeps the one left.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking, carving)
+
+    # The delete removes the course's link to the topic before the topic's
+    # row goes: by post_delete, the course no longer covers the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Course's group as committed: the deleted topic's text is gone, only
+    # the Course's own title and the other topic's text are left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.course:{basics.pk}": [
+                NormalizedDocument(
+                    text="Woodworking basics\n\nCarving\n\nKnives and gouges.",
+                    source_app_label="testapp",
+                    source_model="course",
+                    source_pk=basics.pk,
+                    title="Woodworking basics",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_course_followed_by_reverse_many_to_many_replaces_the_topics_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_topics_following_their_courses()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the course's delete below is observed. The
+    # topic is covered by two courses, so that its group keeps the one left.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    joinery = Course.objects.create(title="Joinery")
+    basics.topics.add(woodworking)
+    joinery.topics.add(woodworking)
+
+    # The delete removes the course's link to the topic before the course's
+    # row goes: by post_delete, the topic no longer has the course.
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Topic's group as committed: the deleted course's title is gone, only
+    # the Topic's own title and summary and the other course's title are left.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nJoinery",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
 
 
 @pytest.mark.django_db

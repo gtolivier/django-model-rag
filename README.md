@@ -561,17 +561,41 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   Each name is a relation path from the registered model: a forward
   foreign key or one-to-one (`"page"`), a reverse foreign key or
   one-to-one by its accessor, on its own (`depends_on=["text_plugins"]` on
-  `Page`), or a path through forward foreign keys (`"product__category"`).
+  `Page`), a many-to-many, forward or reverse, on its own
+  (`depends_on=["topics"]` on `Course`, `depends_on=["courses"]` on
+  `Topic`), or a path through forward foreign keys (`"product__category"`).
   Saving or deleting an instance at the end of the path replaces the groups
   of the registered instances that reach it, as for `follow` and lookup
-  paths above; one that the extractor's `get_queryset()` filters out gets
-  an empty group. Errors are raised at registration, with
-  `ImproperlyConfigured`: `depends_on` that is not a list or a tuple, an item
-  that is not a string, a link that is not a relation, a many-to-many (forward or reverse), a generic
-  foreign key or `GenericRelation`, a path of several links that crosses a
-  reverse relation, a path given twice, and `depends_on` while models are
-  still loading. Registering a model that is already registered raises
-  `AlreadyRegistered` first, whatever `depends_on` holds.
+  paths above, and so does changing the links of a many-to-many (below);
+  one that the extractor's `get_queryset()` filters out gets an empty
+  group. Errors are raised at registration, with `ImproperlyConfigured`:
+  `depends_on` that is not a list or a tuple, an item that is not a string,
+  a link that is not a relation, a many-to-many in a path of several links,
+  a generic foreign key or `GenericRelation`, a path of several links that
+  crosses a reverse relation, a path given twice, and `depends_on` while
+  models are still loading. Registering a model that is already registered
+  raises `AlreadyRegistered` first, whatever `depends_on` holds.
+- **A many-to-many.** A registered model that follows a many-to-many,
+  forward or reverse (`Course` with `follow=["topics"]`, `Topic` with
+  `follow=["courses"]`), or depends on one, is resynced both when a row at
+  the other end changes and when the links do. Saving or deleting a topic
+  replaces the groups of the courses linked to it, found as for a followed
+  parent above (a delete looks them up before the join rows go).
+  `add()`, `remove()`, `clear()` and `set()`, from either side
+  (`course.topics.add(topic)` or `topic.courses.add(course)`), replace at
+  the commit the groups of the registered instances, on each side, whose
+  links changed — for `clear()`, those linked before it. They are seen
+  through Django's `m2m_changed` signal, connected once for every
+  many-to-many: a change of links no registered model follows or depends
+  on schedules nothing. A change made through a proxy instance of either
+  end counts (`proxy_topic.courses.add(course)`), and so does a
+  `to_field` on the through model. A many-to-many from a model to itself
+  is covered when it is not symmetrical (`symmetrical=False`). Not
+  covered: a symmetrical one, a many-to-many declared to a proxy model
+  (`ManyToManyField(TopicProxy)`), and rows of a custom `through` model
+  created, changed or deleted directly — `Enrollment.objects.create(...)`,
+  an admin inline of the through model — which send no `m2m_changed`
+  (feature 11d-bis in the [roadmap](ROADMAP.md)).
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
@@ -674,15 +698,15 @@ reads through a lookup path or depends on: they keep Django's fast delete,
 since the package listens to `pre_delete` and `post_delete` only for
 registered models, the models they reach that way, and their proxies — and
 only while a registered model reaches them. Raw saves, such as `loaddata`
-loading a fixture. Changes the ORM signals do not see:
-`QuerySet.update()`, `bulk_create()`, `bulk_update()`, raw SQL. A change to
+loading a fixture — though not the many-to-many links it sets (see
+*Turning them off* below). Changes the ORM signals do not see:
+`QuerySet.update()`, `bulk_create()`, `bulk_update()`, raw SQL, and rows of
+a custom many-to-many `through` model written directly. A change to
 a related object whose text a registered model reads by any other way than
 those above leaves that model's documents stale until they are saved again:
-a many-to-many in `follow` or in a lookup path (forward or reverse), a
-path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say),
+a path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say),
 or whatever a custom extractor reads without declaring it in
-`depends_on`. Many-to-many relations are listed in the
-[roadmap](ROADMAP.md) as feature 11d. For all of these, run
+`depends_on`. For all of these, run
 `sync_model_rag`, or sync the instances concerned from a receiver of your
 own: in a `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
@@ -706,7 +730,9 @@ signature — is not logged: it raises
 `ImproperlyConfigured` at the save or the delete, so that a forgotten
 setting cannot silently stop the indexing. A save checks it in `pre_save`,
 before the row is written, so that it writes nothing even in autocommit; a
-delete raising this way is rolled back.
+delete raising this way is rolled back. A change of many-to-many links that
+a registered model follows or depends on checks it before the join rows
+are written or deleted, for the same reason.
 
 **Several changes, one transaction.** Each saved or deleted instance gets a
 commit callback of its own: saving ten plugins of one page in a transaction
@@ -733,6 +759,14 @@ that, or a `MODEL_RAG_OUTPUT` pointing to a test output — as with
 # settings_test.py
 MODEL_RAG_SIGNALS = False
 ```
+
+**Fixtures.** `loaddata` saves its rows raw, which the signals ignore, but
+it sets their many-to-many links with `set()`, and `m2m_changed` has no raw
+flag: the links a registered model follows or depends on are resynced as
+they load — or, with no `MODEL_RAG_OUTPUT`, the load raises
+`ImproperlyConfigured`. Load fixtures with `MODEL_RAG_SIGNALS = False`, then
+run `sync_model_rag` (a context manager to pause the signals,
+`rag.signals_paused()`, is planned: feature 12a).
 
 ## Requirements
 

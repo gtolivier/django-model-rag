@@ -7,7 +7,13 @@ from typing import Any, TypeAlias, TypeGuard
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
-from django.db.models import Field, ForeignObject, ForeignObjectRel, Model
+from django.db.models import (
+    Field,
+    ForeignObject,
+    ForeignObjectRel,
+    ManyToManyField,
+    Model,
+)
 from django.db.models.constants import LOOKUP_SEP
 from django.db.models.signals import post_delete, pre_delete
 
@@ -216,16 +222,16 @@ def _require_relation(
     accessors: "dict[str, Field[Any, Any] | ForeignObjectRel]",
 ) -> None:
     """Fail unless ``name`` is a string that starts with one of ``model``'s
-    relation ``accessors`` and every link of it is neither a many-to-many nor
-    generic, and it crosses no reverse relation: a reverse relation is allowed
-    only as a one-link path.
+    relation ``accessors``, no link of it is generic, and it crosses no
+    reverse relation: a reverse relation, or a forward many-to-many, is
+    allowed only as a one-link path.
 
     Raises:
         ImproperlyConfigured: the ``depends_on`` name is not a string (a
             field object, say), a link of it is not a relation, is a
-            many-to-many (forward or reverse), is a generic foreign key or
-            generic relation, or the name is a longer path that crosses a
-            reverse relation.
+            many-to-many in a longer path, a generic foreign key or generic
+            relation, or the name is a longer path that crosses a reverse
+            relation.
     """
     if not isinstance(name, str):
         raise _not_a_relation(model, name)
@@ -233,7 +239,10 @@ def _require_relation(
     relation = accessors.get(first)
     if relation is None:
         raise _not_a_relation(model, name)
-    related = _require_single_valued(model, name, relation)
+    # a many-to-many, forward or reverse, is a dependency only as a one-link path
+    if rest:
+        _require_not_many_to_many(model, name, relation)
+    related = _require_related_model(model, name, relation)
     if rest and isinstance(relation, ForeignObjectRel):
         raise _reverse_relation_crossed(model, name, first)
     _require_forward_relations(model, name, related, rest)
@@ -249,13 +258,38 @@ def _require_single_valued(
         ImproperlyConfigured: the link is a many-to-many, a generic foreign
             key or a generic relation.
     """
+    _require_not_many_to_many(model, name, relation)
+    return _require_related_model(model, name, relation)
+
+
+def _require_not_many_to_many(
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> None:
+    """Fail if ``relation``, a link of ``model``'s ``depends_on`` path
+    ``name``, is a many-to-many.
+
+    Raises:
+        ImproperlyConfigured: the link is a many-to-many, forward or reverse.
+    """
+    if relation.many_to_many:
+        message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
+        raise ImproperlyConfigured(message)
+
+
+def _require_related_model(
+    model: type[Model], name: str, relation: "Field[Any, Any] | ForeignObjectRel"
+) -> type[Model]:
+    """Return the model ``relation``, a link of ``model``'s ``depends_on``
+    path ``name``, points to.
+
+    Raises:
+        ImproperlyConfigured: the link is a generic foreign key or a generic
+            relation.
+    """
     # imported here: contenttypes' models cannot load before the apps are ready,
     # and this module is imported while they load
     from django.contrib.contenttypes.fields import GenericRelation  # noqa: PLC0415
 
-    if relation.many_to_many:
-        message = f"{model.__name__}: depends_on {name!r} is a many-to-many"
-        raise ImproperlyConfigured(message)
     related = relation.related_model
     if related is None or isinstance(relation, GenericRelation):
         message = f"{model.__name__}: depends_on {name!r} is a generic relation"
@@ -273,6 +307,15 @@ def _is_followed_like_a_foreign_key(
     """
     return isinstance(relation, ForeignObject) and bool(
         relation.many_to_one or relation.one_to_one
+    )
+
+
+def _is_many_to_many(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> "TypeGuard[ManyToManyField[Any, Any] | ForeignObjectRel]":
+    """Tell whether ``relation`` is a many-to-many, forward or reverse."""
+    return isinstance(relation, ManyToManyField) or (
+        isinstance(relation, ForeignObjectRel) and relation.many_to_many
     )
 
 
@@ -455,6 +498,14 @@ def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
     if inspect.isabstract(extractor_class):
         message = f"{extractor_class.__name__} does not implement extract"
         raise ImproperlyConfigured(message)
+
+
+def _through_model_of(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> type[Model] | None:
+    """Return the through model of a many-to-many ``relation``, forward or reverse."""
+    rel = relation if isinstance(relation, ForeignObjectRel) else relation.remote_field
+    return getattr(rel, "through", None)
 
 
 def _delete_uid(model: type[Model]) -> str:
@@ -702,8 +753,8 @@ class Registry:
 
         ``depends_on`` names the relations whose saves change the documents
         of ``model``: a forward foreign key or one-to-one, a reverse relation
-        as a one-link path, or a lookup path through forward foreign keys or
-        one-to-ones.
+        or a many-to-many as a one-link path, or a lookup path through forward
+        foreign keys or one-to-ones.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered, checked
@@ -713,9 +764,9 @@ class Registry:
                 ``depends_on`` is not a list or a tuple, or is given while
                 models are loading; an item of ``depends_on`` is not a string,
                 or a name in it is given twice; a link of it is not a
-                relation, is a many-to-many (forward or reverse), a generic
-                foreign key or a generic relation; or a path of several links
-                crosses a reverse relation.
+                relation, is a many-to-many in a path of several links, a
+                generic foreign key or a generic relation; or a path of several
+                links crosses a reverse relation.
         """
 
         def decorator(
@@ -780,19 +831,39 @@ class Registry:
         """
         return [
             relation
-            for relation in [
-                *self._followed_relations(model),
-                *self._dependencies[model].relations,
-            ]
+            for relation in self._followed_or_depended_on_relations(model)
             if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
         ]
 
-    def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
-        """List the models ``model`` reads through foreign keys, one or a chain.
+    def follows_many_to_many(self, model: type[Model], through: type[Model]) -> bool:
+        """Tell whether ``model`` follows or depends on a many-to-many via ``through``.
 
-        Those are the models of the foreign keys it follows, and the models
-        its lookup paths and dependencies reach through their leading foreign
-        keys. Each is paired with the lookup, from ``model``, that reaches it.
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        return any(
+            _through_model_of(relation) is through
+            for relation in self._followed_or_depended_on_relations(model)
+        )
+
+    def _followed_or_depended_on_relations(
+        self, model: type[Model]
+    ) -> "list[Field[Any, Any] | ForeignObjectRel]":
+        """List the relations ``model`` follows and those it depends on in one link.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        return [*self._followed_relations(model), *self._dependencies[model].relations]
+
+    def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+        """List the models ``model`` reads through relations, one or a chain.
+
+        Those are the models of the foreign keys and many-to-many relations,
+        forward or reverse, it follows, the models its lookup paths and
+        dependencies reach through their leading foreign keys, and the models
+        of the many-to-many relations, forward or reverse, it depends on. Each
+        is paired with the lookup, from ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -800,14 +871,21 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
-            if _is_followed_like_a_foreign_key(relation)
+            if _is_followed_like_a_foreign_key(relation) or _is_many_to_many(relation)
         ]
         read_through_paths = [
             reached
             for path in self._lookup_paths(model)
             for reached in _models_reached_by_foreign_keys(model, path)
         ]
-        depended_on = list(self._dependencies[model].foreign_key_lookups)
+        depended_on = [
+            *self._dependencies[model].foreign_key_lookups,
+            *(
+                (relation.name, relation.related_model)
+                for relation in self._dependencies[model].relations
+                if _is_many_to_many(relation)
+            ),
+        ]
         # Paths sharing a prefix, or a followed foreign key, reach a model twice.
         return list(dict.fromkeys(followed + read_through_paths + depended_on))
 

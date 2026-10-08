@@ -3,23 +3,36 @@
 import logging
 from collections.abc import Callable
 from functools import partial
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, TypeGuard, cast
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import transaction
-from django.db.models import ForeignObject, ForeignObjectRel, Model, QuerySet
+from django.db.models import (
+    ForeignObject,
+    ForeignObjectRel,
+    ManyToManyField,
+    ManyToManyRel,
+    Model,
+    QuerySet,
+)
 
 from django_model_rag.documents import model_source_key
+from django_model_rag.extractors import through_key_to_parent
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
+_CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
+_BEFORE_CLEAR = "pre_clear"
+_BEFORE_WRITE = frozenset({"pre_add", "pre_remove", _BEFORE_CLEAR})
+# The instance carries the keys of the rows its links reach, from before a clear.
+_CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
-_FORWARD_FOLLOWERS_ATTRIBUTE = "_model_rag_forward_followers"
+_REACHING_FOLLOWERS_ATTRIBUTE = "_model_rag_reaching_followers"
 # Few enough that no query carries more variables than SQLite accepts.
 _PKS_PER_QUERY = 500
 
@@ -155,7 +168,7 @@ def remember_followers_before_save(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
         _committed_reverse_followers(sender, instance.pk)
-        + _forward_followers(sender, instance),
+        + _followers_reaching(sender, instance),
     )
 
 
@@ -203,7 +216,7 @@ def sync_saved_instance(
         _PREVIOUS_FOLLOWERS_ATTRIBUTE, []
     )
     # A row just created has no follower pointing to it at its save.
-    if not created and _is_followed_through_foreign_keys(sender):
+    if not created and _is_followed_through_lookups(sender):
         # Rows may be attached to it before the commit, by a write that sends
         # no signal: its followers are looked up then.
         transaction.on_commit(
@@ -221,6 +234,166 @@ def sync_saved_instance(
     )
 
 
+def sync_changed_relation(
+    instance: Model,
+    action: str,
+    model: type[Model] | None = None,
+    pk_set: set[Any] | None = None,
+    **kwargs: Any,
+) -> None:
+    """Replace, once the transaction commits, the groups a change of links alters.
+
+    Those are the group of the instance, and the groups of the registered rows
+    that ``pk_set`` names, from either side of the links.
+    """
+    if not _signals_enabled():
+        return
+
+    through = kwargs["sender"]
+    reverse = kwargs["reverse"]
+    if action in _BEFORE_WRITE:
+        # Keys left by a clear that failed after pre_clear are not this change's.
+        instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
+        _check_output_before_write(through, instance, model)
+        if action == _BEFORE_CLEAR:
+            _remember_cleared_pks(through, instance, model, reverse)
+        return
+
+    if action not in _CHANGING_ACTIONS:
+        return
+
+    _schedule_commit_callbacks(
+        _registered_models_following(type(instance), through),
+        instance,
+        _group_replacer,
+    )
+    if _reaches_registered_rows(model, through):
+        # Only a clear leaves keys behind, found before it: pk_set is None then.
+        pk_set = (pk_set or set()) | instance.__dict__.pop(
+            _CLEARED_PKS_ATTRIBUTE, set()
+        )
+        _, key_to_model = _through_keys(through, instance, model, reverse)
+        _schedule_follower_replacements(
+            [(model, pk) for pk in _primary_keys_named(key_to_model, model, pk_set)],
+            _followed_source_key(type(instance), instance),
+        )
+
+
+def _check_output_before_write(
+    through: type[Model], instance: Model, model: type[Model] | None
+) -> None:
+    """Fail before the join rows are written or deleted if the sync would fail.
+
+    In autocommit the join rows are committed as soon as they are written:
+    after the change, a failing check would come too late to undo it.
+    """
+    if _registered_models_following(type(instance), through) or (
+        _reaches_registered_rows(model, through)
+    ):
+        check_output_configuration()
+
+
+def _registered_models_following(
+    sender: type[Model], through: type[Model]
+) -> list[type[Model]]:
+    """Return the registered models of ``sender`` following the links of ``through``."""
+    return [
+        registered_model
+        for registered_model in _registered_models(sender)
+        if rag.follows_many_to_many(registered_model, through)
+    ]
+
+
+def _through_keys(
+    through: type[Model], instance: Model, model: type[Model], reverse: bool
+) -> tuple["ForeignObject[Any, Any]", "ForeignObject[Any, Any]"]:
+    """Return the foreign keys of ``through`` to the instance's side, then ``model``'s.
+
+    ``reverse``, as m2m_changed sends it, is False when the instance's model
+    declares the many-to-many.
+    """
+    declaring_model = model if reverse else type(instance)
+    # m2m_changed comes from a many-to-many of the declaring model, inherited
+    # or not, and each many-to-many has a through model of its own.
+    field = next(
+        field
+        for field in declaring_model._meta.many_to_many
+        if field.remote_field.through is through
+    )
+    instance_side, model_side = (
+        (field.remote_field, field) if reverse else (field, field.remote_field)
+    )
+    return _through_key(instance_side), _through_key(model_side)
+
+
+def _through_key(
+    relation: "ManyToManyField[Any, Any] | ManyToManyRel",
+) -> "ForeignObject[Any, Any]":
+    """Return the through model's foreign key to the side ``relation`` is read from."""
+    # A through model reaches each side of its many-to-many by a foreign key.
+    return cast("ForeignObject[Any, Any]", through_key_to_parent(relation))
+
+
+def _primary_keys_named(
+    key_to_model: "ForeignObject[Any, Any]", model: type[Model], keys: set[Any]
+) -> set[Any]:
+    """Return the primary keys of the ``model`` rows that ``keys`` name.
+
+    The through model's foreign key to ``model``, ``key_to_model``, may point to
+    a unique column other than its primary key, and ``keys`` are then values of
+    that column.
+    """
+    target_field = key_to_model.target_field
+    if target_field.primary_key:
+        return keys
+
+    return set(
+        model._base_manager.filter(**{f"{target_field.name}__in": keys}).values_list(
+            "pk", flat=True
+        )
+    )
+
+
+def _reaches_registered_rows(
+    model: type[Model] | None, through: type[Model]
+) -> TypeGuard[type[Model]]:
+    """Return whether a links change reaches rows following the links."""
+    return (
+        model is not None
+        and rag.is_registered(model)
+        and rag.follows_many_to_many(model, through)
+    )
+
+
+def _remember_cleared_pks(
+    through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
+) -> None:
+    """Keep the keys of the registered rows a clear is about to unlink.
+
+    Django sends no primary keys with the clear: they can only be found before
+    it. ``reverse`` is m2m_changed's.
+    """
+    if not _reaches_registered_rows(model, through):
+        return
+
+    key_to_instance, key_to_model = _through_keys(through, instance, model, reverse)
+    # The foreign key may name the instance by a unique column other than its
+    # primary key, and a multi-table child by the row of the parent holding the
+    # links.
+    links = through._base_manager.filter(
+        **{
+            key_to_instance.name: getattr(
+                instance, key_to_instance.foreign_related_fields[0].attname
+            )
+        }
+    )
+    setattr(
+        instance,
+        _CLEARED_PKS_ATTRIBUTE,
+        set(links.values_list(key_to_model.attname, flat=True)),
+    )
+
+
 def _replace_followers_as_committed(
     sender: type[Model],
     instance: Model,
@@ -234,7 +407,7 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = _forward_followers(sender, instance) + followers_at_save
+        followers = _followers_reaching(sender, instance) + followers_at_save
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
@@ -303,30 +476,29 @@ def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
     ]
 
 
-def _forward_followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered rows following ``instance`` through foreign keys.
+def _followers_reaching(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance`` through a lookup.
 
-    They reach it through one foreign key of their own, or a chain of them.
+    They reach it through one foreign key of their own, a chain of them, or a
+    many-to-many.
     """
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
-        for lookup, reached_model in _followed_foreign_key_lookups(
-            registered_model, sender
-        )
+        for lookup, reached_model in _followed_lookups(registered_model, sender)
         for follower_pk in _pks_reaching(
             registered_model, lookup, _group_pk(instance, reached_model)
         )
     ]
 
 
-def _followed_foreign_key_lookups(
+def _followed_lookups(
     registered_model: type[Model], sender: type[Model]
 ) -> list[tuple[str, type[Model]]]:
     """Return the lookups through which ``registered_model`` reads ``sender``.
 
-    Each crosses one foreign key or a chain of them, and comes with the model it
-    reaches, one that ``sender``'s rows are rows of.
+    Each crosses one foreign key, a chain of them, or a many-to-many, and comes
+    with the model it reaches, one that ``sender``'s rows are rows of.
     """
     followed_models = _models_of_the_row(sender)
     return [
@@ -357,7 +529,7 @@ def _pks_reaching(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
-    return _is_followed_through_foreign_keys(
+    return _is_followed_through_lookups(
         sender
     ) or _is_followed_through_reverse_relations(sender)
 
@@ -370,10 +542,10 @@ def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
     )
 
 
-def _is_followed_through_foreign_keys(sender: type[Model]) -> bool:
-    """Return whether a registered model reads ``sender``'s rows by foreign keys."""
+def _is_followed_through_lookups(sender: type[Model]) -> bool:
+    """Return whether a registered model reads ``sender``'s rows by a lookup."""
     return any(
-        _followed_foreign_key_lookups(registered_model, sender)
+        _followed_lookups(registered_model, sender)
         for registered_model in rag.registered_models()
     )
 
@@ -455,8 +627,8 @@ def remember_followers_before_delete(
 
     setattr(
         instance,
-        _FORWARD_FOLLOWERS_ATTRIBUTE,
-        _forward_followers(sender, instance),
+        _REACHING_FOLLOWERS_ATTRIBUTE,
+        _followers_reaching(sender, instance),
     )
 
 
@@ -472,7 +644,7 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
     followers = _reverse_followers(sender, instance) + instance.__dict__.pop(
-        _FORWARD_FOLLOWERS_ATTRIBUTE, []
+        _REACHING_FOLLOWERS_ATTRIBUTE, []
     )
     if not (nearest_registered_model_only or followers):
         return

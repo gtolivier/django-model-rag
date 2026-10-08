@@ -275,6 +275,17 @@ class Course(models.Model):
     topics = models.ManyToManyField(Topic, related_name="courses")
 
 
+# --- A multi-table child of a model with a many-to-many -----------------
+# A MasterClass is a Course with an instructor of its own, in a table of its
+# own: it inherits the Course's many-to-many ``topics``, whose links name its
+# Course row, yet Django sends m2m_changed with the MasterClass, not a Course,
+# as its instance.
+
+
+class MasterClass(Course):
+    instructor = models.CharField(max_length=200)
+
+
 # --- A reverse relation without a related_name --------------------------
 # A Remark points to a Note through a foreign key without related_name: the
 # Note reaches its Remarks by the default accessor ``remark_set``, while the
@@ -800,6 +811,18 @@ class Band(models.Model):
 class Engagement(models.Model):
     band = models.ForeignKey(Band, on_delete=models.CASCADE)
     musician = models.ForeignKey(Musician, to_field="handle", on_delete=models.CASCADE)
+
+
+# --- A non-symmetrical many-to-many from a model to itself --------------
+# A Person reaches the Persons mentoring them by the many-to-many ``mentors``,
+# and those they mentor by its reverse side, ``mentees``: both foreign keys of
+# the join table point to Person, and a link from one Person to another is not
+# a link back.
+
+
+class Person(models.Model):
+    name = models.CharField(max_length=200)
+    mentors = models.ManyToManyField("self", symmetrical=False, related_name="mentees")
 
 
 # --- A proxy model ------------------------------------------------------

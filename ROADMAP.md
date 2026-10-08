@@ -253,12 +253,11 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-What is left, in the order planned: 11d first, the largest gap left in
-`follow` — a many-to-many is common, where a path past a reverse
-one-to-one or a `GenericRelation` is not, and neither is planned. Then
-12a, which rewires every receiver, the `m2m_changed` one of 11d included.
-Then 12b, which needs the `MODEL_RAG_SYNC` setting of 12a. 10c stays
-postponed, and 11c-quater is not planned.
+What is left, in the order planned: 12a, which rewires every receiver, the
+`m2m_changed` one of 11d included. Then 12b, which needs the
+`MODEL_RAG_SYNC` setting of 12a. 10c stays postponed, 11c-quater and
+11d-bis are not planned, and neither is a path past a reverse one-to-one
+or a `GenericRelation` in `follow`.
 
 - [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
   over every registered model, in registration order, or over the models it
@@ -338,7 +337,8 @@ postponed, and 11c-quater is not planned.
     Unregistering a proxy keeps the delete listener its registered concrete
     model needs.
   - **Off switch:** `MODEL_RAG_SIGNALS = False`. A raw save (`loaddata`) is
-    ignored; the command catches up.
+    ignored; the command catches up. The many-to-many links `loaddata`
+    sets are not raw: see 11d.
   - **Fast delete kept.** `post_delete` is connected per registered model
     (and its proxies), never globally, so unregistered models keep Django's
     fast delete.
@@ -349,10 +349,10 @@ postponed, and 11c-quater is not planned.
     changes, unless the dependent instances are found and re-extracted.
     Reverse relations in `follow` are done (11a), forward foreign keys and
     one-to-ones in `follow` and in lookup paths too (11b), a custom
-    extractor's dependencies too (11c); many-to-many relations (11d) are
-    not. Until then, a project connects its own receiver that runs
-    `run_queryset` on the dependent instances, and the command repairs the
-    rest;
+    extractor's dependencies too (11c), and many-to-many relations (11d),
+    except rows of a custom through model written directly (11d-bis). For
+    those, a project connects its own receiver that runs `run_queryset` on
+    the dependent instances, and the command repairs the rest;
   - background tasks: a slow output delays the response that saves the
     instance. A task — Django's `django.tasks` (6.0+; a separate package
     on 5.2), or a queue on Redis or RabbitMQ — would receive the model
@@ -610,9 +610,9 @@ postponed, and 11c-quater is not planned.
     followed model — a row of it too — resyncs the parent as well.
   - **Fast delete**: `post_delete` is connected to the followed model only
     while a registered model follows it; unregistering the last one gives
-    its fast delete back. A reverse many-to-many in `follow` connects
-    nothing and sends nothing (11d). The reverse of a multi-column
-    `ForeignObject`, left out here, is followed since 11c-bis.
+    its fast delete back. A reverse many-to-many in `follow` connected
+    nothing and sent nothing here; it does since 11d. The reverse of a
+    multi-column `ForeignObject`, left out here, is followed since 11c-bis.
   - **Several children of one parent** saved in one transaction replace its
     group once each: batching waits for 12b.
   - **Left for later**, from the review: each save of any model checks, in
@@ -692,10 +692,10 @@ postponed, and 11c-quater is not planned.
   - **Refused at registration**, with `ImproperlyConfigured`: `depends_on`
     that is not a list or a tuple, a link that is not a relation (an
     unknown name or a content field, at any depth), a many-to-many forward
-    or reverse (left for 11d), a generic foreign key or `GenericRelation`,
-    a path of several links that crosses a reverse relation (first link
-    included), a path given twice, and `depends_on` while models are still
-    loading. Every check runs before anything is registered.
+    or reverse (accepted as a one-link path since 11d), a generic foreign
+    key or `GenericRelation`, a path of several links that crosses a
+    reverse relation (first link included), a path given twice, and
+    `depends_on` while models are still loading. Every check runs before anything is registered.
 - [x] **11c-bis. Resync through multi-column `ForeignObject` relations.**
   A `ForeignObject` over several columns (`Seminar.venue`, by
   `venue_city` and `venue_name`) is followed like a foreign key, in
@@ -769,17 +769,63 @@ postponed, and 11c-quater is not planned.
   in one transaction. Rows made by `bulk_create()` get no documents of
   their own either, as the README says, so such an import ends with
   `sync_model_rag` anyway — after `rag.signals_paused()` once 12a lands.
-- [ ] **11d. Resync through many-to-many relations.** A many-to-many in
-  `follow` or in a lookup path, forward or reverse, with `m2m_changed`
-  (add, remove, clear) on top of the saves and deletes of both ends.
+- [x] **11d. Resync through many-to-many relations.** A many-to-many in
+  `follow` or in `depends_on`, forward or reverse, is resynced through:
+  saves and deletes of the rows at the other end, and `m2m_changed` (add,
+  remove, clear — so `set()` too) from either side. Decided in this
+  feature:
+  - **Lookup paths are moot**: a lookup path through a many-to-many is
+    refused at registration (6), so only `follow` and `depends_on` reach
+    one.
+  - **Saves and deletes of the other end** use the machinery of 11a and
+    11b: a many-to-many, forward or reverse, joins the lookups that find
+    the followers of a saved or deleted row, with their batching, their
+    `pre_delete` lookup (before the cascade removes the join rows) and
+    listeners connected only while needed.
+  - **`m2m_changed` is connected once, globally**, as `post_save` is: its
+    sender is the through model, which exists only once models are loaded.
+    The receiver checks, in Python, whether a registered model follows or
+    depends on that many-to-many, and otherwise schedules nothing.
+  - **Both sides**: after an add, a remove or a clear, the instance's
+    group is replaced if its model follows the relation, and the groups of
+    the rows `pk_set` names if theirs does. `pk_set` holds the values of
+    the through model's `to_field`, converted to primary keys. A clear has
+    no `pk_set`: the linked rows are read in `pre_clear`, and dropped by
+    the next `pre_*` if the clear fails before `post_clear`. A change made
+    through a proxy instance of either end counts, and so does a
+    non-symmetrical many-to-many from a model to itself.
+  - **A missing `MODEL_RAG_OUTPUT` raises before the join rows change** —
+    in `pre_add`, `pre_remove` and `pre_clear` — since autocommit writes
+    them at once.
+  - **`depends_on`** accepts a many-to-many, forward or reverse, as a
+    one-link path; a longer path through one is still refused.
+  - **Fixtures**: `loaddata` saves raw, which the signals ignore, but sets
+    many-to-many links with `set()`, and `m2m_changed` has no raw flag.
+    With no `MODEL_RAG_OUTPUT`, loading a fixture that links rows a
+    registered model follows through a many-to-many raises
+    `ImproperlyConfigured`. Load with `MODEL_RAG_SIGNALS = False`, then run
+    the command — `rag.signals_paused()` once 12a lands.
+  - **Left out**: rows of a custom through model written directly (see
+    11d-bis); a symmetrical many-to-many from a model to itself; a
+    many-to-many declared to a proxy model (`ManyToManyField(TopicProxy)`).
+- [ ] **11d-bis. Resync through rows of a custom through model** — not
+  planned unless a project runs into it. A many-to-many with `through=`
+  gets its links from rows of that model, which a project can create,
+  change or delete directly — `Enrollment.objects.create(...)`, an admin
+  inline of the through model — without `m2m_changed`. Nothing is resynced
+  then: the documents of both ends stay stale until their next save or
+  `sync_model_rag`. Listening to the through model's saves and deletes
+  would fix it, but a `remove()` would then resync twice: once through
+  `m2m_changed`, once through the deletes of its join rows, which the
+  listeners would make Django send.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `m2m_changed` receiver of 11d and the `post_delete` listeners
   included, so every model keeps Django's fast delete, which
   `MODEL_RAG_SIGNALS = False` does not give back today. The wiring is
   decided at startup and redone on `setting_changed` (tests).
-  Adds `rag.signals_paused()`, a context manager for a bulk import followed
-  by a sync. A mode per model is not needed yet.
+  Adds `rag.signals_paused()`, a context manager for a `loaddata` (11d) or
+  a bulk import followed by a sync. A mode per model is not needed yet.
 - [ ] **12b. Notify mode.** The package sends a signal of its own at the
   commit (`sources_changed`, say: the model and primary keys), once per
   transaction and grouped by model, with the deleted keys apart. In `auto`,

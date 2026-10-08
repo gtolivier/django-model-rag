@@ -505,11 +505,11 @@ def _prefetch_match_columns_of(
     # the reverse foreign key itself, or the through model's for a many-to-many
     if _is_reverse_foreign_key(relation):
         return [target.name for target in relation.field.foreign_related_fields]
-    key = _through_key_to_parent(relation)
+    key = through_key_to_parent(relation)
     return [key.target_field.name] if isinstance(key, ForeignKey) else []
 
 
-def _through_key_to_parent(
+def through_key_to_parent(
     relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> "Field[Any, Any] | ForeignObjectRel | None":
     """Return the field of ``relation``'s through model that links to the parent.
