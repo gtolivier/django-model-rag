@@ -2,7 +2,8 @@ import inspect
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from enum import Enum
+from typing import Any, Generic, Protocol, TypeVar
 
 import pytest
 from django.core import serializers
@@ -264,10 +265,8 @@ def _create_the_hall_and_its_acoustics_seminar() -> tuple[Venue, Seminar]:
 
 def _create_the_transbordeur_and_its_seminar() -> Seminar:
     """Create the Transbordeur, a venue of Lyon, and its Stage lighting seminar."""
-    _create_the_transbordeur()
-    return Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Transbordeur"
-    )
+    transbordeur = _create_the_transbordeur()
+    return _create_a_seminar_at(transbordeur, title="Stage lighting")
 
 
 def _create_a_desk_lamp(category: Category) -> FeaturedProduct:
@@ -536,16 +535,27 @@ def test_saving_a_registered_multi_table_child_also_replaces_its_parents_group(
 # The model of the follower rows, and the model of the row holding the key.
 FollowerT = TypeVar("FollowerT", bound=Model)
 HolderT = TypeVar("HolderT", bound=Model)
+# The model of the row whose groups are built: a follower, or a holding row.
+RowT_contra = TypeVar("RowT_contra", bound=Model, contravariant=True)
+
+
+class _GroupsOf(Protocol[RowT_contra]):
+    """The groups a row leaves as committed, whether the holding row is on it
+    or not: ``holding`` is keyword-only, so that each write says which."""
+
+    def __call__(
+        self, row: RowT_contra, /, *, holding: bool
+    ) -> dict[str, list[NormalizedDocument]]: ...
 
 
 def _no_other_groups(
-    holder: Model, holding: bool
+    holder: Model, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """A holding row that names its follower alone: no other group."""
     return {}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class _FollowedCase(Generic[FollowerT, HolderT]):
     """What a declaration and a relation provide to the writes of a row holding
     the key to its follower: the writes themselves are generic over cases."""
@@ -556,19 +566,26 @@ class _FollowedCase(Generic[FollowerT, HolderT]):
     create_follower: Callable[[], FollowerT]
     # Another follower, the holding row is moved to.
     create_other_follower: Callable[[], FollowerT]
-    # Creates the row holding the key to the given follower.
-    create_holder: Callable[[FollowerT], HolderT]
+    # Creates the other rows the holding row names, if any, before anything
+    # else, and returns the function creating the holding row on a follower.
+    prepare_holder: Callable[[], Callable[[FollowerT], HolderT]]
     # Points the holding row's key to the given follower, without saving it.
     point_holder_to: Callable[[HolderT, FollowerT], None]
     # The follower's group as committed, under its source key, whether the
     # holding row's key points to it or not.
-    group_of: Callable[[FollowerT, bool], dict[str, list[NormalizedDocument]]]
+    group_of: _GroupsOf[FollowerT]
     # The groups of the other rows the holding row names, whose keys no write
     # changes, as committed, whether the holding row still exists or not: none
     # for a holding row that names its follower alone.
-    groups_of_the_others_named: Callable[
-        [HolderT, bool], dict[str, list[NormalizedDocument]]
-    ] = _no_other_groups
+    groups_of_the_others_named: _GroupsOf[HolderT] = _no_other_groups
+
+
+def _naming_the_follower_alone(
+    create_holder: Callable[[FollowerT], HolderT],
+) -> Callable[[], Callable[[FollowerT], HolderT]]:
+    """For a holding row that names its follower alone: no other row to create
+    first, the holding row created on a follower by the given function."""
+    return lambda: create_holder
 
 
 def _create_the_about_page() -> Page:
@@ -592,7 +609,7 @@ def _point_the_plugin_to(plugin: TextPlugin, page: Page) -> None:
 
 
 def _group_of_a_page_following_its_plugins(
-    page: Page, holding: bool
+    page: Page, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The page's group: its title, then the plugin's text if the plugin is
     on the page."""
@@ -617,14 +634,14 @@ FOLLOW_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
     register=_register_pages_following_their_plugins,
     create_follower=_create_the_about_page,
     create_other_follower=_create_the_workshop_page,
-    create_holder=_create_a_plugin_on,
+    prepare_holder=_naming_the_follower_alone(_create_a_plugin_on),
     point_holder_to=_point_the_plugin_to,
     group_of=_group_of_a_page_following_its_plugins,
 )
 
 
 def _group_of_a_page_by_its_plugin_bodies(
-    page: Page, holding: bool
+    page: Page, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The page's group, as its custom extractor builds it: its title, then the
     plugin's body if the plugin is on the page; no title or URL of its own."""
@@ -648,7 +665,7 @@ DEPENDS_ON_REVERSE_FOREIGN_KEY: _FollowedCase[Page, TextPlugin] = _FollowedCase(
     register=_register_pages_by_their_plugin_bodies,
     create_follower=_create_the_about_page,
     create_other_follower=_create_the_workshop_page,
-    create_holder=_create_a_plugin_on,
+    prepare_holder=_naming_the_follower_alone(_create_a_plugin_on),
     point_holder_to=_point_the_plugin_to,
     group_of=_group_of_a_page_by_its_plugin_bodies,
 )
@@ -676,7 +693,7 @@ def _point_the_profile_to(profile: SupplierProfile, supplier: Supplier) -> None:
 
 
 def _group_of_a_supplier_following_its_profile(
-    supplier: Supplier, holding: bool
+    supplier: Supplier, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The supplier's group: its name, then the profile's body if the profile
     is on the supplier."""
@@ -700,14 +717,14 @@ FOLLOW_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _FollowedC
     register=_register_suppliers_following_their_profile,
     create_follower=_create_birch_mill,
     create_other_follower=_create_oak_yard,
-    create_holder=_create_a_profile_of,
+    prepare_holder=_naming_the_follower_alone(_create_a_profile_of),
     point_holder_to=_point_the_profile_to,
     group_of=_group_of_a_supplier_following_its_profile,
 )
 
 
 def _group_of_a_supplier_by_its_profile_body(
-    supplier: Supplier, holding: bool
+    supplier: Supplier, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The supplier's group, as its custom extractor builds it: its name, then
     the profile's body if the profile is on the supplier; no title of its own."""
@@ -731,7 +748,7 @@ DEPENDS_ON_REVERSE_ONE_TO_ONE: _FollowedCase[Supplier, SupplierProfile] = _Follo
     register=_register_suppliers_by_their_profile_body,
     create_follower=_create_birch_mill,
     create_other_follower=_create_oak_yard,
-    create_holder=_create_a_profile_of,
+    prepare_holder=_naming_the_follower_alone(_create_a_profile_of),
     point_holder_to=_point_the_profile_to,
     group_of=_group_of_a_supplier_by_its_profile_body,
 )
@@ -760,7 +777,7 @@ def _point_the_shelf_to(shelf: Shelf, warehouse: Warehouse) -> None:
 
 
 def _group_of_a_warehouse_following_its_shelves(
-    warehouse: Warehouse, holding: bool
+    warehouse: Warehouse, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The warehouse's group, under its primary key, not its code: its name,
     then the shelf's label if the shelf is in the warehouse."""
@@ -785,7 +802,7 @@ FOLLOW_REVERSE_FOREIGN_KEY_TO_FIELD: _FollowedCase[Warehouse, Shelf] = _Followed
     register=_register_warehouses_following_their_shelves,
     create_follower=_create_the_north_depot,
     create_other_follower=_create_the_south_depot,
-    create_holder=_create_a_shelf_in,
+    prepare_holder=_naming_the_follower_alone(_create_a_shelf_in),
     point_holder_to=_point_the_shelf_to,
     group_of=_group_of_a_warehouse_following_its_shelves,
 )
@@ -802,11 +819,15 @@ def _create_the_transbordeur() -> Venue:
     return Venue.objects.create(city="Lyon", name="Transbordeur")
 
 
-def _create_a_seminar_at(venue: Venue) -> Seminar:
-    """Create a seminar at the given venue: its two columns hold the venue's
-    city and name."""
+# The title a seminar is created with unless another one is given.
+_SEMINAR_TITLE = "Acoustics"
+
+
+def _create_a_seminar_at(venue: Venue, *, title: str = _SEMINAR_TITLE) -> Seminar:
+    """Create a seminar with the given title, _SEMINAR_TITLE by default, at the
+    given venue: its two columns hold the venue's city and name."""
     return Seminar.objects.create(
-        title="Acoustics", venue_city=venue.city, venue_name=venue.name
+        title=title, venue_city=venue.city, venue_name=venue.name
     )
 
 
@@ -818,12 +839,12 @@ def _point_the_seminar_to(seminar: Seminar, venue: Venue) -> None:
 
 
 def _group_of_a_venue_following_its_seminars(
-    venue: Venue, holding: bool
+    venue: Venue, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The venue's group: its name, then the seminar's text fields, title first,
     if the seminar is at the venue."""
     text = (
-        f"{venue.name}\n\nAcoustics\n\n{venue.city}\n\n{venue.name}"
+        f"{venue.name}\n\n{_SEMINAR_TITLE}\n\n{venue.city}\n\n{venue.name}"
         if holding
         else venue.name
     )
@@ -847,18 +868,18 @@ FOLLOW_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
     register=_register_venues_following_their_seminars,
     create_follower=_create_the_halle_tony_garnier,
     create_other_follower=_create_the_transbordeur,
-    create_holder=_create_a_seminar_at,
+    prepare_holder=_naming_the_follower_alone(_create_a_seminar_at),
     point_holder_to=_point_the_seminar_to,
     group_of=_group_of_a_venue_following_its_seminars,
 )
 
 
 def _group_of_a_venue_by_its_seminar_titles(
-    venue: Venue, holding: bool
+    venue: Venue, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The venue's group, as its custom extractor builds it: its name, then the
     seminar's title if the seminar is at the venue; no title of its own."""
-    text = f"{venue.name}\n\nAcoustics" if holding else venue.name
+    text = f"{venue.name}\n\n{_SEMINAR_TITLE}" if holding else venue.name
     return {
         f"testapp.venue:{venue.pk}": [
             NormalizedDocument(
@@ -879,16 +900,14 @@ DEPENDS_ON_REVERSE_MULTI_COLUMN: _FollowedCase[Venue, Seminar] = _FollowedCase(
     register=_register_venues_by_their_seminar_titles,
     create_follower=_create_the_halle_tony_garnier,
     create_other_follower=_create_the_transbordeur,
-    create_holder=_create_a_seminar_at,
+    prepare_holder=_naming_the_follower_alone(_create_a_seminar_at),
     point_holder_to=_point_the_seminar_to,
     group_of=_group_of_a_venue_by_its_seminar_titles,
 )
 
 
-def _create_lyon_and_its_opponent() -> Team:
-    """Create the Lyon team, and Nantes, the opponent every match of Lyon's is
-    played against."""
-    Team.objects.create(name="Nantes")
+def _create_lyon() -> Team:
+    """Create the Lyon team."""
     return Team.objects.create(name="Lyon")
 
 
@@ -897,25 +916,34 @@ def _create_marseille() -> Team:
     return Team.objects.create(name="Marseille")
 
 
-def _create_a_match_at_home_of(team: Team) -> Match:
-    """Create a match with the given team at home, against Nantes away: it holds
-    the key to two different teams, one per foreign key."""
-    nantes = Team.objects.get(name="Nantes")
-    return Match.objects.create(title="Opening day", home_team=team, away_team=nantes)
+def _create_nantes() -> Team:
+    """Create the Nantes team, the opponent of every match."""
+    return Team.objects.create(name="Nantes")
 
 
-def _point_the_match_home_to(match: Match, team: Team) -> None:
-    """Point the match's home team key to the given team, without saving it:
-    its away team stays."""
-    match.home_team = team
+# The title every match is created with.
+_MATCH_TITLE = "Opening day"
+
+
+def _create_a_match(
+    *, home_team: Team, away_team: Team, tournament: Tournament | None = None
+) -> Match:
+    """Create a match between the given teams, in the given tournament if any:
+    it holds the key to two different teams, one per foreign key."""
+    return Match.objects.create(
+        title=_MATCH_TITLE,
+        home_team=home_team,
+        away_team=away_team,
+        tournament=tournament,
+    )
 
 
 def _group_of_a_team_following_its_matches(
-    team: Team, holding: bool
+    team: Team, *, holding: bool
 ) -> dict[str, list[NormalizedDocument]]:
     """The team's group: its name, then the match's title if the match names
     the team, at home or away."""
-    text = f"{team.name}\n\nOpening day" if holding else team.name
+    text = f"{team.name}\n\n{_MATCH_TITLE}" if holding else team.name
     return {
         f"testapp.team:{team.pk}": [
             NormalizedDocument(
@@ -929,25 +957,69 @@ def _group_of_a_team_following_its_matches(
     }
 
 
-def _group_of_the_away_team(
-    match: Match, holding: bool
-) -> dict[str, list[NormalizedDocument]]:
-    """The group of the match's away team, which no write changes."""
-    return _group_of_a_team_following_its_matches(match.away_team, holding)
+class _Side(Enum):
+    """The side a team plays a match on, by the name of the match's foreign key
+    to it."""
+
+    HOME = "home_team"
+    AWAY = "away_team"
+
+    @property
+    def opposite(self) -> "_Side":
+        """The side its opponent plays on."""
+        return _Side.AWAY if self is _Side.HOME else _Side.HOME
+
+
+def _teams_following_their_matches_on(side: _Side) -> _FollowedCase[Team, Match]:
+    """The case of a team following its matches, whose holding row is a match
+    with the follower on the given side, against Nantes on the opposite one."""
+
+    def create_nantes_to_play_against() -> Callable[[Team], Match]:
+        nantes = _create_nantes()
+
+        def create_a_match_of(team: Team) -> Match:
+            home_team, away_team = (
+                (team, nantes) if side is _Side.HOME else (nantes, team)
+            )
+            return _create_a_match(home_team=home_team, away_team=away_team)
+
+        return create_a_match_of
+
+    def point_the_match_to(match: Match, team: Team) -> None:
+        # Only the follower's key: Nantes's stays.
+        setattr(match, side.value, team)
+
+    def group_of_nantes(
+        match: Match, *, holding: bool
+    ) -> dict[str, list[NormalizedDocument]]:
+        nantes: Team = getattr(match, side.opposite.value)
+        return _group_of_a_team_following_its_matches(nantes, holding=holding)
+
+    return _FollowedCase(
+        register=_register_teams_following_their_matches,
+        create_follower=_create_lyon,
+        create_other_follower=_create_marseille,
+        prepare_holder=create_nantes_to_play_against,
+        point_holder_to=point_the_match_to,
+        group_of=_group_of_a_team_following_its_matches,
+        groups_of_the_others_named=group_of_nantes,
+    )
 
 
 # `follow` through two reverse foreign keys to the same model: only Team is
 # registered, following its matches at home and away (Match is not); a match
 # holds the key to two different teams, the follower at home and Nantes away,
-# so each relation must be crossed for its team's group to be replaced.
-FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
-    register=_register_teams_following_their_matches,
-    create_follower=_create_lyon_and_its_opponent,
-    create_other_follower=_create_marseille,
-    create_holder=_create_a_match_at_home_of,
-    point_holder_to=_point_the_match_home_to,
-    group_of=_group_of_a_team_following_its_matches,
-    groups_of_the_others_named=_group_of_the_away_team,
+# created first and handed to every match, so each relation must be crossed
+# for its team's group to be replaced.
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = (
+    _teams_following_their_matches_on(_Side.HOME)
+)
+
+
+# The mirror of the case above: the follower plays away and Nantes at home,
+# so the write changes the key of the reverse relation ``away_matches``.
+FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY: _FollowedCase[Team, Match] = (
+    _teams_following_their_matches_on(_Side.AWAY)
 )
 
 
@@ -956,33 +1028,55 @@ FOLLOW_TWO_REVERSE_FOREIGN_KEYS: _FollowedCase[Team, Match] = _FollowedCase(
 Act = Callable[[], ReplaceCalls]
 
 
-def _create(case: _FollowedCase[Any, Any]) -> Act:
+class _Write(Protocol):
+    """A write of a holding row, generic over the case it is performed on."""
+
+    def __call__(self, case: _FollowedCase[FollowerT, HolderT], /) -> Act: ...
+
+
+def _merged(
+    *groups: dict[str, list[NormalizedDocument]],
+) -> dict[str, list[NormalizedDocument]]:
+    """The given groups in one mapping, once checked that no two share a source
+    key: merging them blindly would drop one of the colliding groups, shrinking
+    the expected call to match a wrong one."""
+    merged: dict[str, list[NormalizedDocument]] = {}
+    for group in groups:
+        shared = merged.keys() & group.keys()
+        assert not shared, f"groups expected under the same key: {sorted(shared)}"
+        merged |= group
+    return merged
+
+
+def _create(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row created on a follower: one call, the follower's group and
     those of the other rows it names, each once."""
     # Created before the write: the commit callback of its own save is not
     # observed, so only the holding row's creation is.
+    create_holder = case.prepare_holder()
     follower = case.create_follower()
 
     def act() -> ReplaceCalls:
-        holder = case.create_holder(follower)
+        holder = create_holder(follower)
         return [
-            {
-                **case.group_of(follower, True),
-                **case.groups_of_the_others_named(holder, True),
-            }
+            _merged(
+                case.group_of(follower, holding=True),
+                case.groups_of_the_others_named(holder, holding=True),
+            )
         ]
 
     return act
 
 
-def _move(case: _FollowedCase[Any, Any]) -> Act:
+def _move(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row moved to another follower by ``save()``: one call, both
     followers' groups and those of the other rows it names, each once."""
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the move is.
+    create_holder = case.prepare_holder()
     old = case.create_follower()
     new = case.create_other_follower()
-    holder = case.create_holder(old)
+    holder = create_holder(old)
 
     def act() -> ReplaceCalls:
         case.point_holder_to(holder, new)
@@ -990,32 +1084,33 @@ def _move(case: _FollowedCase[Any, Any]) -> Act:
         # The old follower left without the holding row, the new one gaining
         # it, the other rows it names keeping it.
         return [
-            {
-                **case.group_of(old, False),
-                **case.group_of(new, True),
-                **case.groups_of_the_others_named(holder, True),
-            }
+            _merged(
+                case.group_of(old, holding=False),
+                case.group_of(new, holding=True),
+                case.groups_of_the_others_named(holder, holding=True),
+            )
         ]
 
     return act
 
 
-def _delete(case: _FollowedCase[Any, Any]) -> Act:
+def _delete(case: _FollowedCase[FollowerT, HolderT]) -> Act:
     """The holding row deleted: one call, the follower's group and those of the
     other rows it named, each once."""
     # Created before the write: the commit callbacks of these saves are not
     # observed, so only the delete is.
+    create_holder = case.prepare_holder()
     follower = case.create_follower()
-    holder = case.create_holder(follower)
+    holder = create_holder(follower)
 
     def act() -> ReplaceCalls:
         holder.delete()
         # The follower and the other rows it named left without the holding row.
         return [
-            {
-                **case.group_of(follower, False),
-                **case.groups_of_the_others_named(holder, False),
-            }
+            _merged(
+                case.group_of(follower, holding=False),
+                case.groups_of_the_others_named(holder, holding=False),
+            )
         ]
 
     return act
@@ -1050,11 +1145,17 @@ def _delete(case: _FollowedCase[Any, Any]) -> Act:
         pytest.param(
             FOLLOW_TWO_REVERSE_FOREIGN_KEYS, id="follow-two_reverse_foreign_keys"
         ),
+        pytest.param(
+            FOLLOW_TWO_REVERSE_FOREIGN_KEYS_AWAY,
+            id="follow-two_reverse_foreign_keys_away",
+        ),
     ],
 )
 def test_writing_a_row_holding_the_key_to_its_follower_replaces_the_followers_group(
+    # Any: the cases pair different models, and _FollowedCase is invariant in
+    # both, so no single precise type covers them all.
     case: _FollowedCase[Any, Any],
-    write: Callable[[_FollowedCase[Any, Any]], Act],
+    write: _Write,
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -4303,9 +4404,9 @@ def test_updating_a_match_followed_by_two_reverse_relations_looks_teams_up_once_
 
     # Created outside the counted queries: only the match's update below is
     # observed.
-    lyon = Team.objects.create(name="Lyon")
-    nantes = Team.objects.create(name="Nantes")
-    derby = Match.objects.create(title="Opening day", home_team=lyon, away_team=nantes)
+    lyon = _create_lyon()
+    nantes = _create_nantes()
+    derby = _create_a_match(home_team=lyon, away_team=nantes)
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits: one lookup of the Teams before the save, the
@@ -4364,12 +4465,10 @@ def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
 
     # Created outside the counted queries: only the match's update below is
     # observed.
-    lyon = Team.objects.create(name="Lyon")
-    nantes = Team.objects.create(name="Nantes")
+    lyon = _create_lyon()
+    nantes = _create_nantes()
     cup = Tournament.objects.create(name="Spring Cup")
-    derby = Match.objects.create(
-        title="Opening day", home_team=lyon, away_team=nantes, tournament=cup
-    )
+    derby = _create_a_match(home_team=lyon, away_team=nantes, tournament=cup)
 
     # The queries are counted around the commit callbacks too, which run when
     # the inner context exits: one lookup per registered model before the
@@ -5947,16 +6046,14 @@ def test_saving_a_seminar_of_a_venue_following_by_multi_column_replaces_the_venu
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    hall = _create_the_halle_tony_garnier()
     # Another venue of the same city, with a seminar of its own: only both
     # columns together name a venue, so a seminar at the hall is not one of
     # its seminars.
     _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
-        Seminar.objects.create(
-            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-        )
+        _create_a_seminar_at(hall)
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
@@ -5992,13 +6089,9 @@ def test_deleting_a_seminar_of_a_venue_following_by_multi_column_replaces_the_ve
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's delete below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
-    deleted_seminar = Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
-    Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    hall = _create_the_halle_tony_garnier()
+    deleted_seminar = _create_a_seminar_at(hall, title="Stage lighting")
+    _create_a_seminar_at(hall)
 
     with django_capture_on_commit_callbacks(execute=True):
         deleted_seminar.delete()
@@ -6036,19 +6129,15 @@ def test_moving_a_seminar_of_a_venue_following_by_multi_column_replaces_both_ven
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's move below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    hall = _create_the_halle_tony_garnier()
     # Another venue of the same city: the move changes only the name column,
     # so the city column alone cannot tell the two venues apart.
-    transbordeur = Venue.objects.create(city="Lyon", name="Transbordeur")
-    moved_seminar = Seminar.objects.create(
-        title="Stage lighting", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
-    Seminar.objects.create(
-        title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    transbordeur = _create_the_transbordeur()
+    moved_seminar = _create_a_seminar_at(hall, title="Stage lighting")
+    _create_a_seminar_at(hall)
 
     with django_capture_on_commit_callbacks(execute=True):
-        moved_seminar.venue_name = "Transbordeur"
+        moved_seminar.venue_name = transbordeur.name
         moved_seminar.save()
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
@@ -6176,31 +6265,18 @@ def test_saving_a_seminar_a_custom_extractor_depends_on_by_multi_column_replaces
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    # Only the Venue is registered, with a custom extractor reading its
-    # seminars: depends_on names the reverse of the multi-column ForeignObject
-    # ``venue``, whose saves change its documents. Seminar itself is not
-    # registered.
-    @rag.register_extractor(Venue, depends_on=["seminars"])
-    class VenueExtractor(BaseExtractor[Venue]):
-        def extract(self, instance: Venue) -> NormalizedDocument:
-            titles = [seminar.title for seminar in instance.seminars.order_by("pk")]
-            return self.build_document(
-                instance, text="\n\n".join([instance.name, *titles])
-            )
+    _register_venues_by_their_seminar_titles()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the seminar's save below is observed.
-    hall = Venue.objects.create(city="Lyon", name="Halle Tony Garnier")
+    hall = _create_the_halle_tony_garnier()
     # Another venue of the same city, with a seminar of its own: only both
     # columns together name a venue, so a seminar at the hall is not one of
     # its seminars.
     _create_the_transbordeur_and_its_seminar()
 
     with django_capture_on_commit_callbacks(execute=True):
-        Seminar.objects.create(
-            title="Acoustics", venue_city="Lyon", venue_name="Halle Tony Garnier"
-        )
+        _create_a_seminar_at(hall)
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
@@ -6279,9 +6355,7 @@ def test_deleting_a_venue_read_through_a_multi_column_lookup_path_sends_only_sem
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's delete below is observed.
     hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
-    rigging = Seminar.objects.create(
-        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    rigging = _create_a_seminar_at(hall, title="Rigging")
     acoustics_pk = acoustics.pk
     rigging_pk = rigging.pk
     # Another venue of the same city: only both columns together name a venue,
@@ -6417,9 +6491,7 @@ def test_saving_a_venue_unchanged_replaces_each_of_its_following_seminars_once(
     # Created outside the captured callbacks: the commit callbacks of these
     # saves never run, so only the venue's save below is observed.
     hall, acoustics = _create_the_hall_and_its_acoustics_seminar()
-    rigging = Seminar.objects.create(
-        title="Rigging", venue_city="Lyon", venue_name="Halle Tony Garnier"
-    )
+    rigging = _create_a_seminar_at(hall, title="Rigging")
 
     with django_capture_on_commit_callbacks(execute=True):
         # The save changes neither column the seminars name the venue by: the
