@@ -162,8 +162,9 @@ def remember_followers_before_save(
     # Followers reaching the row through foreign keys are looked up by its
     # primary key, joined against the columns still in the database: pre_save
     # runs before the UPDATE, so they are those naming the row as committed,
-    # even by columns the save changes, without loading it. The lookup at the
-    # commit finds only those naming the row as saved.
+    # even by columns the save changes, without loading it. At the commit, both
+    # these and the reverse followers are looked up from the row as saved: only
+    # the lookups made here find the followers it had before the save.
     setattr(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
@@ -175,11 +176,18 @@ def remember_followers_before_save(
 def _committed_reverse_followers(sender: type[Model], pk: Any) -> list[_Follower]:
     """Return the rows following, through a reverse relation, the committed row.
 
-    The save may change the foreign keys the row points to them by: those it
-    pointed to before are found from the row as committed.
+    The row points to them by its foreign keys, read as committed: before the
+    save, they are those it pointed to before, even if the save changes them;
+    at the commit, those it points to then, even through a write sending no
+    signal.
     """
-    # A model followed only through foreign keys costs the save no row loading.
+    # A model followed only through foreign keys costs no row loading.
     if not _is_followed_through_reverse_relations(sender):
+        return []
+
+    if pk is None:
+        # A row deleted since its save has lost its primary key: no committed
+        # row has it, and looking for one would query for nothing.
         return []
 
     committed_instance = _committed_instance(sender._base_manager.all(), pk)
