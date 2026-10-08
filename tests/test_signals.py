@@ -3250,6 +3250,49 @@ def test_moving_a_followed_instance_linked_by_a_unique_column_replaces_both_grou
 
 
 @pytest.mark.django_db
+def test_deleting_a_followed_instance_linked_by_a_unique_column_replaces_the_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Warehouse is registered, following its shelves: Shelf itself is
+    # not.
+    rag.register(Warehouse, follow=["shelves"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the shelf's delete below is observed.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    deleted_shelf = Shelf.objects.create(warehouse=north, label="Timber")
+    Shelf.objects.create(warehouse=north, label="Paint")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The deleted shelf's foreign key holds the Warehouse's code, "north",
+        # not its primary key.
+        deleted_shelf.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Warehouse's group as committed, under its primary key, not its code:
+    # the deleted shelf's label is gone, the remaining shelf's label stays
+    # after the Warehouse's name.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.warehouse:{north.pk}": [
+                NormalizedDocument(
+                    text="North depot\n\nPaint",
+                    source_app_label="testapp",
+                    source_model="warehouse",
+                    source_pk=north.pk,
+                    title="North depot",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_a_null_foreign_key_to_a_nullable_unique_column_sends_nothing_for_a_null_row(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
