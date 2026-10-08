@@ -1484,6 +1484,70 @@ DEPENDS_ON_FORWARD_FOREIGN_KEY: _TargetCase[Page, TextPlugin] = _TargetCase(
 )
 
 
+def _register_workshops_by_their_topic_title() -> None:
+    """Register only Workshop, with a custom extractor reading its topic's
+    title before its own when it has a topic: depends_on names the topic,
+    its own nullable foreign key. Topic itself is not registered."""
+
+    @rag.register_extractor(Workshop, depends_on=["topic"])
+    class WorkshopExtractor(BaseExtractor[Workshop]):
+        def extract(self, instance: Workshop) -> NormalizedDocument:
+            if instance.topic is None:
+                return self.build_document(instance, text=instance.title)
+            return self.build_document(
+                instance, text=f"{instance.topic.title}: {instance.title}"
+            )
+
+
+def _group_of_a_pottery_workshop_by_its_topic_title(
+    workshop: Workshop, /, *, target: Topic
+) -> dict[str, list[NormalizedDocument]]:
+    """The pottery workshop's group, as its custom extractor builds it: its
+    topic's title, then its own; no title of its own in the document."""
+    return {
+        f"testapp.workshop:{workshop.pk}": [
+            NormalizedDocument(
+                text=f"{target.title}: Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=workshop.pk,
+            ),
+        ],
+    }
+
+
+def _group_of_a_pottery_workshop_by_its_nulled_topic(
+    workshop: Workshop,
+) -> dict[str, list[NormalizedDocument]]:
+    """The pottery workshop's group, as its custom extractor builds it once its
+    topic is deleted and its foreign key set to null: its own title alone."""
+    return {
+        f"testapp.workshop:{workshop.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=workshop.pk,
+            ),
+        ],
+    }
+
+
+# `depends_on` through a nullable forward foreign key: only Workshop is
+# registered, with a custom extractor reading its topic's title (Topic is
+# not); the workshop holds the key to the topic, the row written, SET_NULL on
+# delete.
+DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Topic, Workshop] = _TargetCase(
+    register=_register_workshops_by_their_topic_title,
+    create_target=_create_the_woodworking_topic,
+    create_other_target=_create_the_carving_topic,
+    create_follower_on=_create_a_pottery_workshop,
+    change_target=_retitle_the_topic,
+    group_of=_group_of_a_pottery_workshop_by_its_topic_title,
+    group_once_target_deleted=_group_of_a_pottery_workshop_by_its_nulled_topic,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1550,6 +1614,10 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
         ),
         pytest.param(
             DEPENDS_ON_FORWARD_FOREIGN_KEY, id="depends_on-forward_foreign_key"
+        ),
+        pytest.param(
+            DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
+            id="depends_on-forward_foreign_key_set_null",
         ),
     ],
 )
