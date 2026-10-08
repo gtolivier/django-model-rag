@@ -947,14 +947,31 @@ or a `GenericRelation` in `follow`.
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
     handle-to-primary-key mapping runs the other way.
-  - [ ] **Parametrize the signal tests** by declaration × relation ×
-    write, in place of one hand-written test per combination. Folds in
-    two leftovers: the save test of a profile under a `depends_on`
-    extractor keeps its own extractor rather than
-    `_register_suppliers_by_their_profile_body()`, whose fallback for a
-    missing profile would change its input; the move test of a reverse
-    one-to-one in `follow` checks the merged groups, not the exact
-    replace calls.
+  - [x] **Parametrize the signal tests** by declaration × relation ×
+    write, in place of one hand-written test per combination. Two
+    parametrized tests, each checking the exact list of replace calls,
+    as committed:
+    - **Rows holding the key to their follower** (a reverse relation in
+      `follow` or `depends_on`, a `to_field`, several columns, a match
+      naming two teams): 9 cases × create / move / delete. The written
+      row has a sibling holding the same key, except under a reverse
+      one-to-one, so the move and the delete must leave the old
+      follower's group with the sibling's text.
+    - **Rows a follower's path ends on** (a forward relation in `follow`,
+      a lookup path or `depends_on`, `SET_NULL` included, one or two
+      links deep): 15 cases × save / delete, and a change of the key for
+      the 7 cases linked by a `to_field` or several columns.
+    - **Result:** the hand-written tests these repeat are gone, the two
+      leftovers named here included (the profile under a `depends_on`
+      extractor, the reverse one-to-one moved in `follow`): 9 for the
+      first test (#38), 24 for the second and the siblings. Every case
+      passed from the start: no production code changed. The second
+      test and the siblings take the suite from 588 to 598 tests, with
+      cases no hand-written test had.
+    - **Kept by hand:** the variants a case does not express — a batch,
+      the queries counted, proxies and multi-table children, many-to-many
+      links, `get_queryset()`, a failing output, a null key, a row saved
+      unchanged, a delete reaching two rows at once.
   - [ ] **Revisit the limits this may lift**: a lookup path past a reverse
     one-to-one, a `GenericRelation` in `follow`, 11c-quater.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
