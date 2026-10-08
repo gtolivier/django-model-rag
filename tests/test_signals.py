@@ -4471,6 +4471,69 @@ def test_adding_a_musician_to_a_band_replaces_the_musicians_group_named_by_its_h
 
 
 @pytest.mark.django_db
+def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Musician is registered, following its bands through the reverse
+    # many-to-many ``bands``: Band itself is not.
+    rag.register(Musician, fields=["name"], follow=["bands"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # band holds two musicians, so that the clear removes more than one link;
+    # one of them plays in another band too, so that its group keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A musician not in the band: the clear below does not change its group.
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    trio.musicians.add(cleo)
+
+    # Cleared from the band's side: Django sends m2m_changed with the band as
+    # its instance and no primary keys at all, so its musicians can only be
+    # found before the clear, by the engagements naming them by the column
+    # Engagement.musician points to, their handle, not by their primary key. No
+    # row is saved again: the clear deletes only the engagements of the band.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The groups of both musicians as committed, each without
+    # the cleared band's name: the one playing in another band keeps that
+    # band's name. No group of the musician never in the band.
+    assert _received_groups(built_outputs) == {
+        f"testapp.musician:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nTrio",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.musician:{ben.pk}": [
+            NormalizedDocument(
+                text="Ben",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=ben.pk,
+                title="Ben",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
