@@ -560,17 +560,18 @@ def _followed_lookups(
 
 
 def _pks_reaching(
-    registered_model: type[Model], reached_rows: list[tuple[str, Any]]
+    registered_model: type[Model], lookups_to_reached_pks: list[tuple[str, Any]]
 ) -> list[Any]:
     """Return the primary keys of the ``registered_model`` rows reaching a row.
 
-    Those rows reach, through a lookup of ``reached_rows``, the row whose primary
-    key comes with it. One query crosses all the lookups.
+    Each of ``lookups_to_reached_pks`` pairs a lookup with the primary key of
+    the row it must reach; a row reaching any of them is returned. One query
+    crosses all the lookups.
     """
-    # A row deleted since its save has lost its primary key: filtering on None
-    # would match the rows whose foreign key is null.
     condition = Q()
-    for lookup, reached_pk in reached_rows:
+    for lookup, reached_pk in lookups_to_reached_pks:
+        # A row deleted since its save has lost its primary key: filtering on
+        # None would match the rows whose foreign key is null.
         if reached_pk is not None:
             condition |= Q(**{f"{lookup}__pk": reached_pk})
     if not condition:
