@@ -1548,6 +1548,57 @@ DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL: _TargetCase[Topic, Workshop] = _TargetC
 )
 
 
+def _register_intros_following_their_page() -> None:
+    """Register PageIntro, following its page through its own one-to-one
+    field: Page itself is not registered."""
+    rag.register(PageIntro, follow=["page"])
+
+
+def _create_an_intro_on(page: Page) -> PageIntro:
+    """Create the given page's intro: it holds the one-to-one key to the
+    page."""
+    return PageIntro.objects.create(page=page, body="We build chairs by hand.")
+
+
+def _group_of_an_intro_following_its_page(
+    intro: PageIntro, /, *, target: Page
+) -> dict[str, list[NormalizedDocument]]:
+    """The intro's group: its body, then its page's title; its body is its
+    title too."""
+    return {
+        f"testapp.pageintro:{intro.pk}": [
+            NormalizedDocument(
+                text=f"We build chairs by hand.\n\n{target.title}",
+                source_app_label="testapp",
+                source_model="pageintro",
+                source_pk=intro.pk,
+                title="We build chairs by hand.",
+            ),
+        ],
+    }
+
+
+def _group_of_an_intro_deleted_by_cascade(
+    intro: PageIntro,
+) -> dict[str, list[NormalizedDocument]]:
+    """The intro's group once deleted with its page by cascade: empty."""
+    return {f"testapp.pageintro:{intro.pk}": []}
+
+
+# `follow` through a forward one-to-one: only PageIntro is registered,
+# following its page (Page is not); the intro holds the one-to-one key to the
+# page, the row written, CASCADE on delete. Each page has its own intro.
+FOLLOW_FORWARD_ONE_TO_ONE: _TargetCase[Page, PageIntro] = _TargetCase(
+    register=_register_intros_following_their_page,
+    create_target=_create_the_about_page,
+    create_other_target=_create_the_workshop_page,
+    create_follower_on=_create_an_intro_on,
+    change_target=_retitle_the_page,
+    group_of=_group_of_an_intro_following_its_page,
+    group_once_target_deleted=_group_of_an_intro_deleted_by_cascade,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -1619,6 +1670,7 @@ def _delete_the_target(case: _TargetCase[TargetT, FollowerT]) -> Act:
             DEPENDS_ON_FORWARD_FOREIGN_KEY_SET_NULL,
             id="depends_on-forward_foreign_key_set_null",
         ),
+        pytest.param(FOLLOW_FORWARD_ONE_TO_ONE, id="follow-forward_one_to_one"),
     ],
 )
 def test_writing_a_row_its_followers_path_ends_on_replaces_the_followers_group(
