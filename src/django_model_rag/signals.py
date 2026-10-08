@@ -496,6 +496,12 @@ def _followers_pointed_to(sender: type[Model], instance: Model) -> list[_Followe
     It points to them through the foreign key behind a reverse relation they
     follow; the lookup reads that key as stored, not as ``instance`` holds it.
     """
+    if instance.pk is None:
+        # A row deleted since its save has lost its primary key, but a
+        # multi-table child keeps its parent link: looking it up would query a
+        # stale id, which a row inserted since may have taken.
+        return []
+
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
