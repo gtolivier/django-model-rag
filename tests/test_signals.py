@@ -2016,6 +2016,67 @@ DEPENDS_ON_FORWARD_MULTI_COLUMN: _TargetCase[Venue, Seminar] = _TargetCase(
 )
 
 
+def _register_offers_reading_their_category_two_foreign_keys_deep() -> None:
+    """Register Offer, reading its product's category's name through a lookup
+    path two foreign keys deep, with no follow: neither Product nor Category is
+    registered."""
+    rag.register(Offer, fields=["title", "product__category__name"])
+
+
+def _create_the_garden_category() -> Category:
+    """Create the Garden category."""
+    return Category.objects.create(name="Garden")
+
+
+def _create_a_spring_sale_of_a_desk_lamp_in(category: Category) -> Offer:
+    """Create a Desk lamp in the given category, then a Spring sale offer on
+    it."""
+    return Offer.objects.create(
+        title="Spring sale", product=_create_a_plain_desk_lamp(category)
+    )
+
+
+def _group_of_a_spring_sale_reading_its_category(
+    offer: Offer, /, *, target: Category
+) -> dict[str, list[NormalizedDocument]]:
+    """The spring sale's group: its title, then its product's category's
+    name."""
+    return {
+        f"testapp.offer:{offer.pk}": [
+            NormalizedDocument(
+                text=f"Spring sale\n\n{target.name}",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=offer.pk,
+                title="Spring sale",
+            ),
+        ],
+    }
+
+
+def _group_of_an_offer_deleted_by_cascade(
+    offer: Offer,
+) -> dict[str, list[NormalizedDocument]]:
+    """The offer's group once deleted by cascade with its product, itself
+    deleted with its category: empty."""
+    return {f"testapp.offer:{offer.pk}": []}
+
+
+# A lookup path two forward foreign keys deep: only Offer is registered,
+# reading its product's category's name (neither Product nor Category is); the
+# row written is the category, the last link of the path, Offer → product →
+# category, both CASCADE on delete.
+PATH_TWO_FORWARD_FOREIGN_KEYS: _TargetCase[Category, Offer] = _TargetCase(
+    register=_register_offers_reading_their_category_two_foreign_keys_deep,
+    create_target=_create_the_lighting_category,
+    create_other_target=_whatever_the_target(_create_the_garden_category),
+    create_follower_on=_create_a_spring_sale_of_a_desk_lamp_in,
+    change_target=_rename_the_category,
+    group_of=_group_of_a_spring_sale_reading_its_category,
+    group_once_target_deleted=_group_of_an_offer_deleted_by_cascade,
+)
+
+
 class _TargetWrite(Protocol):
     """A write of a target, generic over the case it is performed on."""
 
@@ -2101,6 +2162,7 @@ _TARGET_CASES: list[tuple[_TargetCase[Any, Any], str]] = [
     (FOLLOW_FORWARD_MULTI_COLUMN, "follow-forward_multi_column"),
     (PATH_FORWARD_MULTI_COLUMN, "path-forward_multi_column"),
     (DEPENDS_ON_FORWARD_MULTI_COLUMN, "depends_on-forward_multi_column"),
+    (PATH_TWO_FORWARD_FOREIGN_KEYS, "path-two_forward_foreign_keys"),
 ]
 
 
