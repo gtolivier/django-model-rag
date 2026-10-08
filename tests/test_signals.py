@@ -2214,6 +2214,52 @@ def test_moving_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces
 
 
 @pytest.mark.django_db
+def test_deleting_a_profile_a_custom_extractor_depends_on_by_its_accessor_replaces_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Supplier is registered, with a custom extractor reading its
+    # profile, if it has one: depends_on names the reverse one-to-one by its
+    # accessor, "profile", while the relation's query name is
+    # "supplier_profile". SupplierProfile itself is not registered.
+    @rag.register_extractor(Supplier, depends_on=["profile"])
+    class SupplierExtractor(BaseExtractor[Supplier]):
+        def extract(self, instance: Supplier) -> NormalizedDocument:
+            try:
+                body = instance.profile.body
+            except SupplierProfile.DoesNotExist:
+                return self.build_document(instance, text=instance.name)
+            return self.build_document(instance, text=f"{instance.name}\n\n{body}")
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the profile's delete below is observed.
+    birch = Supplier.objects.create(name="Birch Mill")
+    profile = SupplierProfile.objects.create(supplier=birch, body="Kiln-dried boards.")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        profile.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Supplier's group as committed: the profile's text is
+    # gone, the Supplier's name stays alone.
+    assert _received_groups(built_outputs) == {
+        f"testapp.supplier:{birch.pk}": [
+            NormalizedDocument(
+                text="Birch Mill",
+                source_app_label="testapp",
+                source_model="supplier",
+                source_pk=birch.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_category_a_custom_extractor_depends_on_two_links_deep_replaces_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
