@@ -168,8 +168,18 @@ def remember_followers_before_save(
     setattr(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-        _committed_reverse_followers(sender, instance.pk)
-        + _followers_reaching(sender, instance),
+        _committed_followers(sender, instance),
+    )
+
+
+def _committed_followers(sender: type[Model], instance: Model) -> list[_Follower]:
+    """Return the registered rows following ``instance``'s row as committed.
+
+    Those reaching it through foreign keys are looked up by its primary key,
+    and those it points to through a reverse relation from the committed row.
+    """
+    return _followers_reaching(sender, instance) + _committed_reverse_followers(
+        sender, instance.pk
     )
 
 
@@ -210,9 +220,8 @@ def sync_saved_instance(
     and the groups of its followers — the registered rows following it, before
     the save and after it — whether or not ``sender`` is registered itself.
     The followers of a row saved before, or of a new row that already has
-    some, are looked up again at the commit. The
-    output configuration was checked before the save, by
-    check_output_before_save.
+    some, are looked up again at the commit. The output configuration was
+    checked before the save, by check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
@@ -418,11 +427,7 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = (
-            _followers_reaching(sender, instance)
-            + _committed_reverse_followers(sender, instance.pk)
-            + followers_at_save
-        )
+        followers = _committed_followers(sender, instance) + followers_at_save
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
