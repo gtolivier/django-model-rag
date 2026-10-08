@@ -908,9 +908,18 @@ or a `GenericRelation` in `follow`.
     only.
   - [ ] **Reverse relations onto lookups**, the suite green after each
     change.
-  - [ ] **Many-to-many links onto lookups.**
+  - [ ] **Many-to-many links onto lookups.** Test the `Band` /
+    `Engagement` pair from the musician's side first —
+    `ada.bands.remove(quartet)`, and `set()` from either side — where the
+    handle-to-primary-key mapping runs the other way.
   - [ ] **Parametrize the signal tests** by declaration × relation ×
-    write, in place of one hand-written test per combination.
+    write, in place of one hand-written test per combination. Folds in
+    two leftovers: the save test of a profile under a `depends_on`
+    extractor keeps its own extractor rather than
+    `_register_suppliers_by_their_profile_body()`, whose fallback for a
+    missing profile would change its input; the move test of a reverse
+    one-to-one in `follow` checks the merged groups, not the exact
+    replace calls.
   - [ ] **Revisit the limits this may lift**: a lookup path past a reverse
     one-to-one, a `GenericRelation` in `follow`, 11c-quater.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
