@@ -463,8 +463,8 @@ or a `GenericRelation` in `follow`.
     lookups, at `pre_save` and at the commit (`_pks_reaching`, through
     `_base_manager` with no `.using()` today), the in-memory read through a
     `to_field` (`_follower_pks`), the follower's commit callback and its
-    reload all use the signal's `using`. Django keeps a relation within one database, so the
-    follower lives on the same alias as the followed row.
+    reload all use the signal's `using`. Django keeps a relation within one
+    database, so the follower lives on the same alias as the followed row.
   - **The group key keeps no alias.** Adding it would break `source_key`
     (feature 1) and the split that `prune` makes at the colon, make `run()`
     know the alias, and re-key every index. With one followed database per
@@ -941,9 +941,8 @@ or a `GenericRelation` in `follow`.
       relations: 14 → 12.
     - **Left, low value:** the in-memory reads that stay, at a create and
       at a delete (`_follower_pks`), still cost one query per relation
-      with a `to_field` or several columns, before the combined lookup at
-      the commit. Combining them per registered model would change only
-      those rare relations.
+      with a `to_field` or several columns, not one per registered model.
+      Combining them would change only those rare relations.
   - [ ] **Many-to-many links onto lookups.** Test the `Band` /
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
