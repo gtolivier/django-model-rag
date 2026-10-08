@@ -2,7 +2,8 @@
 
 import logging
 from collections.abc import Callable
-from functools import partial
+from functools import partial, reduce
+from operator import or_
 from typing import Any, TypeAlias, TypeGuard, cast
 
 from django.conf import settings
@@ -198,27 +199,33 @@ def sync_saved_instance(
     Those are the instance's own group if ``sender`` feeds a registered model,
     and the groups of its followers — the registered rows following it, before
     the save and after it — whether or not ``sender`` is registered itself.
-    The followers of a row saved before, or of a new row that already has
-    some, are looked up again at the commit. The output configuration was
-    checked before the save, by check_output_before_save.
+    On an update, the followers from before the save were found at pre_save,
+    and those of the row as saved are only found by a lookup at the commit. On
+    a create, the followers the new row points to are read here, and looked up
+    again at the commit if there are any. The output configuration was checked
+    before the save, by check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
 
     registered_models = _registered_models(sender)
     _schedule_commit_callbacks(registered_models, instance, _group_replacer)
-    # At post_save the instance is the row as saved: a change left unsaved in
-    # memory afterwards is not followed.
+    # On an update, only the followers from before the save: those the row as
+    # saved points to are left to the commit's lookup.
     followers_at_save = instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
     is_followed = _is_followed(sender)
-    # The commit looks up again the followers a row saved before points to.
-    if created or not is_followed:
+    # On a create, the followers the new row points to are read from the
+    # instance, with no query in the common case: whether there are any decides
+    # if the commit looks them up again. At post_save the instance is the row
+    # as saved: a change left unsaved in memory afterwards is not followed.
+    if created:
         followers_at_save = _reverse_followers(sender, instance) + followers_at_save
     # A row just created has no follower pointing to it at its save, and
     # costs the commit no lookup unless it points to a follower.
     if (followers_at_save or not created) and is_followed:
-        # Rows may be attached to it, or it to other rows, before the commit,
-        # by a write that sends no signal: its followers are looked up then.
+        # Rows may also be attached to it, or it to other rows, before the
+        # commit, by a write that sends no signal: its followers are looked up
+        # then.
         transaction.on_commit(
             partial(
                 _replace_followers_as_committed,
@@ -401,10 +408,13 @@ def _replace_followers_as_committed(
 ) -> None:
     """Replace the groups of ``followers_at_save`` and of the rows following it now.
 
-    Those are looked up from the row as committed: rows attached after the
-    save, in the same transaction, follow it too, and so do the rows a write
-    sending no signal has since pointed it to. If looking them up fails,
-    ``followers_at_save`` are still replaced.
+    On a create, ``followers_at_save`` are the followers the new row points
+    to; on an update, only those it had before the save. The rows following
+    it now are looked up from the row as committed: on an update, those the
+    save pointed it to; rows attached after the save, in the same transaction;
+    and the rows a write sending no signal has since pointed it to. If looking
+    them up fails, ``followers_at_save`` are still replaced, but on an update a
+    follower the row was moved to is not.
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
@@ -568,17 +578,34 @@ def _pks_reaching(
     the row it must reach; a row reaching any of them is returned. One query
     crosses all the lookups.
     """
-    condition = Q()
-    for lookup, reached_pk in lookups_to_reached_pks:
+    rows = registered_model._base_manager.all()
+    rows_through_lookups = [
+        rows.filter(**{f"{lookup}__pk": reached_pk})
+        for lookup, reached_pk in lookups_to_reached_pks
         # A row deleted since its save has lost its primary key: filtering on
         # None would match the rows whose foreign key is null.
-        if reached_pk is not None:
-            condition |= Q(**{f"{lookup}__pk": reached_pk})
-    if not condition:
+        if reached_pk is not None
+    ]
+    if not rows_through_lookups:
         return []
 
-    reaching_rows = registered_model._base_manager.filter(condition)
+    reaching_rows = _rows_in_any(rows, rows_through_lookups)
     return list(reaching_rows.values_list("pk", flat=True))
+
+
+def _rows_in_any(
+    rows: QuerySet[Model], subsets: list[QuerySet[Model]]
+) -> QuerySet[Model]:
+    """Return the ``rows`` in any of ``subsets``, each a filter of ``rows``."""
+    if len(subsets) == 1:
+        return subsets[0]
+
+    # A subquery per subset keeps each as selective as a query of its own:
+    # ORed in one filter(), lookups crossing multi-valued relations would join
+    # them all, with the OR across the joins, which no index serves.
+    return rows.filter(
+        reduce(or_, (Q(pk__in=subset.values("pk")) for subset in subsets))
+    )
 
 
 def _is_followed(sender: type[Model]) -> bool:
