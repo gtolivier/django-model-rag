@@ -819,9 +819,13 @@ def _create_the_transbordeur() -> Venue:
     return Venue.objects.create(city="Lyon", name="Transbordeur")
 
 
-def _create_a_seminar_at(venue: Venue, *, title: str = "Acoustics") -> Seminar:
-    """Create a seminar with the given title, Acoustics by default, at the given
-    venue: its two columns hold the venue's city and name."""
+# The title a seminar is created with unless another one is given.
+_SEMINAR_TITLE = "Acoustics"
+
+
+def _create_a_seminar_at(venue: Venue, *, title: str = _SEMINAR_TITLE) -> Seminar:
+    """Create a seminar with the given title, _SEMINAR_TITLE by default, at the
+    given venue: its two columns hold the venue's city and name."""
     return Seminar.objects.create(
         title=title, venue_city=venue.city, venue_name=venue.name
     )
@@ -840,7 +844,7 @@ def _group_of_a_venue_following_its_seminars(
     """The venue's group: its name, then the seminar's text fields, title first,
     if the seminar is at the venue."""
     text = (
-        f"{venue.name}\n\nAcoustics\n\n{venue.city}\n\n{venue.name}"
+        f"{venue.name}\n\n{_SEMINAR_TITLE}\n\n{venue.city}\n\n{venue.name}"
         if holding
         else venue.name
     )
@@ -875,7 +879,7 @@ def _group_of_a_venue_by_its_seminar_titles(
 ) -> dict[str, list[NormalizedDocument]]:
     """The venue's group, as its custom extractor builds it: its name, then the
     seminar's title if the seminar is at the venue; no title of its own."""
-    text = f"{venue.name}\n\nAcoustics" if holding else venue.name
+    text = f"{venue.name}\n\n{_SEMINAR_TITLE}" if holding else venue.name
     return {
         f"testapp.venue:{venue.pk}": [
             NormalizedDocument(
