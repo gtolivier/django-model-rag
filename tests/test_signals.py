@@ -6344,6 +6344,56 @@ def test_adding_a_band_to_a_musician_replaces_only_the_musicians_group(
 
 
 @pytest.mark.django_db
+def test_clearing_the_bands_of_a_musician_replaces_only_the_musicians_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # musician plays in two bands, so that the clear removes more than one link.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician of each of its bands: the clear below changes neither group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada, cleo)
+
+    # Cleared from the musician's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with the musician as its instance and no primary
+    # keys at all, so the musician to replace is the instance itself, not a row
+    # found through its former bands. No row is saved again: the clear deletes
+    # only the engagements of the musician.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.bands.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The Musician's group as committed: both bands' names are
+    # gone, only its own name is left. No group of the other musicians of its
+    # former bands, nor of the unregistered bands.
+    assert _received_groups(built_outputs) == {
+        f"testapp.musician:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
