@@ -6851,6 +6851,71 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
 
 
 @pytest.mark.django_db
+def test_clearing_the_mentees_of_a_mentor_following_mentors_replaces_each_former_mentee(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentors()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Grace has two mentees: Alan has another mentor too, so that its group
+    # keeps the mentor left, Ada has Grace alone.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    grace.mentees.add(ada, alan)
+    linus.mentees.add(alan)
+    # Grace has a mentor of her own: her group lists it, and the clear below
+    # does not change it.
+    barbara = Person.objects.create(name="Barbara")
+    barbara.mentees.add(grace)
+    # A person Grace never mentored: the clear below does not change
+    # Margaret's group.
+    margaret = Person.objects.create(name="Margaret")
+    linus.mentees.add(margaret)
+
+    # Cleared from the mentor's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with Grace as its instance and no primary keys
+    # at all, so its mentees can only be found before the clear, by the join
+    # rows naming it as the mentor, not as the mentee. No row is saved again:
+    # the clear deletes only Grace's links to its mentees.
+    with django_capture_on_commit_callbacks(execute=True):
+        grace.mentees.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both former mentees as committed, each without Grace's
+    # name, and no group of the person Grace never mentored. Grace's own group
+    # is not replaced: it follows its mentors, not its mentees, so the clear
+    # does not change it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.person:{alan.pk}": [
+            NormalizedDocument(
+                text="Alan\n\nLinus",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=alan.pk,
+                title="Alan",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_adding_a_topic_to_a_course_neither_side_following_the_link_defers_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
