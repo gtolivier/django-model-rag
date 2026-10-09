@@ -5945,6 +5945,59 @@ def test_adding_a_course_child_to_a_topic_replaces_the_group_of_the_child_follow
 
 
 @pytest.mark.django_db
+def test_adding_a_plain_course_and_a_child_to_a_topic_replaces_only_the_childs_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. The plain course is
+    # not a master class: no MasterClass row has its primary key. Neither row
+    # is saved again: the add writes only the links.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+
+    # Added from the topic's side, both in one call: Django sends m2m_changed
+    # with the topic as its instance, Course as its model, and the Course rows
+    # of both the plain course and the master class among the primary keys it
+    # names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics, masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The MasterClass's group as committed, alone: nothing for the plain
+    # course's row, neither a group nor an emptied one under
+    # testapp.masterclass:<its pk>.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.masterclass:{masterclass.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Woodworking masterclass\n\nAda"
+                        "\n\nWoodworking\n\nJoints and finishes."
+                    ),
+                    source_app_label="testapp",
+                    source_model="masterclass",
+                    source_pk=masterclass.pk,
+                    title="Woodworking masterclass",
+                ),
+            ],
+        }
+    ]
+    # And nothing else reached the output: no prune either.
+    assert [call for output in built_outputs for call in output.calls] == ["replace"]
+
+
+@pytest.mark.django_db
 def test_removing_a_course_child_from_a_topic_replaces_the_group_of_the_child(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
