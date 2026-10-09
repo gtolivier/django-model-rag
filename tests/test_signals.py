@@ -6518,10 +6518,8 @@ def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
 
     # Grace's group as committed, with Ada's name added after its other
     # mentee's, and no group of the person not mentoring Ada. Ada's own
-    # group follows its mentees, not its mentors, so the add does not change
-    # its text; it is replaced anyway, with the same text, because Person
-    # sits on both sides of the many-to-many: a needless replace, pinned
-    # here so that removing it shows in this test.
+    # group is not replaced: it follows its mentees, not its mentors, so the
+    # add does not change it.
     assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
@@ -6530,15 +6528,6 @@ def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
-            ),
-        ],
-        f"testapp.person:{ada.pk}": [
-            NormalizedDocument(
-                text="Ada",
-                source_app_label="testapp",
-                source_model="person",
-                source_pk=ada.pk,
-                title="Ada",
             ),
         ],
     }
@@ -6575,11 +6564,9 @@ def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
         assert _replaced(built_outputs) == []
 
     # Grace's group as committed, without Ada's name, its other mentee kept,
-    # and no group of the mentor Ada keeps. Ada's own group follows its
-    # mentees, not its mentors, so the remove does not change its text; it
-    # is replaced anyway, with the same text, because Person sits on both
-    # sides of the many-to-many: a needless replace, pinned here so that
-    # removing it shows in this test.
+    # and no group of the mentor Ada keeps. Ada's own group is not replaced:
+    # it follows its mentees, not its mentors, so the remove does not change
+    # it.
     assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
@@ -6588,15 +6575,6 @@ def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
-            ),
-        ],
-        f"testapp.person:{ada.pk}": [
-            NormalizedDocument(
-                text="Ada",
-                source_app_label="testapp",
-                source_model="person",
-                source_pk=ada.pk,
-                title="Ada",
             ),
         ],
     }
@@ -6760,10 +6738,8 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
 
     # The groups of both former mentors as committed, each without Ada's
     # name, and no group of the person that never mentored it. Ada's own
-    # group follows its mentees, not its mentors, so the clear does not
-    # change its text; it is replaced anyway, with the same text, because
-    # Person sits on both sides of the many-to-many: a needless replace,
-    # pinned here so that removing it shows in this test.
+    # group is not replaced: it follows its mentees, not its mentors, so the
+    # clear does not change it.
     assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
@@ -6781,15 +6757,6 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
                 source_model="person",
                 source_pk=linus.pk,
                 title="Linus",
-            ),
-        ],
-        f"testapp.person:{ada.pk}": [
-            NormalizedDocument(
-                text="Ada",
-                source_app_label="testapp",
-                source_model="person",
-                source_pk=ada.pk,
-                title="Ada",
             ),
         ],
     }
