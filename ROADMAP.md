@@ -905,8 +905,9 @@ or a `GenericRelation` in `follow`.
     transaction — were fixed (see the second patch above). The last three
     came from the coverage matrix: moving and deleting a reverse
     one-to-one in `depends_on`, and removing a musician from a band
-    through `Engagement`. That pair is still tested from the band's side
-    only.
+    through `Engagement`. That pair was then tested from the band's side
+    only; the musician's side was tested later, as the first part of
+    "Many-to-many links onto lookups".
   - [x] **Reverse relations onto lookups**, the suite green after each
     change. Before the save and at the commit, the followers a row points
     to are now looked up through the reverse relation's query name
@@ -947,6 +948,21 @@ or a `GenericRelation` in `follow`.
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
     handle-to-primary-key mapping runs the other way.
+    Tests done: a band removed from a musician's side, `set()` from the
+    band's side and from the musician's, and an add and a remove on
+    `Person`'s many-to-many to itself, from the mentee's side and from the
+    mentor's. All seven passed as written: no production code changed. A
+    `set()` sends a remove then an add, so `ada.bands.set(...)` replaces
+    Ada's group twice; the batching is 12b's. On `Person`'s many-to-many
+    to itself, a write to Ada's mentors also replaces Ada's own group,
+    with the same text: Person follows `mentees`, not `mentors`, but sits
+    on both sides of the relation, so the receiver schedules Ada too. The
+    five `Person` tests pin that needless replace. Still to do in this
+    step: moving the many-to-many code (`pk_set`, `_remember_cleared_pks`,
+    `_through_keys`) onto the lookups, the tests unchanged; then, telling
+    the two directions of a many-to-many to itself apart, so that only the
+    side followed is replaced — the one change to those five tests, Ada's
+    group dropped from their expected value.
   - [x] **Parametrize the signal tests** by declaration × relation ×
     write, in place of one hand-written test per combination. Two
     parametrized tests, each checking the exact list of replace calls,

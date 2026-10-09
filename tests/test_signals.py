@@ -251,6 +251,12 @@ def _register_musicians_following_their_bands() -> None:
     rag.register(Musician, fields=["name"], follow=["bands"])
 
 
+def _register_persons_following_their_mentees() -> None:
+    """Register Person, by its name, following its mentees, the reverse side of
+    its own many-to-many ``mentors``: both sides of the links are Persons."""
+    rag.register(Person, fields=["name"], follow=["mentees"])
+
+
 def _register_teams_following_their_matches() -> None:
     """Register Team, by its name, following its matches by both reverse foreign
     keys, ``home_matches`` and ``away_matches``: Match itself is not."""
@@ -6233,6 +6239,56 @@ def test_removing_a_musician_from_a_band_replaces_its_group_named_by_its_handle(
 
 
 @pytest.mark.django_db
+def test_removing_a_band_from_a_musician_replaces_the_musicians_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # musician plays in another band too, so that its group keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician left in the band: the remove below does not change its group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+
+    # Removed from the musician's side: Django sends m2m_changed with the
+    # musician as its instance and the band's primary key in pk_set, so the
+    # musician to replace is the instance itself, not a row named in pk_set.
+    # Neither row is saved again: the remove deletes only the engagement
+    # between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.bands.remove(quartet)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Musician's group as committed: the removed band's name is gone, only
+    # its own name and its other band's name are left. No group of the
+    # musician left in the band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -6294,6 +6350,380 @@ def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in
 
 
 @pytest.mark.django_db
+def test_setting_the_musicians_of_a_band_replaces_the_groups_of_those_removed_and_added(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the set below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # musician the set removes plays in another band too, so that its group
+    # keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician kept in the band: the set below does not change its group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A musician not in the band yet: the set below adds it to the band.
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+
+    # Set from the band's side: Django compares the musicians named by the
+    # column Engagement.musician points to, their handle, then sends
+    # m2m_changed twice with the band as its instance, a remove naming Ada by
+    # its handle and an add naming Cleo by its own, never Ben. No row is saved
+    # again: the set writes only the engagements of the band.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.set([ben, cleo])
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # set() sends a remove then an add, each replacing its own groups, so the
+    # calls are pinned exactly: batching them into one call is a later step's
+    # work, which will change this expected value. The removed musician's
+    # group without the band's name, keeping its other band's; the added
+    # musician's group with it. No group of the musician kept in the band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        },
+        {
+            f"testapp.musician:{cleo.pk}": [
+                NormalizedDocument(
+                    text="Cleo\n\nQuartet",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=cleo.pk,
+                    title="Cleo",
+                ),
+            ],
+        },
+    ]
+
+
+@pytest.mark.django_db
+def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the set below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # musician plays in the quartet and the trio: the set below removes it from
+    # the quartet, keeps it in the trio and adds it to the duo.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    duo = Band.objects.create(name="Duo")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician left in the quartet: the set below does not change its group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+
+    # Set from the musician's side: Django compares the bands by their primary
+    # key, then sends m2m_changed twice with the musician as its instance, a
+    # remove with the quartet's primary key in pk_set and an add with the duo's,
+    # never the trio's. The musician to replace is the instance itself, not a
+    # row named in pk_set. No row is saved again: the set writes only the
+    # engagements of the musician.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.bands.set([trio, duo])
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # set() sends a remove then an add, each replacing its own groups, so the
+    # calls are pinned exactly: the musician's group is replaced twice,
+    # identically. Batching them into one call is a later step's work, which
+    # will change this expected value. The musician's group as committed: the
+    # quartet's name is gone, its own name, then the names of the band it was
+    # kept in and the band it was added to are left. No group of the musician
+    # left in the quartet.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio\n\nDuo",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        },
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio\n\nDuo",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        },
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the add below is observed. Grace
+    # mentors another person already, so that its group shows that mentee
+    # next to the one added. Alan is created and linked first, so that its
+    # name comes before Ada's whichever order the mentees are read in.
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    alan.mentors.add(grace)
+    ada = Person.objects.create(name="Ada")
+    # A person not mentoring Ada: the add below does not change Barbara's
+    # group.
+    barbara = Person.objects.create(name="Barbara")
+    alan.mentors.add(barbara)
+
+    # Added from the mentee's side: Django sends m2m_changed with Ada as its
+    # instance and Grace's primary key in pk_set, so the person to replace is
+    # the one named in pk_set, the mentor, not the instance. No row is saved
+    # again: the add writes only Ada's link to its mentor.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.add(grace)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, with Ada's name added after its other
+    # mentee's, and no group of the person not mentoring Ada. Ada's own
+    # group follows its mentees, not its mentors, so the add does not change
+    # its text; it is replaced anyway, with the same text, because Person
+    # sits on both sides of the many-to-many: a needless replace, pinned
+    # here so that removing it shows in this test.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan\n\nAda",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed.
+    # Ada has two mentors: Grace, which mentors another person too, so that its
+    # group keeps the mentee left, and Linus, which Ada keeps.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    ada.mentors.add(grace, linus)
+    alan.mentors.add(grace)
+
+    # Removed from the mentee's side: Django sends m2m_changed with Ada as its
+    # instance and Grace's primary key in pk_set, so the person to replace is
+    # the one named in pk_set, the mentor, not the instance. No row is saved
+    # again: the remove deletes only Ada's link to Grace.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.remove(grace)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, without Ada's name, its other mentee kept,
+    # and no group of the mentor Ada keeps. Ada's own group follows its
+    # mentees, not its mentors, so the remove does not change its text; it
+    # is replaced anyway, with the same text, because Person sits on both
+    # sides of the many-to-many: a needless replace, pinned here so that
+    # removing it shows in this test.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_mentee_to_a_mentor_replaces_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the add below is observed. Grace
+    # mentors another person already, so that its group shows that mentee
+    # next to the one added. Alan is created and linked first, so that its
+    # name comes before Ada's whichever order the mentees are read in.
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    grace.mentees.add(alan)
+    ada = Person.objects.create(name="Ada")
+    # A person not mentoring Ada: the add below does not change Barbara's
+    # group.
+    barbara = Person.objects.create(name="Barbara")
+    barbara.mentees.add(alan)
+
+    # Added from the mentor's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with Grace as its instance and Ada's primary
+    # key in pk_set, so the person to replace is the instance, the mentor,
+    # not the one named in pk_set. No row is saved again: the add writes only
+    # Grace's link to its new mentee.
+    with django_capture_on_commit_callbacks(execute=True):
+        grace.mentees.add(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, with Ada's name added after its other
+    # mentee's, and no group of the person not mentoring Ada. Ada's own
+    # group follows its mentees, not its mentors, so the add does not change
+    # its text; it is replaced anyway, with the same text, because Person
+    # sits on both sides of the many-to-many: a needless replace, pinned
+    # here so that removing it shows in this test.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan\n\nAda",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_removing_a_mentee_from_a_mentor_replaces_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed.
+    # Ada has two mentors: Grace, which mentors another person too, so that its
+    # group keeps the mentee left, and Linus, which Ada keeps.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    grace.mentees.add(ada, alan)
+    linus.mentees.add(ada)
+
+    # Removed from the mentor's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with Grace as its instance and Ada's primary
+    # key in pk_set, so the person to replace is the instance, the mentor,
+    # not the one named in pk_set. No row is saved again: the remove deletes
+    # only Grace's link to Ada.
+    with django_capture_on_commit_callbacks(execute=True):
+        grace.mentees.remove(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, without Ada's name, its other mentee kept,
+    # and no group of the mentor Ada keeps. Ada's own group follows its
+    # mentees, not its mentors, so the remove does not change its text; it
+    # is replaced anyway, with the same text, because Person sits on both
+    # sides of the many-to-many: a needless replace, pinned here so that
+    # removing it shows in this test.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -6301,14 +6731,12 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
 ) -> None:
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
-    # Person is registered following its mentees, the reverse side of its own
-    # many-to-many ``mentors``: both sides of the links are Persons.
-    rag.register(Person, fields=["name"], follow=["mentees"])
+    _register_persons_following_their_mentees()
 
     # Created outside the captured callbacks: the commit callbacks of these
     # saves and these adds never run, so only the clear below is observed. Ada
     # has two mentors: one mentors another person too, so that its group keeps
-    # the mentee left, the other mentors her alone.
+    # the mentee left, the other mentors it alone.
     ada = Person.objects.create(name="Ada")
     alan = Person.objects.create(name="Alan")
     grace = Person.objects.create(name="Grace")
@@ -6321,22 +6749,22 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
     alan.mentors.add(barbara)
 
     # Cleared from the mentee's side: Django sends m2m_changed with Ada as its
-    # instance and no primary keys at all, so her mentors can only be found
-    # before the clear, by the join rows naming her as the mentee, not as the
-    # mentor. No row is saved again: the clear deletes only Ada's links to her
+    # instance and no primary keys at all, so its mentors can only be found
+    # before the clear, by the join rows naming it as the mentee, not as the
+    # mentor. No row is saved again: the clear deletes only Ada's links to its
     # mentors.
     with django_capture_on_commit_callbacks(execute=True):
         ada.mentors.clear()
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # The groups of both former mentors as committed, each without Ada's name,
-    # and no group of the person who never mentored her. Ada's own group, which
-    # follows her mentees, not her mentors, is left out of the comparison: the
-    # clear leaves its text unchanged.
-    received_groups = _received_groups(built_outputs)
-    received_groups.pop(f"testapp.person:{ada.pk}", None)
-    assert received_groups == {
+    # The groups of both former mentors as committed, each without Ada's
+    # name, and no group of the person that never mentored it. Ada's own
+    # group follows its mentees, not its mentors, so the clear does not
+    # change its text; it is replaced anyway, with the same text, because
+    # Person sits on both sides of the many-to-many: a needless replace,
+    # pinned here so that removing it shows in this test.
+    assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
                 text="Grace\n\nAlan",
@@ -6353,6 +6781,15 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
                 source_model="person",
                 source_pk=linus.pk,
                 title="Linus",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
