@@ -6890,6 +6890,67 @@ def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
 
 
 @pytest.mark.django_db
+def test_renaming_a_band_replaces_the_group_of_each_musician_in_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the band's save below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The band holds two musicians, so that its save has more
+    # than one follower to replace.
+    quartet = Band.objects.create(name="Quartet")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    # A musician of another band: the save below does not change its group.
+    trio = Band.objects.create(name="Trio")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    trio.musicians.add(cleo)
+
+    # Saved from the band's side: its musicians are found through the
+    # engagements naming them by the column Engagement.musician points to,
+    # their handle, not by their primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.name = "Foursome"
+        quartet.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both musicians, each with the
+    # band's new name after its own, as one batch of
+    # SyncPipeline.run_queryset() does. No group of the musician of another
+    # band, nor of the unregistered band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nFoursome",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+            f"testapp.musician:{ben.pk}": [
+                NormalizedDocument(
+                    text="Ben\n\nFoursome",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ben.pk,
+                    title="Ben",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_a_mentor_to_a_person_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
