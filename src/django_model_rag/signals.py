@@ -274,7 +274,7 @@ def sync_changed_relation(
         instance,
         _group_replacer,
     )
-    if _reaches_registered_rows(model, through):
+    if _reaches_registered_rows(model, through, reverse):
         # Only a clear leaves keys behind, found before it: pk_set is None then.
         pk_set = (pk_set or set()) | instance.__dict__.pop(
             _CLEARED_PKS_ATTRIBUTE, set()
@@ -295,7 +295,7 @@ def _check_output_before_write(
     after the change, a failing check would come too late to undo it.
     """
     if _registered_models_following(type(instance), through, reverse) or (
-        _reaches_registered_rows(model, through)
+        _reaches_registered_rows(model, through, reverse)
     ):
         check_output_configuration()
 
@@ -366,13 +366,17 @@ def _primary_keys_named(
 
 
 def _reaches_registered_rows(
-    model: type[Model] | None, through: type[Model]
+    model: type[Model] | None, through: type[Model], reverse: bool
 ) -> TypeGuard[type[Model]]:
-    """Return whether a links change reaches rows following the links."""
+    """Return whether a links change reaches rows following the links.
+
+    ``reverse``, as m2m_changed sends it, is the instance's side: ``model``
+    reads the links from the other one.
+    """
     return (
         model is not None
         and rag.is_registered(model)
-        and rag.follows_many_to_many(model, through)
+        and rag.follows_many_to_many(model, through, reverse=not reverse)
     )
 
 
@@ -384,7 +388,7 @@ def _remember_cleared_pks(
     Django sends no primary keys with the clear: they can only be found before
     it. ``reverse`` is m2m_changed's.
     """
-    if not _reaches_registered_rows(model, through):
+    if not _reaches_registered_rows(model, through, reverse):
         return
 
     key_to_instance, key_to_model = _through_keys(through, instance, model, reverse)
