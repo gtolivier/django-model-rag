@@ -277,8 +277,16 @@ def sync_changed_relation(
         # change's.
         instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
         _check_output_before_write(following_models, model_lookups)
-        if action == _BEFORE_CLEAR and model_lookups:
-            _remember_cleared_pks(instance, model, model_lookups)
+        if action == _BEFORE_CLEAR:
+            # The rows of a model that is not registered are followed by its
+            # registered subclasses.
+            cleared_lookups = model_lookups or (
+                [(query_name(model_side), type(instance))]
+                if _registered_subclasses_following(model, query_name(model_side))
+                else []
+            )
+            if cleared_lookups:
+                _remember_cleared_pks(instance, model, cleared_lookups)
         return
 
     if action not in _CHANGING_ACTIONS:
