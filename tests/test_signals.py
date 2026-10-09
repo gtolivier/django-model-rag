@@ -6459,6 +6459,60 @@ def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
 
 
 @pytest.mark.django_db
+def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Person is registered following its mentees, the reverse side of its own
+    # many-to-many ``mentors``: both sides of the links are Persons.
+    rag.register(Person, fields=["name"], follow=["mentees"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the add below is observed. Grace
+    # mentors another person already, so that her group shows that mentee
+    # next to the one added. Alan is created and linked first, so that his
+    # name comes before Ada's whichever order the mentees are read in.
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    alan.mentors.add(grace)
+    ada = Person.objects.create(name="Ada")
+    # A person not mentoring Ada: the add below does not change Barbara's
+    # group.
+    barbara = Person.objects.create(name="Barbara")
+    alan.mentors.add(barbara)
+
+    # Added from the mentee's side: Django sends m2m_changed with Ada as its
+    # instance and Grace's primary key in pk_set, so the person to replace is
+    # the one named in pk_set, the mentor, not the instance. No row is saved
+    # again: the add writes only Ada's link to her mentor.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.add(grace)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, with Ada's name added after her other
+    # mentee's, and no group of the person not mentoring Ada. Ada's own group,
+    # which follows her mentees, not her mentors, is left out of the
+    # comparison: the add leaves its text unchanged.
+    received_groups = _received_groups(built_outputs)
+    received_groups.pop(f"testapp.person:{ada.pk}", None)
+    assert received_groups == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan\n\nAda",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
