@@ -282,8 +282,7 @@ def sync_changed_relation(
             cleared_lookups = model_lookups or _registered_subclasses_lookups(
                 instance, model, model_link_lookup
             )
-            if cleared_lookups:
-                _remember_cleared_pks(instance, model, cleared_lookups)
+            _remember_cleared_pks(instance, model, cleared_lookups)
         return
 
     if action not in _CHANGING_ACTIONS:
@@ -460,8 +459,12 @@ def _remember_cleared_pks(
 
     Django sends no primary keys with the clear: they can only be found before
     it. They are those of the ``model`` rows whose ``model_lookups``, the
-    lookups they read the links with, reach the instance.
+    lookups they read the links with, reach the instance: none without
+    lookups.
     """
+    if not model_lookups:
+        return
+
     # The lookup reaches a multi-table child by the row of the parent holding
     # the links.
     linked_pks = _pks_reaching(model, _lookups_to_group_pks(instance, model_lookups))
