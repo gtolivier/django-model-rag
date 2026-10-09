@@ -913,6 +913,28 @@ class TopicProxy(Topic):
         proxy = True
 
 
+# --- A many-to-many to a proxy model ------------------------------------
+# A Curriculum covers several SubjectProxies, not Subjects: its many-to-many
+# reaches the Subject's rows, yet names the proxy as its model, and Django
+# sends m2m_changed with the proxy, not Subject, as the model of the links'
+# other side. Subject has a model of its own, so that no other model's delete
+# gains the delete of its links.
+
+
+class Subject(models.Model):
+    title = models.CharField(max_length=200)
+
+
+class SubjectProxy(Subject):
+    class Meta:
+        proxy = True
+
+
+class Curriculum(models.Model):
+    title = models.CharField(max_length=200)
+    subjects = models.ManyToManyField(SubjectProxy, related_name="curricula")
+
+
 # --- A SET_NULL foreign key to a proxy model ----------------------------
 # A Meetup may point to a ThemeProxy, not to Theme, or to nothing: its
 # foreign key reaches the Theme's row and is set to null when that row is

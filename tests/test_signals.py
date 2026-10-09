@@ -38,6 +38,7 @@ from tests.testapp.models import (
     ClearanceProduct,
     Course,
     Craftsman,
+    Curriculum,
     Depot,
     Excerpt,
     Exhibit,
@@ -64,6 +65,7 @@ from tests.testapp.models import (
     Shelf,
     Showroom,
     Spotlight,
+    SubjectProxy,
     Supplier,
     SupplierProfile,
     Tag,
@@ -5785,6 +5787,49 @@ def test_adding_a_course_to_a_topic_through_a_proxy_replaces_the_topics_group(
                     source_model="topic",
                     source_pk=woodworking.pk,
                     title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_subject_proxy_to_a_curriculum_replaces_the_group_of_the_proxy_row(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the proxy is registered, by its title, following its curricula by
+    # the reverse many-to-many ``curricula``: neither Subject nor Curriculum
+    # is.
+    rag.register(SubjectProxy, fields=["title"], follow=["curricula"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed.
+    joinery = SubjectProxy.objects.create(title="Joinery")
+    path = Curriculum.objects.create(title="Woodworking path")
+
+    # Added from the curriculum's side: Django sends m2m_changed with the
+    # curriculum as its instance and SubjectProxy, the model its many-to-many
+    # names, not Subject, as the model of the primary keys it names. Neither
+    # row is saved again: the add writes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        path.subjects.add(joinery)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The proxy row's group as committed: its title, then the curriculum's.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.subjectproxy:{joinery.pk}": [
+                NormalizedDocument(
+                    text="Joinery\n\nWoodworking path",
+                    source_app_label="testapp",
+                    source_model="subjectproxy",
+                    source_pk=joinery.pk,
+                    title="Joinery",
                 ),
             ],
         }
