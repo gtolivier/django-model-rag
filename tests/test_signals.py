@@ -6344,6 +6344,68 @@ def test_clearing_the_musicians_of_a_band_replaces_the_group_of_each_musician_in
 
 
 @pytest.mark.django_db
+def test_setting_the_musicians_of_a_band_replaces_the_groups_of_those_removed_and_added(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the set below is observed. A
+    # musician's handle, a slug, can never equal its integer primary key. The
+    # musician the set removes plays in another band too, so that her group
+    # keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    # A musician kept in the band: the set below does not change his group.
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A musician not in the band yet: the set below adds her to it.
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+
+    # Set from the band's side: Django compares the musicians named by the
+    # column Engagement.musician points to, their handle, then sends
+    # m2m_changed twice with the band as its instance, a remove naming Ada by
+    # her handle and an add naming Cleo by hers, never Ben. No row is saved
+    # again: the set writes only the engagements of the band.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.musicians.set([ben, cleo])
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: set() sends a remove then an add, and how
+    # the groups are batched is not what this test is about. The removed
+    # musician's group without the band's name, keeping her other band's; the
+    # added musician's group with it. No group of the musician kept in the
+    # band.
+    assert _received_groups(built_outputs) == {
+        f"testapp.musician:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nTrio",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.musician:{cleo.pk}": [
+            NormalizedDocument(
+                text="Cleo\n\nQuartet",
+                source_app_label="testapp",
+                source_model="musician",
+                source_pk=cleo.pk,
+                title="Cleo",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
