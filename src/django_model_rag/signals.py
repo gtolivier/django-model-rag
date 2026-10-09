@@ -268,31 +268,36 @@ def sync_changed_relation(
         return
 
     instance_side, model_side = relations
+    model_link_lookup = query_name(model_side)
     following_models = _registered_models_following(
         type(instance), query_name(instance_side)
     )
-    model_lookups = _registered_lookups_named(model, query_name(model_side))
+    model_lookups = _registered_lookups_named(model, model_link_lookup)
     if action in _BEFORE_WRITE:
         # Primary keys left by a clear that failed after pre_clear are not this
         # change's.
         instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
         _check_output_before_write(following_models, model_lookups)
-        if action == _BEFORE_CLEAR and model_lookups:
-            _remember_cleared_pks(instance, model, model_lookups)
+        if action == _BEFORE_CLEAR:
+            cleared_lookups = model_lookups or _registered_subclasses_lookups(
+                instance, model, model_link_lookup
+            )
+            _remember_cleared_pks(instance, model, cleared_lookups)
         return
 
     if action not in _CHANGING_ACTIONS:
         return
 
     _schedule_commit_callbacks(following_models, instance, _group_replacer)
-    if model_lookups:
+    followers_of_model = _registered_subclasses_following(model, model_link_lookup)
+    if followers_of_model:
         # Only a clear leaves primary keys behind, found before it: pk_set is
         # None then.
         changed_pks = _primary_keys_named(
             _through_key(model_side), model, pk_set or set()
         ) | instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, set())
         _schedule_follower_replacements(
-            [(model, pk) for pk in changed_pks],
+            [(follower, pk) for follower in followers_of_model for pk in changed_pks],
             _followed_source_key(type(instance), instance),
         )
 
@@ -323,6 +328,24 @@ def _registered_models_following(
         registered_model
         for registered_model in _registered_models(sender)
         if _follows_lookup(registered_model, link_lookup)
+    ]
+
+
+def _registered_subclasses_following(
+    model: type[Model], link_lookup: str
+) -> list[type[Model]]:
+    """Return the registered subclasses of ``model`` following ``link_lookup``.
+
+    Their rows are ``model`` rows: ``model`` itself, or a multi-table child of
+    it, sharing its keys. ``link_lookup`` is the lookup ``model``'s side reads
+    the changed links with.
+    """
+    return [
+        registered_model
+        for registered_model in rag.registered_models()
+        # A many-to-many may name a proxy: it reaches its concrete model's rows.
+        if concrete_model_of(model) in _models_of_the_row(registered_model)
+        and _follows_lookup(registered_model, link_lookup)
     ]
 
 
@@ -416,6 +439,20 @@ def _registered_lookups_named(
     return _followed_lookups_named(model, link_lookup)
 
 
+def _registered_subclasses_lookups(
+    instance: Model, model: type[Model], link_lookup: str
+) -> list[tuple[str, type[Model]]]:
+    """Return the lookups by which ``model``'s registered subclasses reach the instance.
+
+    The rows of a model that is not registered are followed by its registered
+    subclasses. ``link_lookup`` is the lookup ``model``'s side reads the changed
+    links with; there are none when no registered subclass follows it.
+    """
+    if not _registered_subclasses_following(model, link_lookup):
+        return []
+    return [(link_lookup, type(instance))]
+
+
 def _remember_cleared_pks(
     instance: Model, model: type[Model], model_lookups: list[tuple[str, type[Model]]]
 ) -> None:
@@ -423,8 +460,12 @@ def _remember_cleared_pks(
 
     Django sends no primary keys with the clear: they can only be found before
     it. They are those of the ``model`` rows whose ``model_lookups``, the
-    lookups they read the links with, reach the instance.
+    lookups they read the links with, reach the instance: none without
+    lookups.
     """
+    if not model_lookups:
+        return
+
     # The lookup reaches a multi-table child by the row of the parent holding
     # the links.
     linked_pks = _pks_reaching(model, _lookups_to_group_pks(instance, model_lookups))

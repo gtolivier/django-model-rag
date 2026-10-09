@@ -38,6 +38,7 @@ from tests.testapp.models import (
     ClearanceProduct,
     Course,
     Craftsman,
+    Curriculum,
     Depot,
     Excerpt,
     Exhibit,
@@ -64,6 +65,7 @@ from tests.testapp.models import (
     Shelf,
     Showroom,
     Spotlight,
+    SubjectProxy,
     Supplier,
     SupplierProfile,
     Tag,
@@ -146,6 +148,12 @@ def _register_topics_following_their_courses() -> None:
     """Register only Topic, following its courses by the reverse many-to-many
     ``courses``: Course itself is not."""
     rag.register(Topic, follow=["courses"])
+
+
+def _register_masterclasses_following_their_topics() -> None:
+    """Register only MasterClass, following its topics through the many-to-many
+    ``topics`` it inherits from Course: neither Course nor Topic is."""
+    rag.register(MasterClass, follow=["topics"])
 
 
 def _register_plugins_by_their_page_title() -> None:
@@ -252,6 +260,12 @@ def _register_musicians_following_their_bands() -> None:
     rag.register(Musician, fields=["name"], follow=["bands"])
 
 
+def _register_bands_following_their_musicians() -> None:
+    """Register only Band, by its name, following its musicians through its own
+    many-to-many ``musicians``: Musician itself is not."""
+    rag.register(Band, fields=["name"], follow=["musicians"])
+
+
 def _register_persons_following_their_mentees() -> None:
     """Register Person, by its name, following its mentees, the reverse side of
     its own many-to-many ``mentors``: both sides of the links are Persons."""
@@ -354,6 +368,11 @@ def _create_the_carving_topic() -> Topic:
     return Topic.objects.create(
         summary="Knives and gouges.", title="Carving", slug="carving"
     )
+
+
+def _create_the_woodworking_masterclass() -> MasterClass:
+    """Create the Woodworking masterclass, taught by Ada, covering no topic."""
+    return MasterClass.objects.create(title="Woodworking masterclass", instructor="Ada")
 
 
 @pytest.mark.django_db
@@ -5775,6 +5794,49 @@ def test_adding_a_course_to_a_topic_through_a_proxy_replaces_the_topics_group(
 
 
 @pytest.mark.django_db
+def test_adding_a_subject_proxy_to_a_curriculum_replaces_the_group_of_the_proxy_row(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the proxy is registered, by its title, following its curricula by
+    # the reverse many-to-many ``curricula``: neither Subject nor Curriculum
+    # is.
+    rag.register(SubjectProxy, fields=["title"], follow=["curricula"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed.
+    joinery = SubjectProxy.objects.create(title="Joinery")
+    path = Curriculum.objects.create(title="Woodworking path")
+
+    # Added from the curriculum's side: Django sends m2m_changed with the
+    # curriculum as its instance and SubjectProxy, the model its many-to-many
+    # names, not Subject, as the model of the primary keys it names. Neither
+    # row is saved again: the add writes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        path.subjects.add(joinery)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The proxy row's group as committed: its title, then the curriculum's.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.subjectproxy:{joinery.pk}": [
+                NormalizedDocument(
+                    text="Joinery\n\nWoodworking path",
+                    source_app_label="testapp",
+                    source_model="subjectproxy",
+                    source_pk=joinery.pk,
+                    title="Joinery",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_clearing_the_courses_of_a_topic_through_a_proxy_replaces_the_courses_groups(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
@@ -5851,9 +5913,7 @@ def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_
     # keeps that course.
     woodworking = _create_the_woodworking_topic()
     carving = _create_the_carving_topic()
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
     masterclass.topics.add(woodworking, carving)
     whittling = Course.objects.create(title="Whittling")
     whittling.topics.add(carving)
@@ -5886,6 +5946,283 @@ def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_
                 source_model="topic",
                 source_pk=carving.pk,
                 title="Carving",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_course_child_to_a_topic_replaces_the_group_of_the_child_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    masterclass = _create_the_woodworking_masterclass()
+
+    # Added from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and the master class's Course row
+    # among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The MasterClass's group as committed: its own title and instructor, then
+    # the added topic's title and summary.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.masterclass:{masterclass.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Woodworking masterclass\n\nAda"
+                        "\n\nWoodworking\n\nJoints and finishes."
+                    ),
+                    source_app_label="testapp",
+                    source_model="masterclass",
+                    source_pk=masterclass.pk,
+                    title="Woodworking masterclass",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_adding_a_course_child_to_a_topic_replaces_its_course_and_child_groups_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Both Course and its child MasterClass are registered, each following its
+    # topics: the MasterClass's fields include its instructor, so its group
+    # differs from the Course group of the same row. Topic is not registered.
+    _register_courses_following_their_topics()
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    masterclass = _create_the_woodworking_masterclass()
+
+    # Added from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and the master class's Course row
+    # among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Both groups of the row as committed, each with the added topic's title
+    # and summary: the Course's from its own title, the MasterClass's from its
+    # title and instructor. Merged across replace calls: whether the groups
+    # come in one call or one per registered model is not what this test is
+    # about.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{masterclass.pk}": [
+            NormalizedDocument(
+                text="Woodworking masterclass\n\nWoodworking\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=masterclass.pk,
+                title="Woodworking masterclass",
+            ),
+        ],
+        f"testapp.masterclass:{masterclass.pk}": [
+            NormalizedDocument(
+                text=(
+                    "Woodworking masterclass\n\nAda"
+                    "\n\nWoodworking\n\nJoints and finishes."
+                ),
+                source_app_label="testapp",
+                source_model="masterclass",
+                source_pk=masterclass.pk,
+                title="Woodworking masterclass",
+            ),
+        ],
+    }
+    # Each group sent once: neither the Course group nor the MasterClass group
+    # of the row is replaced twice.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [
+            f"testapp.course:{masterclass.pk}",
+            f"testapp.masterclass:{masterclass.pk}",
+        ]
+    )
+
+
+@pytest.mark.django_db
+def test_adding_a_plain_course_and_a_child_to_a_topic_replaces_only_the_childs_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. The plain course is
+    # not a master class: no MasterClass row has its primary key. Neither row
+    # is saved again: the add writes only the links.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    masterclass = _create_the_woodworking_masterclass()
+
+    # Added from the topic's side, both in one call: Django sends m2m_changed
+    # with the topic as its instance, Course as its model, and the Course rows
+    # of both the plain course and the master class among the primary keys it
+    # names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics, masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The MasterClass's group as committed, alone: nothing for the plain
+    # course's row, neither a group nor an emptied one under
+    # testapp.masterclass:<its pk>.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.masterclass:{masterclass.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Woodworking masterclass\n\nAda"
+                        "\n\nWoodworking\n\nJoints and finishes."
+                    ),
+                    source_app_label="testapp",
+                    source_model="masterclass",
+                    source_pk=masterclass.pk,
+                    title="Woodworking masterclass",
+                ),
+            ],
+        }
+    ]
+    # And nothing else reached the output: no prune either.
+    assert [call for output in built_outputs for call in output.calls] == ["replace"]
+
+
+@pytest.mark.django_db
+def test_removing_a_course_child_from_a_topic_replaces_the_group_of_the_child(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the remove below is observed. The
+    # master class covers two topics, so that its group keeps the one the
+    # remove leaves. No row is saved again: the remove deletes only the link
+    # between the master class and the removed topic.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    masterclass = _create_the_woodworking_masterclass()
+    masterclass.topics.add(woodworking, carving)
+
+    # Removed from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and the master class's Course row
+    # among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.remove(masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The MasterClass's group as committed: its own title and instructor, then
+    # the title and summary of the topic it keeps, and none of the removed one.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.masterclass:{masterclass.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Woodworking masterclass\n\nAda"
+                        "\n\nCarving\n\nKnives and gouges."
+                    ),
+                    source_app_label="testapp",
+                    source_model="masterclass",
+                    source_pk=masterclass.pk,
+                    title="Woodworking masterclass",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_clearing_the_courses_of_a_topic_replaces_the_group_of_each_child_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Two master classes cover the topic: one covers another topic too, so
+    # that its group keeps the one left, the other covers it alone.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    masterclass = _create_the_woodworking_masterclass()
+    masterclass.topics.add(woodworking, carving)
+    joinery = MasterClass.objects.create(title="Joinery masterclass", instructor="Bo")
+    joinery.topics.add(woodworking)
+    # A master class not covering the topic: the clear below does not change
+    # its group.
+    whittling = MasterClass.objects.create(
+        title="Whittling masterclass", instructor="Cy"
+    )
+    whittling.topics.add(carving)
+
+    # Cleared from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and no primary keys at all, so the
+    # master classes covering it can only be found before the clear. No row is
+    # saved again: the clear deletes only the links of the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both master classes as committed, each without the topic's
+    # text, and no group of the master class that never covered it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.masterclass:{masterclass.pk}": [
+            NormalizedDocument(
+                text=(
+                    "Woodworking masterclass\n\nAda\n\nCarving\n\nKnives and gouges."
+                ),
+                source_app_label="testapp",
+                source_model="masterclass",
+                source_pk=masterclass.pk,
+                title="Woodworking masterclass",
+            ),
+        ],
+        f"testapp.masterclass:{joinery.pk}": [
+            NormalizedDocument(
+                text="Joinery masterclass\n\nBo",
+                source_app_label="testapp",
+                source_model="masterclass",
+                source_pk=joinery.pk,
+                title="Joinery masterclass",
             ),
         ],
     }
@@ -6593,6 +6930,261 @@ def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
                 ),
             ],
         },
+    ]
+
+
+@pytest.mark.django_db
+def test_renaming_a_band_replaces_the_group_of_each_musician_in_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the band's save below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The band holds two musicians, so that its save has more
+    # than one follower to replace.
+    quartet = Band.objects.create(name="Quartet")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    # A musician of another band: the save below does not change its group.
+    trio = Band.objects.create(name="Trio")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    trio.musicians.add(cleo)
+
+    # Saved from the band's side: its musicians are found through the
+    # engagements naming them by the column Engagement.musician points to,
+    # their handle, not by their primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.name = "Foursome"
+        quartet.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both musicians, each with the
+    # band's new name after its own, as one batch of
+    # SyncPipeline.run_queryset() does. No group of the musician of another
+    # band, nor of the unregistered band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nFoursome",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+            f"testapp.musician:{ben.pk}": [
+                NormalizedDocument(
+                    text="Ben\n\nFoursome",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ben.pk,
+                    title="Ben",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_band_replaces_the_group_of_each_of_its_former_musicians(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the band's delete below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The band holds two musicians, so that its delete has more
+    # than one follower to replace; one of them plays in another band too, so
+    # that its group keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A musician never in the band: the delete below does not change its group.
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    trio.musicians.add(cleo)
+
+    # Deleted from the band's side: its engagements cascade with it, deleted
+    # by the collector with no m2m_changed, so its musicians can only be found
+    # before the delete, through the engagements naming them by the column
+    # Engagement.musician points to, their handle, not by their primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both former musicians as
+    # committed, each without the deleted band's name: the one playing in
+    # another band keeps that band's name. No group of the musician never in
+    # the band, nor of the unregistered band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+            f"testapp.musician:{ben.pk}": [
+                NormalizedDocument(
+                    text="Ben",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ben.pk,
+                    title="Ben",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_renaming_a_musician_replaces_the_group_of_each_of_its_bands(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_bands_following_their_musicians()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the musician's save below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The musician plays in two bands, so that its save has more
+    # than one follower to replace; one of them holds another musician too, so
+    # that its group keeps that musician's name.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A band without the musician: the save below does not change its group.
+    duo = Band.objects.create(name="Duo")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    duo.musicians.add(cleo)
+
+    # Saved from the musician's side, the target of the forward many-to-many:
+    # its bands are found through the engagements naming it by the column
+    # Engagement.musician points to, its handle, not by its primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.name = "Adele"
+        ada.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both bands, each with its own
+    # name, then the names of its musicians, the renamed one's new name
+    # included, as one batch of SyncPipeline.run_queryset() does. No group of
+    # the band without the musician, nor of the unregistered musician.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.band:{quartet.pk}": [
+                NormalizedDocument(
+                    text="Quartet\n\nAdele\n\nBen",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=quartet.pk,
+                    title="Quartet",
+                ),
+            ],
+            f"testapp.band:{trio.pk}": [
+                NormalizedDocument(
+                    text="Trio\n\nAdele",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=trio.pk,
+                    title="Trio",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_deleting_a_musician_replaces_the_group_of_each_of_its_former_bands(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_bands_following_their_musicians()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the musician's delete below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The musician plays in two bands, so that its delete has
+    # more than one follower to replace; one of them holds another musician
+    # too, so that its group keeps that musician's name.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A band never holding the musician: the delete below does not change its
+    # group.
+    duo = Band.objects.create(name="Duo")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    duo.musicians.add(cleo)
+
+    # Deleted from the musician's side, the target of the forward
+    # many-to-many: its engagements cascade with it, deleted by the collector
+    # with no m2m_changed, so its bands can only be found before the delete,
+    # through the engagements naming it by the column Engagement.musician
+    # points to, its handle, not by its primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both former bands as committed,
+    # each with its own name, then the names of the musicians it still holds:
+    # the deleted musician's name is gone, the band holding another musician
+    # keeps that musician's name. No group of the band never holding the
+    # musician, nor of the unregistered musician.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.band:{quartet.pk}": [
+                NormalizedDocument(
+                    text="Quartet\n\nBen",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=quartet.pk,
+                    title="Quartet",
+                ),
+            ],
+            f"testapp.band:{trio.pk}": [
+                NormalizedDocument(
+                    text="Trio",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=trio.pk,
+                    title="Trio",
+                ),
+            ],
+        }
     ]
 
 
