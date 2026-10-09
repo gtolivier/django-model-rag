@@ -6589,7 +6589,7 @@ def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
 
 
 @pytest.mark.django_db
-def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
+def test_adding_a_mentor_to_a_person_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -6691,7 +6691,7 @@ def test_adding_a_mentor_to_a_person_following_its_mentors_replaces_only_its_gro
 
 
 @pytest.mark.django_db
-def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
+def test_removing_a_mentor_from_a_person_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -6738,7 +6738,7 @@ def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
 
 
 @pytest.mark.django_db
-def test_adding_a_mentee_to_a_mentor_replaces_the_mentors_group(
+def test_adding_a_mentee_to_a_mentor_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -6841,7 +6841,7 @@ def test_adding_a_mentee_to_a_mentor_following_mentors_replaces_only_the_mentees
 
 
 @pytest.mark.django_db
-def test_removing_a_mentee_from_a_mentor_replaces_the_mentors_group(
+def test_removing_a_mentee_from_a_mentor_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
     django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
@@ -6967,9 +6967,9 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
 
     # Cleared from the mentee's side: Django sends m2m_changed with Ada as its
     # instance and no primary keys at all, so its mentors can only be found
-    # before the clear, by the join rows naming it as the mentee, not as the
-    # mentor. No row is saved again: the clear deletes only Ada's links to its
-    # mentors.
+    # before the clear, as the persons whose mentees include it, not those
+    # whose mentors do. No row is saved again: the clear deletes only Ada's
+    # links to its mentors.
     with django_capture_on_commit_callbacks(execute=True):
         ada.mentors.clear()
         # Nothing may reach the output before the commit.
@@ -7032,9 +7032,9 @@ def test_clearing_the_mentees_of_a_mentor_following_mentors_replaces_each_former
 
     # Cleared from the mentor's side, the reverse side of the many-to-many:
     # Django sends m2m_changed with Grace as its instance and no primary keys
-    # at all, so its mentees can only be found before the clear, by the join
-    # rows naming it as the mentor, not as the mentee. No row is saved again:
-    # the clear deletes only Grace's links to its mentees.
+    # at all, so its mentees can only be found before the clear, as the persons
+    # whose mentors include it, not those whose mentees do. No row is saved
+    # again: the clear deletes only Grace's links to its mentees.
     with django_capture_on_commit_callbacks(execute=True):
         grace.mentees.clear()
         # Nothing may reach the output before the commit.
