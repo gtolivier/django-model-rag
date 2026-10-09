@@ -6619,6 +6619,58 @@ def test_adding_a_mentee_to_a_mentor_replaces_the_mentors_group(
 
 
 @pytest.mark.django_db
+def test_removing_a_mentee_from_a_mentor_replaces_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Person is registered following its mentees, the reverse side of its own
+    # many-to-many ``mentors``: both sides of the links are Persons.
+    rag.register(Person, fields=["name"], follow=["mentees"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed.
+    # Ada has two mentors: Grace, who mentors another person too, so that her
+    # group keeps the mentee left, and Linus, whom Ada keeps.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    grace.mentees.add(ada, alan)
+    linus.mentees.add(ada)
+
+    # Removed from the mentor's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with Grace as its instance and Ada's primary
+    # key in pk_set, so the person to replace is the instance, the mentor,
+    # not the one named in pk_set. No row is saved again: the remove deletes
+    # only Grace's link to Ada.
+    with django_capture_on_commit_callbacks(execute=True):
+        grace.mentees.remove(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, without Ada's name, her other mentee kept,
+    # and no group of the mentor Ada keeps. Ada's own group, which follows her
+    # mentees, not her mentors, is left out of the comparison: the remove
+    # leaves its text unchanged.
+    received_groups = _received_groups(built_outputs)
+    received_groups.pop(f"testapp.person:{ada.pk}", None)
+    assert received_groups == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_mentor(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
