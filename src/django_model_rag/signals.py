@@ -285,7 +285,7 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(following_models, instance, _group_replacer)
-    followers_of_model = _registered_rows_of_following(model, query_name(model_side))
+    followers_of_model = _registered_subclasses_following(model, query_name(model_side))
     if followers_of_model:
         # Only a clear leaves primary keys behind, found before it: pk_set is
         # None then.
@@ -327,12 +327,14 @@ def _registered_models_following(
     ]
 
 
-def _registered_rows_of_following(
+def _registered_subclasses_following(
     model: type[Model], link_lookup: str
 ) -> list[type[Model]]:
-    """Return the registered models whose rows are ``model`` rows, following the lookup.
+    """Return the registered subclasses of ``model`` following ``link_lookup``.
 
-    That is ``model`` itself, or a multi-table child of it, sharing its keys.
+    Their rows are ``model`` rows: ``model`` itself, or a multi-table child of
+    it, sharing its keys. ``link_lookup`` is the lookup ``model``'s side reads
+    the changed links with.
     """
     return [
         registered_model
