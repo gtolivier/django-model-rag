@@ -253,12 +253,10 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-What is left, in the order planned: 11e, which brings the ways of finding
-followers down to one before 12a rewires them. Then 12a, which rewires
-every receiver, the `m2m_changed` one of 11d included. Then 12b, which
-needs the `MODEL_RAG_SYNC` setting of 12a. 10c stays postponed, 11c-quater and
-11d-bis are not planned, and neither is a path past a reverse one-to-one
-or a `GenericRelation` in `follow`.
+What is left, in the order planned: 11f, which narrows the sync and closes
+11e. Then 12a, which rewires every receiver, the `m2m_changed` one of 11d
+included. Then 12b, which needs the `MODEL_RAG_SYNC` setting of 12a. 10c is
+dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
 
 - [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
   over every registered model, in registration order, or over the models it
@@ -425,7 +423,11 @@ or a `GenericRelation` in `follow`.
     never extracted;
   - with a replica router, the primary keys read again come from the
     replica, which may not have the new instance yet (see 10c).
-- [ ] **10c. Signals on several databases** — postponed: no project needs
+- **10c. Signals on several databases** — dropped with 11f's narrower
+  scope, and kept as a known limit, which the README's supported scope
+  states: the signals assume one database. With several, a project turns
+  them off and runs `sync_model_rag`. The analysis below stays for a
+  project that needs it one day. No project needs
   several databases yet, and nothing here depends on it. The signals follow
   the default database only: `transaction.on_commit` is attached to it, and
   the commit callback reloads from it, through the database router. With a
@@ -1160,7 +1162,7 @@ or a `GenericRelation` in `follow`.
     regenerated as one (`makemigrations`).
   - [ ] **A supported scope, written in the README**: the three cases, the
     shapes cases 1 and 2 cover, the cost of case 3 and its opt-out, the
-    full resync as the safety net.
+    full resync as the safety net, and one database (10c, dropped).
   - [ ] **The remaining tests, checked against that README.** A test stays
     if it pins a promise the README makes, or a regression that happened.
     Candidates to remove, listed and approved before any change: TDD steps
@@ -1185,7 +1187,9 @@ or a `GenericRelation` in `follow`.
   check — and the project syncs when it wants (a task queue, a batch). Adds
   a public `SyncPipeline.run_pks(model, pks)`, which sends an empty group
   for a key whose row is gone. Settles the batching left open by 10 and
-  11a.
+  11a. Since 11f, the signal also says when a whole model is to resync
+  (case 3 of 11f): no keys for that model, which the project hands to
+  `run_queryset()`. A task queue is then where case 3's cost goes.
 
 ## Not planned here
 
