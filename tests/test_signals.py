@@ -368,6 +368,11 @@ def _create_the_carving_topic() -> Topic:
     )
 
 
+def _create_the_woodworking_masterclass() -> MasterClass:
+    """Create the Woodworking masterclass, taught by Ada, covering no topic."""
+    return MasterClass.objects.create(title="Woodworking masterclass", instructor="Ada")
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_replaces_its_group_once_its_transaction_commits(
     settings: Settings,
@@ -5863,9 +5868,7 @@ def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_
     # keeps that course.
     woodworking = _create_the_woodworking_topic()
     carving = _create_the_carving_topic()
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
     masterclass.topics.add(woodworking, carving)
     whittling = Course.objects.create(title="Whittling")
     whittling.topics.add(carving)
@@ -5918,9 +5921,7 @@ def test_adding_a_course_child_to_a_topic_replaces_the_group_of_the_child_follow
     # saves never run, so only the add below is observed. Neither row is
     # saved again: the add writes only the link between them.
     woodworking = _create_the_woodworking_topic()
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
 
     # Added from the topic's side: Django sends m2m_changed with the topic as
     # its instance, Course as its model, and the master class's Course row
@@ -5968,9 +5969,7 @@ def test_adding_a_course_child_to_a_topic_replaces_its_course_and_child_groups_o
     # saves never run, so only the add below is observed. Neither row is
     # saved again: the add writes only the link between them.
     woodworking = _create_the_woodworking_topic()
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
 
     # Added from the topic's side: Django sends m2m_changed with the topic as
     # its instance, Course as its model, and the master class's Course row
@@ -6038,9 +6037,7 @@ def test_adding_a_plain_course_and_a_child_to_a_topic_replaces_only_the_childs_g
     # is saved again: the add writes only the links.
     woodworking = _create_the_woodworking_topic()
     basics = Course.objects.create(title="Woodworking basics")
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
 
     # Added from the topic's side, both in one call: Django sends m2m_changed
     # with the topic as its instance, Course as its model, and the Course rows
@@ -6092,9 +6089,7 @@ def test_removing_a_course_child_from_a_topic_replaces_the_group_of_the_child(
     # between the master class and the removed topic.
     woodworking = _create_the_woodworking_topic()
     carving = _create_the_carving_topic()
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
     masterclass.topics.add(woodworking, carving)
 
     # Removed from the topic's side: Django sends m2m_changed with the topic as
@@ -6142,9 +6137,7 @@ def test_clearing_the_courses_of_a_topic_replaces_the_group_of_each_child_follow
     # that its group keeps the one left, the other covers it alone.
     woodworking = _create_the_woodworking_topic()
     carving = _create_the_carving_topic()
-    masterclass = MasterClass.objects.create(
-        title="Woodworking masterclass", instructor="Ada"
-    )
+    masterclass = _create_the_woodworking_masterclass()
     masterclass.topics.add(woodworking, carving)
     joinery = MasterClass.objects.create(title="Joinery masterclass", instructor="Bo")
     joinery.topics.add(woodworking)
