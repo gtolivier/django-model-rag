@@ -854,6 +854,18 @@ class Person(models.Model):
     mentors = models.ManyToManyField("self", symmetrical=False, related_name="mentees")
 
 
+# --- A symmetrical many-to-many from a model to itself ------------------
+# A Friend reaches its Friends by the many-to-many ``friends``, symmetrical as
+# Django makes a many-to-many to "self" by default: a link from one Friend to
+# another is a link back, written as two rows of the join table, and its
+# reverse side is Django's hidden relation, with no accessor of its own.
+
+
+class Friend(models.Model):
+    name = models.CharField(max_length=200)
+    friends = models.ManyToManyField("self")
+
+
 # --- A proxy model ------------------------------------------------------
 # A CategoryProxy is a Category under another class, with no table of its own:
 # saving one writes the Category's row, yet Django sends the save's signals

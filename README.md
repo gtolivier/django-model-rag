@@ -590,8 +590,11 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   on schedules nothing. A change made through a proxy instance of either
   end counts (`proxy_topic.courses.add(course)`), and so does a
   `to_field` on the through model. A many-to-many from a model to itself
-  is covered when it is not symmetrical (`symmetrical=False`). Not
-  covered: a symmetrical one, a many-to-many declared to a proxy model
+  is covered too. When it is symmetrical (the default), both ends follow
+  it: `ada.friends.add(bob)` replaces the groups of Ada and Bob. With
+  `symmetrical=False`, only the side that follows the links is replaced —
+  with `Person` following `mentees`, `ada.mentors.add(grace)` replaces
+  Grace's group, not Ada's. Not covered: a many-to-many declared to a proxy model
   (`ManyToManyField(TopicProxy)`), and rows of a custom `through` model
   created, changed or deleted directly — `Enrollment.objects.create(...)`,
   an admin inline of the through model — which send no `m2m_changed`

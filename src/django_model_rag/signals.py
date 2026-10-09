@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from functools import partial, reduce
 from operator import or_
-from typing import Any, TypeAlias, TypeGuard, cast
+from typing import Any, TypeAlias, cast
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
@@ -29,7 +29,8 @@ _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
 _BEFORE_CLEAR = "pre_clear"
 _BEFORE_WRITE = frozenset({"pre_add", "pre_remove", _BEFORE_CLEAR})
-# The instance carries the keys of the rows its links reach, from before a clear.
+# The instance carries the primary keys of the rows its links reach, from before
+# a clear.
 _CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
@@ -40,6 +41,8 @@ _PKS_PER_QUERY = 500
 
 # a registered model following an instance, and the primary key of its row
 _Follower: TypeAlias = tuple[type[Model], Any]
+# a relation one side of a many-to-many reads its links with
+_LinkRelation: TypeAlias = "ManyToManyField[Any, Any] | ManyToManyRel"
 
 logger = logging.getLogger("django_model_rag")
 
@@ -244,97 +247,136 @@ def sync_saved_instance(
 def sync_changed_relation(
     instance: Model,
     action: str,
-    model: type[Model] | None = None,
+    model: type[Model],
     pk_set: set[Any] | None = None,
     **kwargs: Any,
 ) -> None:
     """Replace, once the transaction commits, the groups a change of links alters.
 
-    Those are the group of the instance, and the groups of the registered rows
-    that ``pk_set`` names, from either side of the links.
+    Those are the groups of the instance and of the ``model`` rows that
+    ``pk_set`` names, or a clear unlinks, each for a registered model following
+    the lookup its own side reads the links with. On a many-to-many from a
+    model to itself, only the side whose lookup is followed is replaced.
     """
     if not _signals_enabled():
         return
 
     through = kwargs["sender"]
     reverse = kwargs["reverse"]
+    relations = _link_relations(through, instance, model, reverse)
+    if relations is None:
+        return
+
+    instance_side, model_side = relations
+    following_models = _registered_models_following(
+        type(instance), query_name(instance_side)
+    )
+    model_lookups = _registered_lookups_named(model, query_name(model_side))
     if action in _BEFORE_WRITE:
-        # Keys left by a clear that failed after pre_clear are not this change's.
+        # Primary keys left by a clear that failed after pre_clear are not this
+        # change's.
         instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
-        _check_output_before_write(through, instance, model)
-        if action == _BEFORE_CLEAR:
-            _remember_cleared_pks(through, instance, model, reverse)
+        _check_output_before_write(following_models, model_lookups)
+        if action == _BEFORE_CLEAR and model_lookups:
+            _remember_cleared_pks(instance, model, model_lookups)
         return
 
     if action not in _CHANGING_ACTIONS:
         return
 
-    _schedule_commit_callbacks(
-        _registered_models_following(type(instance), through),
-        instance,
-        _group_replacer,
-    )
-    if _reaches_registered_rows(model, through):
-        # Only a clear leaves keys behind, found before it: pk_set is None then.
-        pk_set = (pk_set or set()) | instance.__dict__.pop(
-            _CLEARED_PKS_ATTRIBUTE, set()
-        )
-        _, key_to_model = _through_keys(through, instance, model, reverse)
+    _schedule_commit_callbacks(following_models, instance, _group_replacer)
+    if model_lookups:
+        # Only a clear leaves primary keys behind, found before it: pk_set is
+        # None then.
+        changed_pks = _primary_keys_named(
+            _through_key(model_side), model, pk_set or set()
+        ) | instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, set())
         _schedule_follower_replacements(
-            [(model, pk) for pk in _primary_keys_named(key_to_model, model, pk_set)],
+            [(model, pk) for pk in changed_pks],
             _followed_source_key(type(instance), instance),
         )
 
 
 def _check_output_before_write(
-    through: type[Model], instance: Model, model: type[Model] | None
+    following_models: list[type[Model]], model_lookups: list[tuple[str, type[Model]]]
 ) -> None:
     """Fail before the join rows are written or deleted if the sync would fail.
 
-    In autocommit the join rows are committed as soon as they are written:
-    after the change, a failing check would come too late to undo it.
+    ``following_models`` are the instance's registered models following the
+    links, ``model_lookups`` the lookups by which the other side's registered
+    rows follow them. In autocommit the join rows are committed as soon as
+    they are written: after the change, a failing check would come too late
+    to undo it.
     """
-    if _registered_models_following(type(instance), through) or (
-        _reaches_registered_rows(model, through)
-    ):
+    if following_models or model_lookups:
         check_output_configuration()
 
 
 def _registered_models_following(
-    sender: type[Model], through: type[Model]
+    sender: type[Model], link_lookup: str
 ) -> list[type[Model]]:
-    """Return the registered models of ``sender`` following the links of ``through``."""
+    """Return the registered models of ``sender`` following ``link_lookup``.
+
+    ``link_lookup`` is the lookup ``sender``'s side reads the changed links with.
+    """
     return [
         registered_model
         for registered_model in _registered_models(sender)
-        if rag.follows_many_to_many(registered_model, through)
+        if _follows_lookup(registered_model, link_lookup)
     ]
 
 
-def _through_keys(
-    through: type[Model], instance: Model, model: type[Model], reverse: bool
-) -> tuple["ForeignObject[Any, Any]", "ForeignObject[Any, Any]"]:
-    """Return the foreign keys of ``through`` to the instance's side, then ``model``'s.
+def _follows_lookup(registered_model: type[Model], lookup: str) -> bool:
+    """Return whether ``registered_model`` reads its rows' relations by ``lookup``."""
+    return bool(_followed_lookups_named(registered_model, lookup))
 
-    ``reverse``, as m2m_changed sends it, is False when the instance's model
-    declares the many-to-many.
+
+def _followed_lookups_named(
+    registered_model: type[Model], lookup: str
+) -> list[tuple[str, type[Model]]]:
+    """Return ``registered_model``'s followed lookups named ``lookup``.
+
+    Each comes with the model it reaches.
+    """
+    return [
+        (followed_lookup, reached_model)
+        for followed_lookup, reached_model in rag.foreign_key_lookups(registered_model)
+        if followed_lookup == lookup
+    ]
+
+
+def _link_relations(
+    through: type[Model], instance: Model, model: type[Model], reverse: bool
+) -> tuple[_LinkRelation, _LinkRelation] | None:
+    """Return the relations the instance's side, then ``model``'s, reads links with.
+
+    Those are the links of ``through``. ``reverse``, as m2m_changed sends it,
+    is False when the instance's model declares the many-to-many: on a
+    many-to-many from a model to itself, it tells the two sides apart. There are
+    none when ``through`` is the through model of no many-to-many.
     """
     declaring_model = model if reverse else type(instance)
     # m2m_changed comes from a many-to-many of the declaring model, inherited
     # or not, and each many-to-many has a through model of its own.
     field = next(
-        field
-        for field in declaring_model._meta.many_to_many
-        if field.remote_field.through is through
+        (
+            field
+            for field in declaring_model._meta.many_to_many
+            if field.remote_field.through is through
+        ),
+        None,
     )
-    instance_side, model_side = (
-        (field.remote_field, field) if reverse else (field, field.remote_field)
-    )
-    return _through_key(instance_side), _through_key(model_side)
+    if field is None:
+        return None
+
+    if field.remote_field.symmetrical:
+        # A symmetrical many-to-many reads its links from both sides by the field.
+        return field, field
+    return (field.remote_field, field) if reverse else (field, field.remote_field)
 
 
 def _through_key(
-    relation: "ManyToManyField[Any, Any] | ManyToManyRel",
+    relation: _LinkRelation,
 ) -> "ForeignObject[Any, Any]":
     """Return the through model's foreign key to the side ``relation`` is read from."""
     # A through model reaches each side of its many-to-many by a foreign key.
@@ -361,44 +403,32 @@ def _primary_keys_named(
     )
 
 
-def _reaches_registered_rows(
-    model: type[Model] | None, through: type[Model]
-) -> TypeGuard[type[Model]]:
-    """Return whether a links change reaches rows following the links."""
-    return (
-        model is not None
-        and rag.is_registered(model)
-        and rag.follows_many_to_many(model, through)
-    )
+def _registered_lookups_named(
+    model: type[Model], link_lookup: str
+) -> list[tuple[str, type[Model]]]:
+    """Return the lookups by which a links change reaches rows following the links.
+
+    ``link_lookup`` is the lookup ``model``'s side reads the changed links with.
+    There are none when ``model`` is not registered or does not follow it.
+    """
+    if not rag.is_registered(model):
+        return []
+    return _followed_lookups_named(model, link_lookup)
 
 
 def _remember_cleared_pks(
-    through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
+    instance: Model, model: type[Model], model_lookups: list[tuple[str, type[Model]]]
 ) -> None:
-    """Keep the keys of the registered rows a clear is about to unlink.
+    """Keep the primary keys of the registered rows a clear is about to unlink.
 
     Django sends no primary keys with the clear: they can only be found before
-    it. ``reverse`` is m2m_changed's.
+    it. They are those of the ``model`` rows whose ``model_lookups``, the
+    lookups they read the links with, reach the instance.
     """
-    if not _reaches_registered_rows(model, through):
-        return
-
-    key_to_instance, key_to_model = _through_keys(through, instance, model, reverse)
-    # The foreign key may name the instance by a unique column other than its
-    # primary key, and a multi-table child by the row of the parent holding the
-    # links.
-    links = through._base_manager.filter(
-        **{
-            key_to_instance.name: getattr(
-                instance, key_to_instance.foreign_related_fields[0].attname
-            )
-        }
-    )
-    setattr(
-        instance,
-        _CLEARED_PKS_ATTRIBUTE,
-        set(links.values_list(key_to_model.attname, flat=True)),
-    )
+    # The lookup reaches a multi-table child by the row of the parent holding
+    # the links.
+    linked_pks = _pks_reaching(model, _lookups_to_group_pks(instance, model_lookups))
+    setattr(instance, _CLEARED_PKS_ATTRIBUTE, set(linked_pks))
 
 
 def _replace_followers_as_committed(
@@ -529,10 +559,7 @@ def _followers_looked_up(
         for registered_model in rag.registered_models()
         for follower_pk in _pks_reaching(
             registered_model,
-            [
-                (lookup, _group_pk(instance, reached_model))
-                for lookup, reached_model in followed_lookups(registered_model, sender)
-            ],
+            _lookups_to_group_pks(instance, followed_lookups(registered_model, sender)),
         )
     ]
 
@@ -566,6 +593,19 @@ def _followed_lookups(
         for lookup, reached_model in rag.foreign_key_lookups(registered_model)
         # A foreign key may name a proxy: it reaches its concrete model's rows.
         if concrete_model_of(reached_model) in followed_models
+    ]
+
+
+def _lookups_to_group_pks(
+    instance: Model, lookups: list[tuple[str, type[Model]]]
+) -> list[tuple[str, Any]]:
+    """Pair each of ``lookups`` with the primary key of the row it reaches.
+
+    That row is ``instance``'s, as a row of the model the lookup comes with.
+    """
+    return [
+        (lookup, _group_pk(instance, reached_model))
+        for lookup, reached_model in lookups
     ]
 
 
