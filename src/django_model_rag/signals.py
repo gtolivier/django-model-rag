@@ -343,7 +343,8 @@ def _registered_subclasses_following(
     return [
         registered_model
         for registered_model in rag.registered_models()
-        if model in _models_of_the_row(registered_model)
+        # A many-to-many may name a proxy: it reaches its concrete model's rows.
+        if concrete_model_of(model) in _models_of_the_row(registered_model)
         and _follows_lookup(registered_model, link_lookup)
     ]
 
