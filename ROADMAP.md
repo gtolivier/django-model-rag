@@ -905,8 +905,8 @@ or a `GenericRelation` in `follow`.
     transaction — were fixed (see the second patch above). The last three
     came from the coverage matrix: moving and deleting a reverse
     one-to-one in `depends_on`, and removing a musician from a band
-    through `Engagement`. That pair is still tested from the band's side
-    only.
+    through `Engagement`. That pair was then tested from the band's side
+    only; the musician's side came with "Many-to-many links onto lookups".
   - [x] **Reverse relations onto lookups**, the suite green after each
     change. Before the save and at the commit, the followers a row points
     to are now looked up through the reverse relation's query name
@@ -947,6 +947,12 @@ or a `GenericRelation` in `follow`.
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
     handle-to-primary-key mapping runs the other way.
+    Tests done: a band removed from a musician's side, `set()` from the
+    band's side and from the musician's, and an add and a remove on
+    `Person`'s many-to-many to itself, from the mentee's side and from the
+    mentor's. All seven passed as written: no production code changed. A
+    `set()` sends a remove then an add, so `ada.bands.set(...)` replaces
+    Ada's group twice; the batching is 12b's. Left: the code.
   - [x] **Parametrize the signal tests** by declaration × relation ×
     write, in place of one hand-written test per combination. Two
     parametrized tests, each checking the exact list of replace calls,
