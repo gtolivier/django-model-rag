@@ -427,13 +427,7 @@ def _remember_cleared_pks(
     """
     # The lookup reaches a multi-table child by the row of the parent holding
     # the links.
-    linked_pks = _pks_reaching(
-        model,
-        [
-            (lookup, _group_pk(instance, reached_model))
-            for lookup, reached_model in model_lookups
-        ],
-    )
+    linked_pks = _pks_reaching(model, _lookups_to_group_pks(instance, model_lookups))
     setattr(instance, _CLEARED_PKS_ATTRIBUTE, set(linked_pks))
 
 
@@ -565,10 +559,7 @@ def _followers_looked_up(
         for registered_model in rag.registered_models()
         for follower_pk in _pks_reaching(
             registered_model,
-            [
-                (lookup, _group_pk(instance, reached_model))
-                for lookup, reached_model in followed_lookups(registered_model, sender)
-            ],
+            _lookups_to_group_pks(instance, followed_lookups(registered_model, sender)),
         )
     ]
 
@@ -602,6 +593,19 @@ def _followed_lookups(
         for lookup, reached_model in rag.foreign_key_lookups(registered_model)
         # A foreign key may name a proxy: it reaches its concrete model's rows.
         if concrete_model_of(reached_model) in followed_models
+    ]
+
+
+def _lookups_to_group_pks(
+    instance: Model, lookups: list[tuple[str, type[Model]]]
+) -> list[tuple[str, Any]]:
+    """Pair each of ``lookups`` with the primary key of the row it reaches.
+
+    That row is ``instance``'s, as a row of the model the lookup comes with.
+    """
+    return [
+        (lookup, _group_pk(instance, reached_model))
+        for lookup, reached_model in lookups
     ]
 
 
