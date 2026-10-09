@@ -42,6 +42,7 @@ from tests.testapp.models import (
     Excerpt,
     Exhibit,
     FeaturedProduct,
+    Friend,
     Guild,
     Lesson,
     MasterClass,
@@ -261,6 +262,13 @@ def _register_persons_following_their_mentors() -> None:
     """Register Person, by its name, following its mentors, the forward side of
     its own many-to-many ``mentors``: both sides of the links are Persons."""
     rag.register(Person, fields=["name"], follow=["mentors"])
+
+
+def _register_friends_following_their_friends() -> None:
+    """Register Friend, by its name, following its friends through its own
+    symmetrical many-to-many ``friends``: both sides of the links are Friends,
+    and each link is a link back."""
+    rag.register(Friend, fields=["name"], follow=["friends"])
 
 
 def _register_teams_following_their_matches() -> None:
@@ -7061,6 +7069,62 @@ def test_clearing_the_mentees_of_a_mentor_following_mentors_replaces_each_former
                 source_model="person",
                 source_pk=alan.pk,
                 title="Alan",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_friend_to_a_friend_replaces_the_groups_of_both_friends(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_friends_following_their_friends()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the add below is observed. Bob
+    # has a friend already, so that its group shows that friend next to the
+    # one added. Carol is created and linked first, so that its name comes
+    # before Ada's whichever order the friends are read in. Carol's group
+    # lists Bob, whose name the add below does not change: Carol's group is
+    # not replaced.
+    carol = Friend.objects.create(name="Carol")
+    bob = Friend.objects.create(name="Bob")
+    bob.friends.add(carol)
+    ada = Friend.objects.create(name="Ada")
+
+    # Added from Ada's side: Django writes the link and the link back, yet
+    # sends m2m_changed once, with Ada as its instance and Bob's primary key
+    # in pk_set, and the forward side as the side of both. No row is saved
+    # again: the add writes only the links between Ada and Bob.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.friends.add(bob)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both Ada and Bob as committed, each listing the other,
+    # Bob's after its other friend's, and no group of the friend the add does
+    # not change.
+    assert _received_groups(built_outputs) == {
+        f"testapp.friend:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nBob",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.friend:{bob.pk}": [
+            NormalizedDocument(
+                text="Bob\n\nCarol\n\nAda",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=bob.pk,
+                title="Bob",
             ),
         ],
     }
