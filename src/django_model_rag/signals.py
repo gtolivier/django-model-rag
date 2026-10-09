@@ -261,7 +261,11 @@ def sync_changed_relation(
 
     through = kwargs["sender"]
     reverse = kwargs["reverse"]
-    instance_side, model_side = _link_relations(through, instance, model, reverse)
+    relations = _link_relations(through, instance, model, reverse)
+    if relations is None:
+        return
+
+    instance_side, model_side = relations
     following_models = _registered_models_following(
         type(instance), query_name(instance_side)
     )
@@ -341,24 +345,34 @@ def _followed_lookups_named(
 
 def _link_relations(
     through: type[Model], instance: Model, model: type[Model], reverse: bool
-) -> tuple[
-    "ManyToManyField[Any, Any] | ManyToManyRel",
-    "ManyToManyField[Any, Any] | ManyToManyRel",
-]:
+) -> (
+    tuple[
+        "ManyToManyField[Any, Any] | ManyToManyRel",
+        "ManyToManyField[Any, Any] | ManyToManyRel",
+    ]
+    | None
+):
     """Return the relations the instance's side, then ``model``'s, reads links with.
 
     Those are the links of ``through``. ``reverse``, as m2m_changed sends it,
     is False when the instance's model declares the many-to-many: on a
-    many-to-many from a model to itself, it tells the two sides apart.
+    many-to-many from a model to itself, it tells the two sides apart. There are
+    none when ``through`` is the through model of no many-to-many.
     """
     declaring_model = model if reverse else type(instance)
     # m2m_changed comes from a many-to-many of the declaring model, inherited
     # or not, and each many-to-many has a through model of its own.
     field = next(
-        field
-        for field in declaring_model._meta.many_to_many
-        if field.remote_field.through is through
+        (
+            field
+            for field in declaring_model._meta.many_to_many
+            if field.remote_field.through is through
+        ),
+        None,
     )
+    if field is None:
+        return None
+
     if field.remote_field.symmetrical:
         # A symmetrical many-to-many reads its links from both sides by the field.
         return field, field
