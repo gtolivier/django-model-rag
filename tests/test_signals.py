@@ -6951,6 +6951,69 @@ def test_renaming_a_band_replaces_the_group_of_each_musician_in_it(
 
 
 @pytest.mark.django_db
+def test_deleting_a_band_replaces_the_group_of_each_of_its_former_musicians(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_musicians_following_their_bands()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the band's delete below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The band holds two musicians, so that its delete has more
+    # than one follower to replace; one of them plays in another band too, so
+    # that its group keeps that band.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A musician never in the band: the delete below does not change its group.
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    trio.musicians.add(cleo)
+
+    # Deleted from the band's side: its engagements cascade with it, deleted
+    # by the collector with no m2m_changed, so its musicians can only be found
+    # before the delete, through the engagements naming them by the column
+    # Engagement.musician points to, their handle, not by their primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        quartet.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both former musicians as
+    # committed, each without the deleted band's name: the one playing in
+    # another band keeps that band's name. No group of the musician never in
+    # the band, nor of the unregistered band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+            f"testapp.musician:{ben.pk}": [
+                NormalizedDocument(
+                    text="Ben",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ben.pk,
+                    title="Ben",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_a_mentor_to_a_person_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
