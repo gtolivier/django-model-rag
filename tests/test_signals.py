@@ -5945,6 +5945,77 @@ def test_adding_a_course_child_to_a_topic_replaces_the_group_of_the_child_follow
 
 
 @pytest.mark.django_db
+def test_adding_a_course_child_to_a_topic_replaces_its_course_and_child_groups_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Both Course and its child MasterClass are registered, each following its
+    # topics: the MasterClass's fields include its instructor, so its group
+    # differs from the Course group of the same row. Topic is not registered.
+    _register_courses_following_their_topics()
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+
+    # Added from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and the master class's Course row
+    # among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Both groups of the row as committed, each with the added topic's title
+    # and summary: the Course's from its own title, the MasterClass's from its
+    # title and instructor. Merged across replace calls: whether the groups
+    # come in one call or one per registered model is not what this test is
+    # about.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{masterclass.pk}": [
+            NormalizedDocument(
+                text="Woodworking masterclass\n\nWoodworking\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=masterclass.pk,
+                title="Woodworking masterclass",
+            ),
+        ],
+        f"testapp.masterclass:{masterclass.pk}": [
+            NormalizedDocument(
+                text=(
+                    "Woodworking masterclass\n\nAda"
+                    "\n\nWoodworking\n\nJoints and finishes."
+                ),
+                source_app_label="testapp",
+                source_model="masterclass",
+                source_pk=masterclass.pk,
+                title="Woodworking masterclass",
+            ),
+        ],
+    }
+    # Each group sent once: neither the Course group nor the MasterClass group
+    # of the row is replaced twice.
+    sent_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert sorted(sent_source_keys) == sorted(
+        [
+            f"testapp.course:{masterclass.pk}",
+            f"testapp.masterclass:{masterclass.pk}",
+        ]
+    )
+
+
+@pytest.mark.django_db
 def test_adding_a_plain_course_and_a_child_to_a_topic_replaces_only_the_childs_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
