@@ -258,6 +258,12 @@ def _register_musicians_following_their_bands() -> None:
     rag.register(Musician, fields=["name"], follow=["bands"])
 
 
+def _register_bands_following_their_musicians() -> None:
+    """Register only Band, by its name, following its musicians through its own
+    many-to-many ``musicians``: Musician itself is not."""
+    rag.register(Band, fields=["name"], follow=["musicians"])
+
+
 def _register_persons_following_their_mentees() -> None:
     """Register Person, by its name, following its mentees, the reverse side of
     its own many-to-many ``mentors``: both sides of the links are Persons."""
@@ -7007,6 +7013,70 @@ def test_deleting_a_band_replaces_the_group_of_each_of_its_former_musicians(
                     source_model="musician",
                     source_pk=ben.pk,
                     title="Ben",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
+def test_renaming_a_musician_replaces_the_group_of_each_of_its_bands(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_bands_following_their_musicians()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the musician's save below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The musician plays in two bands, so that its save has more
+    # than one follower to replace; one of them holds another musician too, so
+    # that its group keeps that musician's name.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A band without the musician: the save below does not change its group.
+    duo = Band.objects.create(name="Duo")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    duo.musicians.add(cleo)
+
+    # Saved from the musician's side, the target of the forward many-to-many:
+    # its bands are found through the engagements naming it by the column
+    # Engagement.musician points to, its handle, not by its primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.name = "Adele"
+        ada.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both bands, each with its own
+    # name, then the names of its musicians, the renamed one's new name
+    # included, as one batch of SyncPipeline.run_queryset() does. No group of
+    # the band without the musician, nor of the unregistered musician.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.band:{quartet.pk}": [
+                NormalizedDocument(
+                    text="Quartet\n\nAdele\n\nBen",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=quartet.pk,
+                    title="Quartet",
+                ),
+            ],
+            f"testapp.band:{trio.pk}": [
+                NormalizedDocument(
+                    text="Trio\n\nAdele",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=trio.pk,
+                    title="Trio",
                 ),
             ],
         }
