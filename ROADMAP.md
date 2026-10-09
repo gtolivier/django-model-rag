@@ -808,8 +808,9 @@ or a `GenericRelation` in `follow`.
     `ImproperlyConfigured`. Load with `MODEL_RAG_SIGNALS = False`, then run
     the command — `rag.signals_paused()` once 12a lands.
   - **Left out**: rows of a custom through model written directly (see
-    11d-bis); a symmetrical many-to-many from a model to itself; a
-    many-to-many declared to a proxy model (`ManyToManyField(TopicProxy)`).
+    11d-bis); a symmetrical many-to-many from a model to itself (covered
+    since 11e); a many-to-many declared to a proxy model
+    (`ManyToManyField(TopicProxy)`).
 - [ ] **11d-bis. Resync through rows of a custom through model** — not
   planned unless a project runs into it. A many-to-many with `through=`
   gets its links from rows of that model, which a project can create,
@@ -834,7 +835,7 @@ or a `GenericRelation` in `follow`.
     relations, chains, parent links and proxies need no code of their own.
   - **Many-to-many links (11d)**: `sync_changed_relation` reads `pk_set`,
     or the join rows in `pre_clear` (`_remember_cleared_pks`), through the
-    keys of the through model (`_through_keys`).
+    keys of the through model (`_through_keys`, gone since #43).
 
   The patches this left, found while mapping the signal tests:
   - Converting a `to_field` value to a primary key is written twice: in
@@ -944,25 +945,51 @@ or a `GenericRelation` in `follow`.
       at a delete (`_follower_pks`), still cost one query per relation
       with a `to_field` or several columns, not one per registered model.
       Combining them would change only those rare relations.
-  - [ ] **Many-to-many links onto lookups.** Test the `Band` /
+  - [x] **Many-to-many links onto lookups.** Test the `Band` /
     `Engagement` pair from the musician's side first —
     `ada.bands.remove(quartet)`, and `set()` from either side — where the
     handle-to-primary-key mapping runs the other way.
-    Tests done: a band removed from a musician's side, `set()` from the
-    band's side and from the musician's, and an add and a remove on
-    `Person`'s many-to-many to itself, from the mentee's side and from the
-    mentor's. All seven passed as written: no production code changed. A
-    `set()` sends a remove then an add, so `ada.bands.set(...)` replaces
-    Ada's group twice; the batching is 12b's. On `Person`'s many-to-many
-    to itself, a write to Ada's mentors also replaces Ada's own group,
-    with the same text: Person follows `mentees`, not `mentors`, but sits
-    on both sides of the relation, so the receiver schedules Ada too. The
-    five `Person` tests pin that needless replace. Still to do in this
-    step: moving the many-to-many code (`pk_set`, `_remember_cleared_pks`,
-    `_through_keys`) onto the lookups, the tests unchanged; then, telling
-    the two directions of a many-to-many to itself apart, so that only the
-    side followed is replaced — the one change to those five tests, Ada's
-    group dropped from their expected value.
+    - **Tests first:** a band removed from a musician's side, `set()` from
+      the band's side and from the musician's, and an add and a remove on
+      `Person`'s many-to-many to itself, from the mentee's side and from
+      the mentor's. All seven passed as written. A `set()` sends a remove
+      then an add, so `ada.bands.set(...)` replaces Ada's group twice; the
+      batching is 12b's.
+    - **Only the followed side (#43).** On `Person`'s many-to-many to
+      itself, a write to Ada's mentors also replaced Ada's own group:
+      `follows_many_to_many` recognised the relation by its through model,
+      not by its direction. Each side is now matched by its lookup name —
+      `mentees` or `mentors`, from `m2m_changed`'s `reverse` — against the
+      registered model's followed lookups. The five `Person` tests dropped
+      Ada's group from their expected value; new ones follow `mentors`,
+      clear from the mentor's side, and add and clear from the musician's.
+    - **Through the lookups.** The cleared rows are found in `pre_clear`
+      through the followed lookup (`_pks_reaching`).
+      `rag.follows_many_to_many`, `_through_model_of` and `_through_keys`
+      are gone. `pk_set` is still translated from a `to_field`
+      (`_primary_keys_named`): after a remove its rows are no longer
+      linked, so no lookup finds them.
+    - **Symmetrical many-to-many to itself, now covered.** Django names the
+      other side `<name>_rel_+`, which no lookup matches, so the field is
+      read for both sides: `ada.friends.add(bob)` replaces the groups of
+      Ada and Bob, and a clear those of Ada's former friends (test bench:
+      `Friend`). A hand-sent `m2m_changed` whose sender is no many-to-many's
+      through model is ignored.
+  - [ ] **Many-to-many follow-ups**, from the review of #43:
+    - **A multi-table child on the `model` side.** The rows `pk_set` names
+      are looked up only if `model` itself is registered. With MasterClass
+      registered following `topics` and Course not,
+      `woodworking.courses.add(masterclass)` sends `model=Course`, and
+      MasterClass's group is never replaced. The instance side already
+      includes the registered parents; the `model` side needs the
+      registered children.
+    - **Matched by name, not by relation.** A side counts as followed when
+      its lookup name matches, whatever relation carries it. A multi-table
+      child declaring its own `tools` many-to-many, while its parent
+      follows a reverse foreign key also named `tools`, schedules a
+      needless resync of the parent on `child.tools.add(x)`. A needless
+      replace, never a stale group. Comparing the model the lookup reaches
+      too, or the relations by identity, would fix it.
   - [x] **Parametrize the signal tests** by declaration × relation ×
     write, in place of one hand-written test per combination. Two
     parametrized tests, each checking the exact list of replace calls,
