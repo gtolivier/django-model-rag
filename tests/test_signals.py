@@ -257,6 +257,12 @@ def _register_persons_following_their_mentees() -> None:
     rag.register(Person, fields=["name"], follow=["mentees"])
 
 
+def _register_persons_following_their_mentors() -> None:
+    """Register Person, by its name, following its mentors, the forward side of
+    its own many-to-many ``mentors``: both sides of the links are Persons."""
+    rag.register(Person, fields=["name"], follow=["mentors"])
+
+
 def _register_teams_following_their_matches() -> None:
     """Register Team, by its name, following its matches by both reverse foreign
     keys, ``home_matches`` and ``away_matches``: Match itself is not."""
@@ -6528,6 +6534,58 @@ def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_mentor_to_a_person_following_its_mentors_replaces_only_its_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentors()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the add below is observed. Ada
+    # has a mentor already, so that its group shows that mentor next to the
+    # one added. Linus is created and linked first, so that its name comes
+    # before Grace's whichever order the mentors are read in.
+    ada = Person.objects.create(name="Ada")
+    linus = Person.objects.create(name="Linus")
+    ada.mentors.add(linus)
+    grace = Person.objects.create(name="Grace")
+    # A person not mentoring Ada, mentoring Grace: Grace's group lists its own
+    # mentors, which the add below does not change, and neither does it
+    # change Barbara's group.
+    barbara = Person.objects.create(name="Barbara")
+    grace.mentors.add(barbara)
+
+    # Added from the mentee's side, the forward side of the many-to-many:
+    # Django sends m2m_changed with Ada as its instance and Grace's primary
+    # key in pk_set, so the person to replace is the instance, the mentee,
+    # not the one named in pk_set. No row is saved again: the add writes only
+    # Ada's link to its new mentor.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.add(grace)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Ada's group as committed, with Grace's name added after its other
+    # mentor's, and no group of the person not mentoring Ada. Grace's own
+    # group is not replaced: it follows its mentors, not its mentees, so the
+    # add does not change it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nLinus\n\nGrace",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
