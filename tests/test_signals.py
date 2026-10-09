@@ -7197,6 +7197,43 @@ def test_clearing_the_friends_of_a_friend_replaces_its_and_its_former_friends_gr
 
 
 @pytest.mark.django_db
+def test_an_m2m_changed_sent_by_a_model_through_no_many_to_many_replaces_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the sender can keep the signal from
+    # replacing anything.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Friend follows its friends: an add on its own many-to-many would replace
+    # the groups of both sides.
+    _register_friends_following_their_friends()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the signal below is observed.
+    bob = Friend.objects.create(name="Bob")
+    ada = Friend.objects.create(name="Ada")
+
+    # Sent by hand, as a project may, by Category: a plain model, the through
+    # model of no many-to-many. Friend's many-to-many is not the one it is
+    # about, nor any other: the signal changes no link the package can read.
+    with django_capture_on_commit_callbacks(execute=True):
+        m2m_changed.send(
+            sender=Category,
+            instance=ada,
+            action="post_add",
+            reverse=False,
+            model=Friend,
+            pk_set={bob.pk},
+            using="default",
+        )
+
+    # Not even at the commit: no group of either Friend.
+    assert _received_groups(built_outputs) == {}
+
+
+@pytest.mark.django_db
 def test_adding_a_topic_to_a_course_neither_side_following_the_link_defers_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
