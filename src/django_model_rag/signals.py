@@ -268,22 +268,19 @@ def sync_changed_relation(
         return
 
     instance_side, model_side = relations
+    model_link_lookup = query_name(model_side)
     following_models = _registered_models_following(
         type(instance), query_name(instance_side)
     )
-    model_lookups = _registered_lookups_named(model, query_name(model_side))
+    model_lookups = _registered_lookups_named(model, model_link_lookup)
     if action in _BEFORE_WRITE:
         # Primary keys left by a clear that failed after pre_clear are not this
         # change's.
         instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
         _check_output_before_write(following_models, model_lookups)
         if action == _BEFORE_CLEAR:
-            # The rows of a model that is not registered are followed by its
-            # registered subclasses.
-            cleared_lookups = model_lookups or (
-                [(query_name(model_side), type(instance))]
-                if _registered_subclasses_following(model, query_name(model_side))
-                else []
+            cleared_lookups = model_lookups or _registered_subclasses_lookups(
+                instance, model, model_link_lookup
             )
             if cleared_lookups:
                 _remember_cleared_pks(instance, model, cleared_lookups)
@@ -293,7 +290,7 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(following_models, instance, _group_replacer)
-    followers_of_model = _registered_subclasses_following(model, query_name(model_side))
+    followers_of_model = _registered_subclasses_following(model, model_link_lookup)
     if followers_of_model:
         # Only a clear leaves primary keys behind, found before it: pk_set is
         # None then.
@@ -440,6 +437,20 @@ def _registered_lookups_named(
     if not rag.is_registered(model):
         return []
     return _followed_lookups_named(model, link_lookup)
+
+
+def _registered_subclasses_lookups(
+    instance: Model, model: type[Model], link_lookup: str
+) -> list[tuple[str, type[Model]]]:
+    """Return the lookups by which ``model``'s registered subclasses reach the instance.
+
+    The rows of a model that is not registered are followed by its registered
+    subclasses. ``link_lookup`` is the lookup ``model``'s side reads the changed
+    links with; there are none when no registered subclass follows it.
+    """
+    if not _registered_subclasses_following(model, link_lookup):
+        return []
+    return [(link_lookup, type(instance))]
 
 
 def _remember_cleared_pks(
