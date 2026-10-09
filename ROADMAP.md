@@ -1146,7 +1146,10 @@ or a `GenericRelation` in `follow`.
   - [ ] **Model resync**, with `/tdd:feature`. Its first commit removes
     the tests that pin the exact lookups of case 3, listed in the pull
     request, the suite still green: removing the code first would leave
-    `main` with no sync through forward relations. Then one cycle per
+    `main` with no sync through forward relations. The tests of #26 stay,
+    adapted if they need to be: rows attached before the commit by a write
+    that sends no signal (`bulk_create()`, `update()`) are resynced. A
+    resync run at the commit answers it by construction. Then one cycle per
     behavior — among them: a write to M resyncs every row of R; once per
     transaction, for several writes and several models; nothing on a
     rollback, on a rolled-back savepoint, or with signals off; the
