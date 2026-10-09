@@ -148,6 +148,12 @@ def _register_topics_following_their_courses() -> None:
     rag.register(Topic, follow=["courses"])
 
 
+def _register_masterclasses_following_their_topics() -> None:
+    """Register only MasterClass, following its topics through the many-to-many
+    ``topics`` it inherits from Course: neither Course nor Topic is."""
+    rag.register(MasterClass, follow=["topics"])
+
+
 def _register_plugins_by_their_page_title() -> None:
     """Register only TextPlugin, with a custom extractor reading its page's title
     before its body: depends_on names the page, whose saves change its
@@ -5889,6 +5895,53 @@ def test_clearing_the_topics_of_a_course_child_replaces_the_group_of_each_topic_
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_adding_a_course_child_to_a_topic_replaces_the_group_of_the_child_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Neither row is
+    # saved again: the add writes only the link between them.
+    woodworking = _create_the_woodworking_topic()
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+
+    # Added from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and the master class's Course row
+    # among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The MasterClass's group as committed: its own title and instructor, then
+    # the added topic's title and summary.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.masterclass:{masterclass.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Woodworking masterclass\n\nAda"
+                        "\n\nWoodworking\n\nJoints and finishes."
+                    ),
+                    source_app_label="testapp",
+                    source_model="masterclass",
+                    source_pk=masterclass.pk,
+                    title="Woodworking masterclass",
+                ),
+            ],
+        }
+    ]
 
 
 class _FailedClearError(Exception):
