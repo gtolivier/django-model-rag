@@ -839,14 +839,25 @@ class Registry:
             )
         )
 
-    def follows_many_to_many(self, model: type[Model], through: type[Model]) -> bool:
+    def follows_many_to_many(
+        self,
+        model: type[Model],
+        through: type[Model],
+        *,
+        reverse: bool | None = None,
+    ) -> bool:
         """Tell whether ``model`` follows or depends on a many-to-many via ``through``.
+
+        ``reverse`` tells from which side: a relation declared on ``model`` is
+        read forward, and one declared on the other model, reverse. A
+        many-to-many on the same model has both. None means either side.
 
         Raises:
             NotRegistered: ``model`` is not registered.
         """
         return any(
             _through_model_of(relation) is through
+            and (reverse is None or isinstance(relation, ForeignObjectRel) is reverse)
             for relation in self._followed_or_depended_on_relations(model)
         )
 

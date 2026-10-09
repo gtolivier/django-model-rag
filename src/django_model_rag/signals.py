@@ -261,7 +261,7 @@ def sync_changed_relation(
     if action in _BEFORE_WRITE:
         # Keys left by a clear that failed after pre_clear are not this change's.
         instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
-        _check_output_before_write(through, instance, model)
+        _check_output_before_write(through, instance, model, reverse)
         if action == _BEFORE_CLEAR:
             _remember_cleared_pks(through, instance, model, reverse)
         return
@@ -270,7 +270,7 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(
-        _registered_models_following(type(instance), through),
+        _registered_models_following(type(instance), through, reverse),
         instance,
         _group_replacer,
     )
@@ -287,27 +287,31 @@ def sync_changed_relation(
 
 
 def _check_output_before_write(
-    through: type[Model], instance: Model, model: type[Model] | None
+    through: type[Model], instance: Model, model: type[Model] | None, reverse: bool
 ) -> None:
     """Fail before the join rows are written or deleted if the sync would fail.
 
     In autocommit the join rows are committed as soon as they are written:
     after the change, a failing check would come too late to undo it.
     """
-    if _registered_models_following(type(instance), through) or (
+    if _registered_models_following(type(instance), through, reverse) or (
         _reaches_registered_rows(model, through)
     ):
         check_output_configuration()
 
 
 def _registered_models_following(
-    sender: type[Model], through: type[Model]
+    sender: type[Model], through: type[Model], reverse: bool
 ) -> list[type[Model]]:
-    """Return the registered models of ``sender`` following the links of ``through``."""
+    """Return the registered models of ``sender`` following the links of ``through``.
+
+    ``reverse``, as m2m_changed sends it, tells which side of the links
+    ``sender`` is on.
+    """
     return [
         registered_model
         for registered_model in _registered_models(sender)
-        if rag.follows_many_to_many(registered_model, through)
+        if rag.follows_many_to_many(registered_model, through, reverse=reverse)
     ]
 
 
