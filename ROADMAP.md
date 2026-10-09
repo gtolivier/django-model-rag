@@ -1110,7 +1110,11 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
      R is emptied by its own delete (case 1). On a many-to-many, the
      instance whose links change (`m2m_changed`'s `instance`) is replaced
      exactly when its model follows that side, as for case 1; only the
-     other side's readers get a model resync.
+     other side's readers get a model resync. A write that sends no signal
+     (`QuerySet.update()`, `bulk_create()`, raw SQL) schedules nothing on
+     its own, as in cases 1 and 2: it is covered only when a write that
+     does send one, in the same transaction, schedules the resync — the
+     case of #26. Otherwise `sync_model_rag` repairs it.
 
   **An opt-out per registration**, for a large R read through a model
   written often: `resync_on_related_writes=False` on `register()` and
