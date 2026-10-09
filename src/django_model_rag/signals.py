@@ -251,8 +251,10 @@ def sync_changed_relation(
 ) -> None:
     """Replace, once the transaction commits, the groups a change of links alters.
 
-    Those are the group of the instance, and the groups of the registered rows
-    that ``pk_set`` names, from either side of the links.
+    Those are the groups of the instance and of the ``model`` rows that
+    ``pk_set`` names, or a clear unlinks, each for a registered model following
+    the lookup its own side reads the links with. On a many-to-many from a
+    model to itself, only the side whose lookup is followed is replaced.
     """
     if not _signals_enabled():
         return
@@ -260,24 +262,24 @@ def sync_changed_relation(
     through = kwargs["sender"]
     reverse = kwargs["reverse"]
     instance_side, model_side = _link_relations(through, instance, model, reverse)
-    instance_lookup, model_lookup = query_name(instance_side), query_name(model_side)
+    following_models = _registered_models_following(
+        type(instance), query_name(instance_side)
+    )
+    model_lookups = _registered_lookups_named(model, query_name(model_side))
     if action in _BEFORE_WRITE:
-        # Keys left by a clear that failed after pre_clear are not this change's.
+        # Primary keys left by a clear that failed after pre_clear are not this
+        # change's.
         instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
-        _check_output_before_write(instance, model, instance_lookup, model_lookup)
-        if action == _BEFORE_CLEAR:
-            _remember_cleared_pks(instance, model, model_lookup)
+        _check_output_before_write(following_models, model_lookups)
+        if action == _BEFORE_CLEAR and model_lookups:
+            _remember_cleared_pks(instance, model, model_lookups)
         return
 
     if action not in _CHANGING_ACTIONS:
         return
 
-    _schedule_commit_callbacks(
-        _registered_models_following(type(instance), instance_lookup),
-        instance,
-        _group_replacer,
-    )
-    if _reaches_registered_rows(model, model_lookup):
+    _schedule_commit_callbacks(following_models, instance, _group_replacer)
+    if model_lookups:
         # Only a clear leaves primary keys behind, found before it: pk_set is
         # None then.
         changed_pks = _primary_keys_named(
@@ -290,18 +292,17 @@ def sync_changed_relation(
 
 
 def _check_output_before_write(
-    instance: Model, model: type[Model], instance_lookup: str, model_lookup: str
+    following_models: list[type[Model]], model_lookups: list[tuple[str, type[Model]]]
 ) -> None:
     """Fail before the join rows are written or deleted if the sync would fail.
 
-    ``instance_lookup`` and ``model_lookup`` are the lookups the instance's
-    side and ``model``'s read the links with. In autocommit the join rows are
-    committed as soon as they are written: after the change, a failing check
-    would come too late to undo it.
+    ``following_models`` are the instance's registered models following the
+    links, ``model_lookups`` the lookups by which the other side's registered
+    rows follow them. In autocommit the join rows are committed as soon as
+    they are written: after the change, a failing check would come too late
+    to undo it.
     """
-    if _registered_models_following(type(instance), instance_lookup) or (
-        _reaches_registered_rows(model, model_lookup)
-    ):
+    if following_models or model_lookups:
         check_output_configuration()
 
 
@@ -389,33 +390,35 @@ def _primary_keys_named(
     )
 
 
-def _reaches_registered_rows(model: type[Model], link_lookup: str) -> bool:
-    """Return whether a links change reaches rows following the links.
+def _registered_lookups_named(
+    model: type[Model], link_lookup: str
+) -> list[tuple[str, type[Model]]]:
+    """Return the lookups by which a links change reaches rows following the links.
 
     ``link_lookup`` is the lookup ``model``'s side reads the changed links with.
+    There are none when ``model`` is not registered or does not follow it.
     """
-    return rag.is_registered(model) and _follows_lookup(model, link_lookup)
+    if not rag.is_registered(model):
+        return []
+    return _followed_lookups_named(model, link_lookup)
 
 
 def _remember_cleared_pks(
-    instance: Model, model: type[Model], link_lookup: str
+    instance: Model, model: type[Model], model_lookups: list[tuple[str, type[Model]]]
 ) -> None:
     """Keep the primary keys of the registered rows a clear is about to unlink.
 
     Django sends no primary keys with the clear: they can only be found before
-    it. They are those of the ``model`` rows whose ``link_lookup``, the lookup
-    they read the links with, reaches the instance.
+    it. They are those of the ``model`` rows whose ``model_lookups``, the
+    lookups they read the links with, reach the instance.
     """
-    if not _reaches_registered_rows(model, link_lookup):
-        return
-
     # The lookup reaches a multi-table child by the row of the parent holding
     # the links.
     linked_pks = _pks_reaching(
         model,
         [
             (lookup, _group_pk(instance, reached_model))
-            for lookup, reached_model in _followed_lookups_named(model, link_lookup)
+            for lookup, reached_model in model_lookups
         ],
     )
     setattr(instance, _CLEARED_PKS_ATTRIBUTE, set(linked_pks))
