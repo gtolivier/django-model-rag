@@ -41,6 +41,8 @@ _PKS_PER_QUERY = 500
 
 # a registered model following an instance, and the primary key of its row
 _Follower: TypeAlias = tuple[type[Model], Any]
+# a relation one side of a many-to-many reads its links with
+_LinkRelation: TypeAlias = "ManyToManyField[Any, Any] | ManyToManyRel"
 
 logger = logging.getLogger("django_model_rag")
 
@@ -345,13 +347,7 @@ def _followed_lookups_named(
 
 def _link_relations(
     through: type[Model], instance: Model, model: type[Model], reverse: bool
-) -> (
-    tuple[
-        "ManyToManyField[Any, Any] | ManyToManyRel",
-        "ManyToManyField[Any, Any] | ManyToManyRel",
-    ]
-    | None
-):
+) -> tuple[_LinkRelation, _LinkRelation] | None:
     """Return the relations the instance's side, then ``model``'s, reads links with.
 
     Those are the links of ``through``. ``reverse``, as m2m_changed sends it,
@@ -380,7 +376,7 @@ def _link_relations(
 
 
 def _through_key(
-    relation: "ManyToManyField[Any, Any] | ManyToManyRel",
+    relation: _LinkRelation,
 ) -> "ForeignObject[Any, Any]":
     """Return the through model's foreign key to the side ``relation`` is read from."""
     # A through model reaches each side of its many-to-many by a foreign key.
