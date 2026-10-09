@@ -285,14 +285,15 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(following_models, instance, _group_replacer)
-    if model_lookups:
+    followers_of_model = _registered_rows_of_following(model, query_name(model_side))
+    if followers_of_model:
         # Only a clear leaves primary keys behind, found before it: pk_set is
         # None then.
         changed_pks = _primary_keys_named(
             _through_key(model_side), model, pk_set or set()
         ) | instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, set())
         _schedule_follower_replacements(
-            [(model, pk) for pk in changed_pks],
+            [(follower, pk) for follower in followers_of_model for pk in changed_pks],
             _followed_source_key(type(instance), instance),
         )
 
@@ -323,6 +324,21 @@ def _registered_models_following(
         registered_model
         for registered_model in _registered_models(sender)
         if _follows_lookup(registered_model, link_lookup)
+    ]
+
+
+def _registered_rows_of_following(
+    model: type[Model], link_lookup: str
+) -> list[type[Model]]:
+    """Return the registered models whose rows are ``model`` rows, following the lookup.
+
+    That is ``model`` itself, or a multi-table child of it, sharing its keys.
+    """
+    return [
+        registered_model
+        for registered_model in rag.registered_models()
+        if model in _models_of_the_row(registered_model)
+        and _follows_lookup(registered_model, link_lookup)
     ]
 
 
