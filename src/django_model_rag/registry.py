@@ -500,14 +500,6 @@ def _require_extractor_class(extractor_class: Callable[..., object]) -> None:
         raise ImproperlyConfigured(message)
 
 
-def _through_model_of(
-    relation: "Field[Any, Any] | ForeignObjectRel",
-) -> type[Model] | None:
-    """Return the through model of a many-to-many ``relation``, forward or reverse."""
-    rel = relation if isinstance(relation, ForeignObjectRel) else relation.remote_field
-    return getattr(rel, "through", None)
-
-
 def _delete_uid(model: type[Model]) -> str:
     """Name the post_delete connection of ``model``."""
     return f"django_model_rag.sync_delete.{model._meta.label}"
@@ -837,28 +829,6 @@ class Registry:
                 for relation in self._followed_or_depended_on_relations(model)
                 if isinstance(relation, ForeignObjectRel) and not relation.many_to_many
             )
-        )
-
-    def follows_many_to_many(
-        self,
-        model: type[Model],
-        through: type[Model],
-        *,
-        reverse: bool | None = None,
-    ) -> bool:
-        """Tell whether ``model`` follows or depends on a many-to-many via ``through``.
-
-        ``reverse`` tells from which side: a relation declared on ``model`` is
-        read forward, and one declared on the other model, reverse. A
-        many-to-many on the same model has both. None means either side.
-
-        Raises:
-            NotRegistered: ``model`` is not registered.
-        """
-        return any(
-            _through_model_of(relation) is through
-            and (reverse is None or isinstance(relation, ForeignObjectRel) is reverse)
-            for relation in self._followed_or_depended_on_relations(model)
         )
 
     def _followed_or_depended_on_relations(
