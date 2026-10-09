@@ -7084,6 +7084,73 @@ def test_renaming_a_musician_replaces_the_group_of_each_of_its_bands(
 
 
 @pytest.mark.django_db
+def test_deleting_a_musician_replaces_the_group_of_each_of_its_former_bands(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_bands_following_their_musicians()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the musician's delete below is
+    # observed. A musician's handle, a slug, can never equal its integer
+    # primary key. The musician plays in two bands, so that its delete has
+    # more than one follower to replace; one of them holds another musician
+    # too, so that its group keeps that musician's name.
+    quartet = Band.objects.create(name="Quartet")
+    trio = Band.objects.create(name="Trio")
+    ada = Musician.objects.create(name="Ada", handle="ada")
+    ben = Musician.objects.create(name="Ben", handle="ben")
+    quartet.musicians.add(ada, ben)
+    trio.musicians.add(ada)
+    # A band never holding the musician: the delete below does not change its
+    # group.
+    duo = Band.objects.create(name="Duo")
+    cleo = Musician.objects.create(name="Cleo", handle="cleo")
+    duo.musicians.add(cleo)
+
+    # Deleted from the musician's side, the target of the forward
+    # many-to-many: its engagements cascade with it, deleted by the collector
+    # with no m2m_changed, so its bands can only be found before the delete,
+    # through the engagements naming it by the column Engagement.musician
+    # points to, its handle, not by its primary key.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # One replace call holding the groups of both former bands as committed,
+    # each with its own name, then the names of the musicians it still holds:
+    # the deleted musician's name is gone, the band holding another musician
+    # keeps that musician's name. No group of the band never holding the
+    # musician, nor of the unregistered musician.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.band:{quartet.pk}": [
+                NormalizedDocument(
+                    text="Quartet\n\nBen",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=quartet.pk,
+                    title="Quartet",
+                ),
+            ],
+            f"testapp.band:{trio.pk}": [
+                NormalizedDocument(
+                    text="Trio",
+                    source_app_label="testapp",
+                    source_model="band",
+                    source_pk=trio.pk,
+                    title="Trio",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_a_mentor_to_a_person_replaces_only_the_mentors_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
