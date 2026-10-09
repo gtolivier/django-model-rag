@@ -7131,6 +7131,72 @@ def test_adding_a_friend_to_a_friend_replaces_the_groups_of_both_friends(
 
 
 @pytest.mark.django_db
+def test_clearing_the_friends_of_a_friend_replaces_its_and_its_former_friends_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_friends_following_their_friends()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed. Ada
+    # has two friends, Bob and Carol, so that each one's replacement shows.
+    # Bob has another friend, Dan, who stays linked to it, so that Bob's group
+    # shows what is still read. Dan's group lists Bob, whose name the clear
+    # below does not change: Dan's group is not replaced.
+    dan = Friend.objects.create(name="Dan")
+    bob = Friend.objects.create(name="Bob")
+    bob.friends.add(dan)
+    carol = Friend.objects.create(name="Carol")
+    ada = Friend.objects.create(name="Ada")
+    ada.friends.add(bob, carol)
+
+    # Cleared from Ada's side: Django deletes the links and the links back,
+    # yet sends m2m_changed with Ada as its instance and no primary keys at
+    # all, so its former friends can only be found before the clear. No row is
+    # saved again: the clear deletes only Ada's links to its friends.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.friends.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of Ada and of both its former friends as committed, none
+    # listing a friend the clear unlinked, Bob's still listing Dan, and no
+    # group of the friend the clear does not change.
+    assert _received_groups(built_outputs) == {
+        f"testapp.friend:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.friend:{bob.pk}": [
+            NormalizedDocument(
+                text="Bob\n\nDan",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=bob.pk,
+                title="Bob",
+            ),
+        ],
+        f"testapp.friend:{carol.pk}": [
+            NormalizedDocument(
+                text="Carol",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=carol.pk,
+                title="Carol",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_adding_a_topic_to_a_course_neither_side_following_the_link_defers_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
