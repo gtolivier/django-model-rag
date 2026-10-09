@@ -975,21 +975,70 @@ or a `GenericRelation` in `follow`.
       Ada and Bob, and a clear those of Ada's former friends (test bench:
       `Friend`). A hand-sent `m2m_changed` whose sender is no many-to-many's
       through model is ignored.
-  - [ ] **Many-to-many follow-ups**, from the review of #43:
-    - **A multi-table child on the `model` side.** The rows `pk_set` names
-      are looked up only if `model` itself is registered. With MasterClass
-      registered following `topics` and Course not,
-      `woodworking.courses.add(masterclass)` sends `model=Course`, and
-      MasterClass's group is never replaced. The instance side already
-      includes the registered parents; the `model` side needs the
-      registered children.
-    - **Matched by name, not by relation.** A side counts as followed when
-      its lookup name matches, whatever relation carries it. A multi-table
-      child declaring its own `tools` many-to-many, while its parent
-      follows a reverse foreign key also named `tools`, schedules a
-      needless resync of the parent on `child.tools.add(x)`. A needless
-      replace, never a stale group. Comparing the model the lookup reaches
-      too, or the relations by identity, would fix it.
+  - [x] **Many-to-many follow-ups (#45)**, from the review of #43:
+    - **A multi-table child on the `model` side, fixed.** The rows
+      `pk_set` names were looked up only if `model` itself was registered:
+      with MasterClass registered following `topics` and Course not,
+      `woodworking.courses.add(masterclass)` left MasterClass's group
+      stale, and so did a remove or a clear. Every registered model whose
+      rows are `model` rows is now scheduled, plain Course keys being
+      filtered out at the commit by the child's own queryset. Comparing
+      through `concrete_model_of(model)` keeps a many-to-many declared to
+      a proxy working (test bench: `Subject`, `SubjectProxy`,
+      `Curriculum`), a regression the review of #45 caught.
+    - **Band / Engagement saves and deletes, tested.** Saving or deleting
+      a band or a musician, from both sides: four tests, all green as
+      written.
+    - **Known limits, left by #45** (its review and CodeRabbit's): a
+      stale group or a needless resync, never an error raised.
+      - A multi-table child with a primary key of its own, on the `model`
+        side, receives its parent's keys: its group is not replaced on an
+        add, a remove or a clear.
+      - On a clear from the side of such a child, the fallback lookup
+        is built with the wrong model.
+      - The output check before the write ignores the subclasses: if only
+        MasterClass follows the changed link, a misconfigured output is
+        reported at the commit only, where the failure is logged.
+      - A clear remembers every parent row, not only the child's, at the
+        cost of one query; the commit filters them out.
+      - **Matched by name, not by relation**, from #43: a side counts as
+        followed when its lookup name matches, whatever relation carries
+        it. A multi-table child declaring its own `tools` many-to-many,
+        while its parent follows a reverse foreign key also named
+        `tools`, schedules a needless resync of the parent on
+        `child.tools.add(x)`.
+  - [ ] **A supported scope, written in the README**, before any new 11e
+    work. List the model shapes (plain, proxy, multi-table with a shared or
+    an own primary key) and the relations (forward and reverse foreign
+    keys, one-to-ones, many-to-many with or without `through=`,
+    `to_field`) the signal sync guarantees, on which writes. A case
+    outside it is a documented limit, not a bug; a full resync is the
+    safety net. A review finding then blocks a merge only when it is a
+    regression the PR introduced or an approved behavior implemented
+    wrongly; anything else goes to this ROADMAP as a known limit. The
+    coverage matrix maps the tests; it is not a list of work to do.
+  - [ ] **One mechanism for many-to-many links.** The patches above come
+    from one cause: `sync_changed_relation` decides who follows `model`'s
+    side by hand — comparing models, translating `to_field` keys, treating
+    subclasses apart — where saves and deletes ask each registered model,
+    through its own followed lookup, which of its rows the write reaches.
+    Do the same for many-to-many links:
+    - compute once per signal the registered models with a followed
+      lookup through the changed link, `concrete_model_of` included;
+    - on an add or a remove, look up the rows reaching `pk_set` through
+      the link's target field; at `pre_clear`, those reaching the
+      instance, remembered like the followers before a delete;
+    - feed the output check before the write from the same list.
+
+    It would remove `_primary_keys_named`, `_registered_lookups_named`,
+    `_registered_subclasses_lookups`, `_registered_subclasses_following`
+    and the clear's special case, and lift every known limit above —
+    probably the match by name too. Cost: one query per follower model on
+    an add, where the plain case costs none today. Tests first, red today:
+    a child with a primary key of its own on an add and on a clear, a
+    clear from such a child's side, and a misconfigured output with only a
+    subclass following. Then one deliberately large green, the existing
+    tests as the safety net.
   - [x] **Parametrize the signal tests** by declaration × relation ×
     write, in place of one hand-written test per combination. Two
     parametrized tests, each checking the exact list of replace calls,
