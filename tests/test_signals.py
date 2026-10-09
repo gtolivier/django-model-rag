@@ -5944,6 +5944,57 @@ def test_adding_a_course_child_to_a_topic_replaces_the_group_of_the_child_follow
     ]
 
 
+@pytest.mark.django_db
+def test_removing_a_course_child_from_a_topic_replaces_the_group_of_the_child(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and this add never run, so only the remove below is observed. The
+    # master class covers two topics, so that its group keeps the one the
+    # remove leaves. No row is saved again: the remove deletes only the link
+    # between the master class and the removed topic.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+    masterclass.topics.add(woodworking, carving)
+
+    # Removed from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and the master class's Course row
+    # among the primary keys it names.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.remove(masterclass)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The MasterClass's group as committed: its own title and instructor, then
+    # the title and summary of the topic it keeps, and none of the removed one.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.masterclass:{masterclass.pk}": [
+                NormalizedDocument(
+                    text=(
+                        "Woodworking masterclass\n\nAda"
+                        "\n\nCarving\n\nKnives and gouges."
+                    ),
+                    source_app_label="testapp",
+                    source_model="masterclass",
+                    source_pk=masterclass.pk,
+                    title="Woodworking masterclass",
+                ),
+            ],
+        }
+    ]
+
+
 class _FailedClearError(Exception):
     """Raised by a receiver of pre_clear, to make a clear fail before its DELETE."""
 
