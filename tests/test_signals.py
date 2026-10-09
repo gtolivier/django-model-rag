@@ -102,16 +102,6 @@ def _received_groups(
     }
 
 
-def _received_groups_but(
-    built_outputs: list[TrackedRecordingOutput], left_out_source_key: str
-) -> dict[str, list[NormalizedDocument]]:
-    """Every group received, merged into one mapping, but the group of the source
-    left out of the comparison, whether it was received or not."""
-    received_groups = _received_groups(built_outputs)
-    received_groups.pop(left_out_source_key, None)
-    return received_groups
-
-
 def _package_log_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     """The records captured from the package's logger, and only those."""
     return [record for record in caplog.records if record.name == PACKAGE_LOGGER]
@@ -6394,31 +6384,35 @@ def test_setting_the_musicians_of_a_band_replaces_the_groups_of_those_removed_an
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # Merged across replace calls: set() sends a remove then an add, and how
-    # the groups are batched is not what this test is about. The removed
-    # musician's group without the band's name, keeping its other band's; the
-    # added musician's group with it. No group of the musician kept in the
-    # band.
-    assert _received_groups(built_outputs) == {
-        f"testapp.musician:{ada.pk}": [
-            NormalizedDocument(
-                text="Ada\n\nTrio",
-                source_app_label="testapp",
-                source_model="musician",
-                source_pk=ada.pk,
-                title="Ada",
-            ),
-        ],
-        f"testapp.musician:{cleo.pk}": [
-            NormalizedDocument(
-                text="Cleo\n\nQuartet",
-                source_app_label="testapp",
-                source_model="musician",
-                source_pk=cleo.pk,
-                title="Cleo",
-            ),
-        ],
-    }
+    # set() sends a remove then an add, each replacing its own groups, so the
+    # calls are pinned exactly: batching them into one call is a later step's
+    # work, which will change this expected value. The removed musician's
+    # group without the band's name, keeping its other band's; the added
+    # musician's group with it. No group of the musician kept in the band.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        },
+        {
+            f"testapp.musician:{cleo.pk}": [
+                NormalizedDocument(
+                    text="Cleo\n\nQuartet",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=cleo.pk,
+                    title="Cleo",
+                ),
+            ],
+        },
+    ]
 
 
 @pytest.mark.django_db
@@ -6456,22 +6450,37 @@ def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # Merged across replace calls: set() sends a remove then an add, and how
-    # the groups are batched is not what this test is about. The Musician's
-    # group as committed: the quartet's name is gone, its own name, then the
-    # names of the band it was kept in and the band it was added to are left.
-    # No group of the musician left in the quartet.
-    assert _received_groups(built_outputs) == {
-        f"testapp.musician:{ada.pk}": [
-            NormalizedDocument(
-                text="Ada\n\nTrio\n\nDuo",
-                source_app_label="testapp",
-                source_model="musician",
-                source_pk=ada.pk,
-                title="Ada",
-            ),
-        ],
-    }
+    # set() sends a remove then an add, each replacing its own groups, so the
+    # calls are pinned exactly: the musician's group is replaced twice,
+    # identically. Batching them into one call is a later step's work, which
+    # will change this expected value. The musician's group as committed: the
+    # quartet's name is gone, its own name, then the names of the band it was
+    # kept in and the band it was added to are left. No group of the musician
+    # left in the quartet.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio\n\nDuo",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        },
+        {
+            f"testapp.musician:{ada.pk}": [
+                NormalizedDocument(
+                    text="Ada\n\nTrio\n\nDuo",
+                    source_app_label="testapp",
+                    source_model="musician",
+                    source_pk=ada.pk,
+                    title="Ada",
+                ),
+            ],
+        },
+    ]
 
 
 @pytest.mark.django_db
@@ -6508,10 +6517,12 @@ def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
         assert _replaced(built_outputs) == []
 
     # Grace's group as committed, with Ada's name added after its other
-    # mentee's, and no group of the person not mentoring Ada. Ada's own group,
-    # which follows its mentees, not its mentors, is left out of the
-    # comparison: the add leaves its text unchanged.
-    assert _received_groups_but(built_outputs, f"testapp.person:{ada.pk}") == {
+    # mentee's, and no group of the person not mentoring Ada. Ada's own
+    # group follows its mentees, not its mentors, so the add does not change
+    # its text; it is replaced anyway, with the same text, because Person
+    # sits on both sides of the many-to-many: a needless replace, pinned
+    # here so that removing it shows in this test.
+    assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
                 text="Grace\n\nAlan\n\nAda",
@@ -6519,6 +6530,15 @@ def test_adding_a_mentor_to_a_person_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
@@ -6555,10 +6575,12 @@ def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
         assert _replaced(built_outputs) == []
 
     # Grace's group as committed, without Ada's name, its other mentee kept,
-    # and no group of the mentor Ada keeps. Ada's own group, which follows its
-    # mentees, not its mentors, is left out of the comparison: the remove
-    # leaves its text unchanged.
-    assert _received_groups_but(built_outputs, f"testapp.person:{ada.pk}") == {
+    # and no group of the mentor Ada keeps. Ada's own group follows its
+    # mentees, not its mentors, so the remove does not change its text; it
+    # is replaced anyway, with the same text, because Person sits on both
+    # sides of the many-to-many: a needless replace, pinned here so that
+    # removing it shows in this test.
+    assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
                 text="Grace\n\nAlan",
@@ -6566,6 +6588,15 @@ def test_removing_a_mentor_from_a_person_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
@@ -6606,10 +6637,12 @@ def test_adding_a_mentee_to_a_mentor_replaces_the_mentors_group(
         assert _replaced(built_outputs) == []
 
     # Grace's group as committed, with Ada's name added after its other
-    # mentee's, and no group of the person not mentoring Ada. Ada's own group,
-    # which follows its mentees, not its mentors, is left out of the
-    # comparison: the add leaves its text unchanged.
-    assert _received_groups_but(built_outputs, f"testapp.person:{ada.pk}") == {
+    # mentee's, and no group of the person not mentoring Ada. Ada's own
+    # group follows its mentees, not its mentors, so the add does not change
+    # its text; it is replaced anyway, with the same text, because Person
+    # sits on both sides of the many-to-many: a needless replace, pinned
+    # here so that removing it shows in this test.
+    assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
                 text="Grace\n\nAlan\n\nAda",
@@ -6617,6 +6650,15 @@ def test_adding_a_mentee_to_a_mentor_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
@@ -6654,10 +6696,12 @@ def test_removing_a_mentee_from_a_mentor_replaces_the_mentors_group(
         assert _replaced(built_outputs) == []
 
     # Grace's group as committed, without Ada's name, its other mentee kept,
-    # and no group of the mentor Ada keeps. Ada's own group, which follows its
-    # mentees, not its mentors, is left out of the comparison: the remove
-    # leaves its text unchanged.
-    assert _received_groups_but(built_outputs, f"testapp.person:{ada.pk}") == {
+    # and no group of the mentor Ada keeps. Ada's own group follows its
+    # mentees, not its mentors, so the remove does not change its text; it
+    # is replaced anyway, with the same text, because Person sits on both
+    # sides of the many-to-many: a needless replace, pinned here so that
+    # removing it shows in this test.
+    assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
                 text="Grace\n\nAlan",
@@ -6665,6 +6709,15 @@ def test_removing_a_mentee_from_a_mentor_replaces_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
@@ -6705,11 +6758,13 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
         # Nothing may reach the output before the commit.
         assert _replaced(built_outputs) == []
 
-    # The groups of both former mentors as committed, each without Ada's name,
-    # and no group of the person that never mentored it. Ada's own group, which
-    # follows its mentees, not its mentors, is left out of the comparison: the
-    # clear leaves its text unchanged.
-    assert _received_groups_but(built_outputs, f"testapp.person:{ada.pk}") == {
+    # The groups of both former mentors as committed, each without Ada's
+    # name, and no group of the person that never mentored it. Ada's own
+    # group follows its mentees, not its mentors, so the clear does not
+    # change its text; it is replaced anyway, with the same text, because
+    # Person sits on both sides of the many-to-many: a needless replace,
+    # pinned here so that removing it shows in this test.
+    assert _received_groups(built_outputs) == {
         f"testapp.person:{grace.pk}": [
             NormalizedDocument(
                 text="Grace\n\nAlan",
@@ -6726,6 +6781,15 @@ def test_clearing_the_mentors_of_a_person_replaces_the_group_of_each_former_ment
                 source_model="person",
                 source_pk=linus.pk,
                 title="Linus",
+            ),
+        ],
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
             ),
         ],
     }
