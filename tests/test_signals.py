@@ -5995,6 +5995,71 @@ def test_removing_a_course_child_from_a_topic_replaces_the_group_of_the_child(
     ]
 
 
+@pytest.mark.django_db
+def test_clearing_the_courses_of_a_topic_replaces_the_group_of_each_child_following_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Course itself is not registered: only its child MasterClass is.
+    _register_masterclasses_following_their_topics()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Two master classes cover the topic: one covers another topic too, so
+    # that its group keeps the one left, the other covers it alone.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    masterclass = MasterClass.objects.create(
+        title="Woodworking masterclass", instructor="Ada"
+    )
+    masterclass.topics.add(woodworking, carving)
+    joinery = MasterClass.objects.create(title="Joinery masterclass", instructor="Bo")
+    joinery.topics.add(woodworking)
+    # A master class not covering the topic: the clear below does not change
+    # its group.
+    whittling = MasterClass.objects.create(
+        title="Whittling masterclass", instructor="Cy"
+    )
+    whittling.topics.add(carving)
+
+    # Cleared from the topic's side: Django sends m2m_changed with the topic as
+    # its instance, Course as its model, and no primary keys at all, so the
+    # master classes covering it can only be found before the clear. No row is
+    # saved again: the clear deletes only the links of the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The groups of both master classes as committed, each without the topic's
+    # text, and no group of the master class that never covered it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.masterclass:{masterclass.pk}": [
+            NormalizedDocument(
+                text=(
+                    "Woodworking masterclass\n\nAda\n\nCarving\n\nKnives and gouges."
+                ),
+                source_app_label="testapp",
+                source_model="masterclass",
+                source_pk=masterclass.pk,
+                title="Woodworking masterclass",
+            ),
+        ],
+        f"testapp.masterclass:{joinery.pk}": [
+            NormalizedDocument(
+                text="Joinery masterclass\n\nBo",
+                source_app_label="testapp",
+                source_model="masterclass",
+                source_pk=joinery.pk,
+                title="Joinery masterclass",
+            ),
+        ],
+    }
+
+
 class _FailedClearError(Exception):
     """Raised by a receiver of pre_clear, to make a clear fail before its DELETE."""
 
