@@ -359,6 +359,9 @@ def _link_relations(
         for field in declaring_model._meta.many_to_many
         if field.remote_field.through is through
     )
+    if field.remote_field.symmetrical:
+        # A symmetrical many-to-many reads its links from both sides by the field.
+        return field, field
     return (field.remote_field, field) if reverse else (field, field.remote_field)
 
 
