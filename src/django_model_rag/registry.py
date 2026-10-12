@@ -319,6 +319,17 @@ def _is_many_to_many(
     )
 
 
+def _is_generic_relation(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> "TypeGuard[ForeignObject[Any, Any]]":
+    """Tell whether ``relation`` is a generic relation.
+
+    A generic relation is the forward ForeignObject to many objects; importing
+    GenericRelation here would load contenttypes too early.
+    """
+    return isinstance(relation, ForeignObject) and relation.one_to_many
+
+
 def _require_forward_relations(
     model: type[Model], name: str, related: type[Model], segments: list[str]
 ) -> None:
@@ -845,10 +856,11 @@ class Registry:
         """List the models ``model`` reads through relations, one or a chain.
 
         Those are the models of the foreign keys and many-to-many relations,
-        forward or reverse, it follows, the models its lookup paths and
-        dependencies reach through their leading foreign keys, and the models
-        of the many-to-many relations, forward or reverse, it depends on. Each
-        is paired with the lookup, from ``model``, that reaches it.
+        forward or reverse, and of the generic relations it follows, the models
+        its lookup paths and dependencies reach through their leading foreign
+        keys, and the models of the many-to-many relations, forward or
+        reverse, it depends on. Each is paired with the lookup, from
+        ``model``, that reaches it.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -858,9 +870,7 @@ class Registry:
             for relation in self._followed_relations(model)
             if _is_followed_like_a_foreign_key(relation)
             or _is_many_to_many(relation)
-            # A generic relation is the forward ForeignObject to many objects;
-            # importing GenericRelation here would load contenttypes too early.
-            or (isinstance(relation, ForeignObject) and relation.one_to_many)
+            or _is_generic_relation(relation)
         ]
         read_through_paths = [
             reached
