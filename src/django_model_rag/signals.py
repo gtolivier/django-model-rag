@@ -299,7 +299,11 @@ def sync_changed_relation(
     if not is_symmetrical:
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
     followed_source_key = _followed_source_key(type(instance), instance)
-    if is_symmetrical or not rag.is_registered(type(instance)):
+    if (
+        is_symmetrical
+        or not rag.is_registered(type(instance))
+        or model is not type(instance)
+    ):
         _schedule_follower_replacements(
             _every_row_reading(type(instance)), followed_source_key
         )
