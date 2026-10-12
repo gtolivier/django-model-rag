@@ -1122,6 +1122,56 @@ def test_a_product_in_the_middle_of_an_offer_lookup_path_saved_replaces_every_of
 
 
 @pytest.mark.django_db
+def test_a_page_a_plugin_extractor_depends_on_saved_replaces_every_plugin(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the TextPlugin is registered, with a custom extractor whose
+    # depends_on names its page: Page itself is not registered.
+    _register_plugins_by_their_page_title()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the page's save below is observed. One plugin is on the
+    # page saved, the other on another page.
+    workshop = _create_the_workshop_page()
+    shipping = _create_a_plugin_on(workshop, body=_SIBLING_PLUGIN_BODY)
+    about = _create_the_about_page()
+    chairs = _create_a_plugin_on(about)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        about.title = "Who we are"
+        about.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every plugin is replaced, as committed, the one on
+    # the other page included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.textplugin:{shipping.pk}": [
+            NormalizedDocument(
+                text="Our workshop: We ship worldwide.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=shipping.pk,
+            ),
+        ],
+        f"testapp.textplugin:{chairs.pk}": [
+            NormalizedDocument(
+                text="Who we are: We build chairs by hand.",
+                source_app_label="testapp",
+                source_model="textplugin",
+                source_pk=chairs.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
