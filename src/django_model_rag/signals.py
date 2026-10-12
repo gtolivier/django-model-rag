@@ -261,10 +261,10 @@ def sync_changed_relation(
     the many-to-many links two different models, or the instance's model is
     not registered, every row of a registered model reading it by a lookup, or
     following it through a to_field foreign key, is replaced too, whichever
-    row it reaches. So is it on a symmetrical
-    many-to-many, in place of the instance's groups: both sides read the links
-    through the relation, so every row reading it is resynced, the instance's
-    own included.
+    row it reaches. So is it, in place of the instance's groups, on a
+    symmetrical many-to-many, or when registered models follow both sides of
+    the links: both sides read the links through the relation, so every row
+    reading it is resynced, the instance's own included.
     """
     if not _signals_enabled():
         return
@@ -299,12 +299,12 @@ def sync_changed_relation(
     is_symmetrical = instance_side is model_side
     followers_of_model = _registered_subclasses_following(model, model_link_lookup)
     follows_both_sides = bool(following_models and followers_of_model)
-    if not is_symmetrical and not follows_both_sides:
+    resyncs_readers_instead = is_symmetrical or follows_both_sides
+    if not resyncs_readers_instead:
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
     followed_source_key = _followed_source_key(type(instance), instance)
     if (
-        is_symmetrical
-        or follows_both_sides
+        resyncs_readers_instead
         or not rag.is_registered(type(instance))
         or model is not type(instance)
     ):
