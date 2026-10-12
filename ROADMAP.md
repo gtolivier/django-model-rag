@@ -253,12 +253,10 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-What is left, in the order planned: 11e, which brings the ways of finding
-followers down to one before 12a rewires them. Then 12a, which rewires
-every receiver, the `m2m_changed` one of 11d included. Then 12b, which
-needs the `MODEL_RAG_SYNC` setting of 12a. 10c stays postponed, 11c-quater and
-11d-bis are not planned, and neither is a path past a reverse one-to-one
-or a `GenericRelation` in `follow`.
+What is left, in the order planned: 11f, which narrows the sync and closes
+11e. Then 12a, which rewires every receiver, the `m2m_changed` one of 11d
+included. Then 12b, which needs the `MODEL_RAG_SYNC` setting of 12a. 10c is
+dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
 
 - [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
   over every registered model, in registration order, or over the models it
@@ -425,7 +423,11 @@ or a `GenericRelation` in `follow`.
     never extracted;
   - with a replica router, the primary keys read again come from the
     replica, which may not have the new instance yet (see 10c).
-- [ ] **10c. Signals on several databases** — postponed: no project needs
+- **10c. Signals on several databases** — dropped with 11f's narrower
+  scope, and kept as a known limit, which the README's supported scope
+  states: the signals assume one database. With several, a project turns
+  them off and runs `sync_model_rag`. The analysis below stays for a
+  project that needs it one day. No project needs
   several databases yet, and nothing here depends on it. The signals follow
   the default database only: `transaction.on_commit` is attached to it, and
   the commit callback reloads from it, through the database router. With a
@@ -821,7 +823,8 @@ or a `GenericRelation` in `follow`.
   would fix it, but a `remove()` would then resync twice: once through
   `m2m_changed`, once through the deletes of its join rows, which the
   listeners would make Django send.
-- [ ] **11e. One way to find the rows following a written row.** Features
+- [x] **11e. One way to find the rows following a written row** — closed
+  by 11f, which drops its remaining steps. Features
   11a to 11d answered one question — which registered rows read the row
   being written, before the write and at the commit — in three ways, one
   per kind of relation, and solved the before/after problem once in each:
@@ -1007,17 +1010,15 @@ or a `GenericRelation` in `follow`.
         while its parent follows a reverse foreign key also named
         `tools`, schedules a needless resync of the parent on
         `child.tools.add(x)`.
-  - [ ] **A supported scope, written in the README**, before any new 11e
-    work. List the model shapes (plain, proxy, multi-table with a shared or
-    an own primary key) and the relations (forward and reverse foreign
-    keys, one-to-ones, many-to-many with or without `through=`,
-    `to_field`) the signal sync guarantees, on which writes. A case
-    outside it is a documented limit, not a bug; a full resync is the
-    safety net. A review finding then blocks a merge only when it is a
-    regression the PR introduced or an approved behavior implemented
-    wrongly; anything else goes to this ROADMAP as a known limit. The
-    coverage matrix maps the tests; it is not a list of work to do.
-  - [ ] **One mechanism for many-to-many links.** The patches above come
+  - **A supported scope, written in the README** — moved to 11f, which
+    narrows that scope first. The rule it carried stays: a review finding
+    blocks a merge only when it is a regression the PR introduced or an
+    approved behavior implemented wrongly; anything else goes to this
+    ROADMAP as a known limit. The coverage matrix maps the tests; it is
+    not a list of work to do.
+  - **Dropped for 11f: one mechanism for many-to-many links.** 11f
+    resyncs the models on the other side of a link instead of looking
+    up its rows. The plan, kept for the record: the patches above come
     from one cause: `sync_changed_relation` decides who follows `model`'s
     side by hand — comparing models, translating `to_field` keys, treating
     subclasses apart — where saves and deletes ask each registered model,
@@ -1065,8 +1066,115 @@ or a `GenericRelation` in `follow`.
       the queries counted, proxies and multi-table children, many-to-many
       links, `get_queryset()`, a failing output, a null key, a row saved
       unchanged, a delete reaching two rows at once.
-  - [ ] **Revisit the limits this may lift**: a lookup path past a reverse
-    one-to-one, a `GenericRelation` in `follow`, 11c-quater.
+  - **Dropped for 11f: revisit the limits this may lift** (a lookup path
+    past a reverse one-to-one, a `GenericRelation` in `follow`,
+    11c-quater). 11f lifts them all.
+- [ ] **11f. A narrower signal sync: exact for an instance and its
+  children, a model resync for the rest.** Design note, to approve before
+  any code.
+
+  **Why.** 11a to 11e answer one question exactly, for every relation and
+  model shape: which registered rows read the row being written. Each shape
+  needed handling of its own — before and after the write, `to_field`,
+  multi-column relations, both sides of a many-to-many, proxies, multi-table
+  children with a primary key of their own, what a clear must remember —
+  and a cost promise per case. Each review found the next shape: 13 pull
+  requests on 11e alone, and `signals.py` at 831 lines. The comparable
+  packages answer a narrower question: django-haystack's
+  `RealtimeSignalProcessor` resyncs the written instance only;
+  django-elasticsearch-dsl leaves related writes to the project
+  (`related_models`, `get_instances_from_related`). 11f keeps the exact
+  answer where it is simple and common, and asks a coarser question
+  everywhere else: which registered models read this model, computed once
+  at registration.
+
+  **The rule**, three cases:
+  1. **The instance itself**, unchanged. Saving a registered instance
+     replaces its group; deleting it empties it. Through a proxy, and for a
+     multi-table child, with a shared or an own primary key.
+  2. **Its children, exact**, unchanged. A row holding a foreign key or
+     one-to-one to the primary key of a registered model that follows or
+     depends on the reverse relation — a text plugin of a page registered
+     with `follow=["text_plugins"]`. Saving or deleting it replaces its
+     parent's group; moving it, both parents'. This is the case the package
+     exists for: content scattered over related models.
+  3. **Everything else, a model resync.** A write to a model M that a
+     registered model R reads any other way — a forward foreign key or
+     one-to-one in `follow`, a link of a lookup path, a path in
+     `depends_on`, a many-to-many from either side (`add()`, `remove()`,
+     `clear()`, `set()`, and rows of a custom `through` model written
+     directly), a `GenericRelation`, a reverse relation through a
+     `to_field` or several columns — schedules for the commit a
+     `run_queryset` over every row of R, through R's own queryset. Once per
+     R and per transaction, however many writes. No prune: a deleted row of
+     R is emptied by its own delete (case 1). On a many-to-many, the
+     instance whose links change (`m2m_changed`'s `instance`) is replaced
+     exactly when its model follows that side, as for case 1; only the
+     other side's readers get a model resync. A write that sends no signal
+     (`QuerySet.update()`, `bulk_create()`, raw SQL) schedules nothing on
+     its own, as in cases 1 and 2: it is covered only when a write that
+     does send one, in the same transaction, schedules the resync — the
+     case of #26. Otherwise `sync_model_rag` repairs it.
+
+  **An opt-out per registration**, for a large R read through a model
+  written often: `resync_on_related_writes=False` on `register()` and
+  `register_extractor()` (name to settle in the feature) turns case 3 off
+  for R. Cases 1 and 2 still apply; the project resyncs R itself
+  (`sync_model_rag`, a receiver of its own, later 12b's signal). No other
+  hook: a project with a case of its own writes a receiver that calls
+  `run_instance()` or `run_queryset()`.
+
+  **Cost.** Case 3 re-extracts all of R and hands it to the output in
+  batches of 500: its cost grows with R's table, not with the write.
+  django-minimal-rag re-embeds only the chunks whose text changed (it
+  reuses stored vectors by chunk text) but rewrites the rows. This suits
+  the tables a forward relation usually points to — categories, authors,
+  venues, written rarely — and the opt-out covers the rest. The work runs
+  in the committing process; moving it to a task queue (`django.tasks`)
+  belongs to 12b. Saving a category now resyncs every product, where it
+  resyncs only its own products today. The README's cost promises per
+  relation go, except for cases 1 and 2.
+
+  **What it removes**, estimated: `signals.py` from 831 lines to about
+  300 (the many-to-many block, the lookups before and at the commit, the
+  `to_field` and multi-column conversions, what a clear remembers);
+  the lookups of `registry.py`, replaced by a table of the models each
+  registration reads; about 150 of the 235 tests of `test_signals.py` (the
+  40 cases of the "path ends on" test, about 60 many-to-many tests, the
+  `to_field` and multi-column cases of the "holding the key" test, the
+  query counts), and about 20 test bench models; the README's sync section
+  from about 270 lines to about 100. It lifts 11c-quater, 11d-bis, a
+  `GenericRelation` in `follow`, a lookup path past a reverse one-to-one,
+  and every known limit #45 left.
+
+  Steps, each one pull request:
+  - [ ] **This note.**
+  - [ ] **Model resync**, with `/tdd:feature`. Its first commit removes
+    the tests that pin the exact lookups of case 3, listed in the pull
+    request, the suite still green: removing the code first would leave
+    `main` with no sync through forward relations. The tests of #26 stay,
+    adapted if they need to be: rows attached before the commit by a write
+    that sends no signal (`bulk_create()`, `update()`) are resynced. A
+    resync run at the commit answers it by construction. Then one cycle per
+    behavior — among them: a write to M resyncs every row of R; once per
+    transaction, for several writes and several models; nothing on a
+    rollback, on a rolled-back savepoint, or with signals off; the
+    opt-out; a many-to-many change, exact on the instance's side; a row of
+    a custom through model written directly; a failing output logged. The
+    refactor steps remove the dead code. The test bench models only the
+    removed tests used go too, and the test bench migrations are
+    regenerated as one (`makemigrations`).
+  - [ ] **A supported scope, written in the README**: the three cases, the
+    shapes cases 1 and 2 cover, the cost of case 3 and its opt-out, the
+    full resync as the safety net, and one database (10c, dropped).
+  - [ ] **The remaining tests, checked against that README.** A test stays
+    if it pins a promise the README makes, or a regression that happened.
+    Candidates to remove, listed and approved before any change: TDD steps
+    a later test covers entirely, tests of what Python or Django
+    guarantees (a frozen dataclass), shapes outside the scope, and the
+    column-loading promises (the one-query promises stay). The
+    error-message tests are grouped into parametrized tables. One pull
+    request touching tests only.
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `m2m_changed` receiver of 11d and the `post_delete` listeners
@@ -1083,7 +1191,9 @@ or a `GenericRelation` in `follow`.
   check — and the project syncs when it wants (a task queue, a batch). Adds
   a public `SyncPipeline.run_pks(model, pks)`, which sends an empty group
   for a key whose row is gone. Settles the batching left open by 10 and
-  11a.
+  11a. Since 11f, the signal also says when a whole model is to resync
+  (case 3 of 11f): no keys for that model, which the project hands to
+  `run_queryset()`. A task queue is then where case 3's cost goes.
 
 ## Not planned here
 
