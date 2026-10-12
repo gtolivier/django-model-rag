@@ -4676,6 +4676,39 @@ def test_a_topic_added_to_a_course_in_a_rolled_back_transaction_sends_nothing(
     assert _replaced(built_outputs) == []
 
 
+@pytest.mark.django_db(transaction=True)
+def test_a_category_an_offer_reads_saved_in_a_rolled_back_transaction_resyncs_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Created before Offer is registered: in autocommit (transaction=True),
+    # their own commit callbacks would otherwise run, and send the offers'
+    # groups.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    Offer.objects.create(title="Lamp sale", product=lamp)
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: a save of
+    # the category schedules a resync of every offer for the commit.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+
+    # A real transaction (transaction=True), so that leaving the atomic block
+    # on an exception rolls it back rather than a savepoint of the test's own.
+    with pytest.raises(_RolledBackError), transaction.atomic():
+        lighting.name = "Lamps"
+        lighting.save()
+        raise _RolledBackError
+
+    # No offer's group, nor any other: no replace call at all.
+    assert _replaced(built_outputs) == []
+
+
 class _ExtractionError(Exception):
     """Raised by an extractor that fails on the instance it is given."""
 
