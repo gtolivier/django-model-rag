@@ -195,9 +195,10 @@ def sync_saved_instance(
     On an update, the followers from before the save were found at pre_save,
     and those of the row as saved are only found by a lookup at the commit. On
     a create, the followers the new row points to are read here, and looked up
-    again at the commit if there are any, or if ``sender`` is the through model
-    of a followed many-to-many. The output configuration was checked
-    before the save, by check_output_before_save.
+    again at the commit if there are any, if a registered model reads
+    ``sender`` by a lookup, or if ``sender`` is the through model of a followed
+    many-to-many. The output configuration was checked before the save, by
+    check_output_before_save.
     """
     if raw or not _signals_enabled():
         return
@@ -207,33 +208,32 @@ def sync_saved_instance(
     # On an update, only the followers from before the save: those the row as
     # saved points to are left to the commit's lookup.
     followers_at_save = instance.__dict__.pop(_PREVIOUS_FOLLOWERS_ATTRIBUTE, [])
-    is_followed = _is_followed(sender)
-    # On a create, the followers the new row points to are read from the
-    # instance, with no query in the common case: whether there are any decides
-    # if the commit looks them up again. At post_save the instance is the row
-    # as saved: a change left unsaved in memory afterwards is not followed.
-    if created:
-        followers_at_save = _reverse_followers(sender, instance) + followers_at_save
-    # A row just created has no follower pointing to it at its save, and
-    # costs the commit no lookup unless it points to a follower or links rows
-    # of a followed many-to-many.
-    if (
-        followers_at_save
-        or not created
-        or _is_through_of_followed(sender)
-        or _is_followed_through_lookups(sender)
-    ) and is_followed:
-        # Rows may also be attached to it, or it to other rows, before the
-        # commit, by a write that sends no signal: its followers are looked up
-        # then.
-        _resync_followers_at_commit(
-            _followed_source_key(sender, instance),
-            partial(_followers_as_committed, sender, instance, followers_at_save),
-        )
+    # A model followed by nothing has no follower before the save or after it.
+    if not _is_followed(sender):
         return
 
-    _schedule_follower_replacements(
-        followers_at_save, _followed_source_key(sender, instance)
+    # On a create, the followers the new row points to are read from the
+    # instance, with no query in the common case. At post_save the instance is
+    # the row as saved: a change left unsaved in memory afterwards is not
+    # followed.
+    if created:
+        followers_at_save = _reverse_followers(sender, instance) + followers_at_save
+        # A row just created has no follower pointing to it at its save.
+        # Followed only in reverse, it costs the commit no lookup unless it
+        # points to a follower; read by a lookup, or linking rows of a followed
+        # many-to-many, it may be reached by rows written since.
+        if not (
+            followers_at_save
+            or _is_followed_through_lookups(sender)
+            or _is_through_of_followed(sender)
+        ):
+            return
+
+    # Rows may also be attached to it, or it to other rows, before the commit,
+    # by a write that sends no signal: its followers are looked up then.
+    _resync_followers_at_commit(
+        _followed_source_key(sender, instance),
+        partial(_followers_as_committed, sender, instance, followers_at_save),
     )
 
 
