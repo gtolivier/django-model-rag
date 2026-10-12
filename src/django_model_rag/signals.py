@@ -42,6 +42,8 @@ _PKS_PER_QUERY = 500
 _Follower: TypeAlias = tuple[type[Model], Any]
 # a relation one side of a many-to-many reads its links with
 _LinkRelation: TypeAlias = "ManyToManyField[Any, Any] | ManyToManyRel"
+# the primary keys of every row of each registered model listed so far
+_ListedRows: TypeAlias = dict[type[Model], list[Any]]
 
 logger = logging.getLogger("django_model_rag")
 
@@ -51,7 +53,7 @@ _through_being_unlinked: ContextVar[type[Model] | None] = ContextVar(
     "model_rag_through_being_unlinked", default=None
 )
 # The rows of each model listed so far by the callbacks of the commit running.
-_rows_listed_at_commit: ContextVar[dict[type[Model], list[Any]] | None] = ContextVar(
+_rows_listed_at_commit: ContextVar[_ListedRows | None] = ContextVar(
     "model_rag_rows_listed_at_commit", default=None
 )
 
@@ -600,7 +602,8 @@ class _FollowerResync:
     """A commit callback replacing the groups of the followers a write changes.
 
     The callbacks of one transaction share the set of the followers already
-    replaced, so a group followed by several writes is replaced once.
+    replaced, so a group followed by several writes is replaced once, and the
+    rows already listed, so a model read by several writes is listed once.
     """
 
     def __init__(
@@ -608,7 +611,7 @@ class _FollowerResync:
         followed_source_key: str,
         find_followers: Callable[[], list[_Follower]],
         replaced: set[_Follower],
-        listed: dict[type[Model], list[Any]],
+        listed: _ListedRows,
     ) -> None:
         self.followed_source_key = followed_source_key
         self.find_followers = find_followers
@@ -644,7 +647,7 @@ def _resync_followers_at_commit(
     # One that already ran belongs to an earlier commit run.
     if latest is None or latest.has_run:
         replaced: set[_Follower] = set()
-        listed: dict[type[Model], list[Any]] = {}
+        listed: _ListedRows = {}
     else:
         replaced, listed = latest.replaced, latest.listed
     transaction.on_commit(
