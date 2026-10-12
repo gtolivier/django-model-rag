@@ -778,10 +778,9 @@ class Registry:
                 granted,
             )
 
-        # Noted before listening: the senders depend on it.
-        if not resync_on_related_writes:
-            self._without_related_resync.add(model)
-        self._add(model, build_extractor)
+        self._add(
+            model, build_extractor, resync_on_related_writes=resync_on_related_writes
+        )
 
     def register_extractor(
         self,
@@ -822,11 +821,12 @@ class Registry:
             if depends_on:
                 _require_models_ready(model, "resolve depends_on")
                 _require_relations(model, depends_on)
-            dependencies = _resolved_dependencies(model, depends_on)
-            # Noted before listening: the senders depend on it.
-            if not resync_on_related_writes:
-                self._without_related_resync.add(model)
-            self._add(model, extractor_class, dependencies)
+            self._add(
+                model,
+                extractor_class,
+                _resolved_dependencies(model, depends_on),
+                resync_on_related_writes=resync_on_related_writes,
+            )
             return extractor_class
 
         return decorator
@@ -993,6 +993,8 @@ class Registry:
         model: type[Model],
         factory: Callable[[], BaseExtractor[Any]],
         dependencies: _Dependencies = _NO_DEPENDENCIES,
+        *,
+        resync_on_related_writes: bool,
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
@@ -1002,6 +1004,9 @@ class Registry:
 
         self._registrations[model] = factory
         self._dependencies[model] = dependencies
+        # Noted before listening: the senders depend on it.
+        if not resync_on_related_writes:
+            self._without_related_resync.add(model)
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):
