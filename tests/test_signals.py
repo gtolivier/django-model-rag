@@ -2397,6 +2397,67 @@ def test_a_model_registered_with_no_related_resync_still_replaces_its_own_saved_
 
 
 @pytest.mark.django_db
+def test_an_extractor_registered_with_no_related_resync_still_replaces_a_childs_parent(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only Product is registered, with a custom extractor reading its name, its
+    # category's name, then the titles of its reviews: depends_on names the
+    # category, a forward foreign key, and the reviews, a reverse foreign key to
+    # its primary key. The resync on related writes is turned off: a save of a
+    # category resyncs no product, while a review still replaces its product's
+    # group. Neither Category nor Review is registered.
+    @rag.register_extractor(
+        Product,
+        depends_on=["category", "reviews"],
+        resync_on_related_writes=False,
+    )
+    class ReviewedProductExtractor(BaseExtractor[Product]):
+        def extract(self, instance: Product) -> NormalizedDocument:
+            titles = [review.title for review in instance.reviews.order_by("pk")]
+            return self.build_document(
+                instance,
+                text="\n\n".join([instance.name, instance.category.name, *titles]),
+            )
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the writes below are observed. One product is in each
+    # category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    lighting = _create_the_lighting_category()
+    _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # A write to a model the extractor reads through a forward foreign key:
+        # the product in that category reads the new name, yet is not resynced.
+        lighting.name = "Lamps"
+        lighting.save()
+        # A write to a child row the extractor reads by a reverse foreign key
+        # to the product's primary key, on the product in the other category.
+        Review.objects.create(title="Heavy", product=hammer)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Only the reviewed product's group is replaced, as
+    # committed: not the one in the renamed category.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{hammer.pk}": [
+            NormalizedDocument(
+                text="Hammer\n\nTools\n\nHeavy",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=hammer.pk,
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
