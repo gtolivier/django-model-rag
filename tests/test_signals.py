@@ -1506,6 +1506,68 @@ def test_a_category_followed_by_foreign_key_saved_replaces_every_product_at_the_
 
 
 @pytest.mark.django_db
+def test_a_category_created_then_bulk_given_a_product_resyncs_every_product_at_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    _register_products_following_their_category()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run. The product is in another category than the one created below.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting = _create_the_lighting_category()
+        # Attached to the category after its creation, in the same
+        # transaction, by a write that sends no signal: only the category's
+        # creation is observed.
+        (lamp,) = Product.objects.bulk_create(
+            [
+                Product(
+                    name="Desk lamp",
+                    description="A lamp for the desk.",
+                    price="25.00",
+                    category=lighting,
+                )
+            ]
+        )
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The creation resyncs the whole registered model at the
+    # commit: the group of every product is replaced, as committed, the one
+    # attached after the creation included, and the one in the other category,
+    # unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{hammer.pk}": [
+            NormalizedDocument(
+                text="Hammer\n\nTools",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=hammer.pk,
+                title="Hammer",
+                url=f"/products/{hammer.pk}/",
+            ),
+        ],
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Desk lamp\n\nLighting",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title="Desk lamp",
+                url=f"/products/{lamp.pk}/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_category_saved_through_a_proxy_replaces_every_product_following_it(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
