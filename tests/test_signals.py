@@ -203,6 +203,13 @@ def _register_persons_following_their_mentors() -> None:
     rag.register(Person, fields=["name"], follow=["mentors"])
 
 
+def _register_persons_following_their_mentors_and_mentees() -> None:
+    """Register Person once, by its name, following both sides of its own
+    many-to-many ``mentors``: its mentors, the forward side, and its mentees,
+    the reverse side."""
+    rag.register(Person, fields=["name"], follow=["mentors", "mentees"])
+
+
 def _register_friends_following_their_friends() -> None:
     """Register Friend, by its name, following its friends through its own
     symmetrical many-to-many ``friends``: both sides of the links are Friends,
@@ -4098,6 +4105,80 @@ def test_clearing_the_mentees_of_a_mentor_replaces_only_the_mentors_group(
                 source_model="person",
                 source_pk=grace.pk,
                 title="Grace",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_adding_a_mentor_to_a_person_following_both_sides_resyncs_every_person(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Person is registered once, following both its mentors and its mentees:
+    # each side of its own many-to-many is read by Persons.
+    _register_persons_following_their_mentors_and_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Carol is linked to
+    # no one, untouched by the add.
+    ada = Person.objects.create(name="Ada")
+    bob = Person.objects.create(name="Bob")
+    carol = Person.objects.create(name="Carol")
+
+    # Added from the mentee's side, the forward side of the many-to-many:
+    # Django sends m2m_changed with Ada as its instance and Bob's primary key
+    # in pk_set. No row is saved again: the add writes only Ada's link to its
+    # new mentor.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.mentors.add(bob)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Ada follows her mentors, so her group is replaced; Bob's mentees changed,
+    # and Persons read their mentees, so the commit resyncs every person, the
+    # untouched one included. Each person's group is replaced in exactly one
+    # replace call, however the groups are batched: the resync and the
+    # replacement of the instance do not replace Ada's group twice.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.person:{ada.pk}": 1,
+        f"testapp.person:{bob.pk}": 1,
+        f"testapp.person:{carol.pk}": 1,
+    }
+    # Each replaced as committed: its own name, then its mentor's or its
+    # mentee's, if any.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nBob",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.person:{bob.pk}": [
+            NormalizedDocument(
+                text="Bob\n\nAda",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=bob.pk,
+                title="Bob",
+            ),
+        ],
+        f"testapp.person:{carol.pk}": [
+            NormalizedDocument(
+                text="Carol",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=carol.pk,
+                title="Carol",
             ),
         ],
     }
