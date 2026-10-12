@@ -3160,6 +3160,52 @@ def test_adding_a_topic_to_a_course_following_its_topics_replaces_the_courses_gr
 
 
 @pytest.mark.django_db
+def test_adding_a_topic_to_a_course_following_its_topics_resyncs_no_other_course(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many: Topic itself is not.
+    _register_courses_following_their_topics()
+
+    # Created and linked outside the captured callbacks: their commit
+    # callbacks never run, so only the add below is observed. Another course
+    # exists, with a topic of its own, untouched by the add.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    carving = _create_the_carving_topic()
+    whittling = Course.objects.create(title="Whittling basics")
+    whittling.topics.add(carving)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        basics.topics.add(woodworking)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The add is handled on the course's side alone: its group is replaced in
+    # exactly one replace call, and no other course is resynced.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {f"testapp.course:{basics.pk}": 1}
+    # Replaced as committed: its own title, then the added topic's text.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics\n\nWoodworking\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+                title="Woodworking basics",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_removing_a_topic_from_a_course_following_its_topics_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
