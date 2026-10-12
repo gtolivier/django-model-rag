@@ -3268,6 +3268,72 @@ def test_adding_a_course_to_a_topic_courses_following_their_topics_resyncs_every
 
 
 @pytest.mark.django_db
+def test_clearing_the_courses_of_a_topic_followed_by_courses_resyncs_every_course(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many: Topic itself is not.
+    _register_courses_following_their_topics()
+
+    # Created and linked outside the captured callbacks: their commit
+    # callbacks never run, so only the clear below is observed. Two courses
+    # cover the topic, so that the clear removes more than one link; another
+    # course exists, with a topic of its own, untouched by the clear.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    joinery = Course.objects.create(title="Joinery")
+    woodworking.courses.add(basics, joinery)
+    carving = _create_the_carving_topic()
+    whittling = Course.objects.create(title="Whittling basics")
+    whittling.topics.add(carving)
+
+    # Cleared from the topic's side: Django sends m2m_changed with the topic,
+    # which is not registered, as its instance. No row is saved again: the
+    # clear deletes only the links of the topic.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The instance side is an unregistered topic, so the commit resyncs every
+    # course, the untouched one included: each course's group is replaced in
+    # exactly one replace call, however the groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.course:{basics.pk}": 1,
+        f"testapp.course:{joinery.pk}": 1,
+        f"testapp.course:{whittling.pk}": 1,
+    }
+    # The cleared courses as committed: the topic's text is gone, only their
+    # own title is left.
+    received_groups = _received_groups(built_outputs)
+    assert received_groups[f"testapp.course:{basics.pk}"] == [
+        NormalizedDocument(
+            text="Woodworking basics",
+            source_app_label="testapp",
+            source_model="course",
+            source_pk=basics.pk,
+            title="Woodworking basics",
+        ),
+    ]
+    assert received_groups[f"testapp.course:{joinery.pk}"] == [
+        NormalizedDocument(
+            text="Joinery",
+            source_app_label="testapp",
+            source_model="course",
+            source_pk=joinery.pk,
+            title="Joinery",
+        ),
+    ]
+
+
+@pytest.mark.django_db
 def test_removing_a_topic_from_a_course_following_its_topics_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
