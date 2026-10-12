@@ -511,8 +511,17 @@ def _every_row_reading(sender: type[Model]) -> list[_Follower]:
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         if _followed_lookups(registered_model, sender)
+        or _follows_by_to_field(registered_model, sender)
         for follower_pk in registered_model._base_manager.values_list("pk", flat=True)
     ]
+
+
+def _follows_by_to_field(registered_model: type[Model], sender: type[Model]) -> bool:
+    """Return whether ``registered_model`` follows ``sender`` by a to_field key."""
+    return any(
+        not relation.field.foreign_related_fields[0].primary_key
+        for relation in _followed_reverse_relations(registered_model, sender)
+    )
 
 
 def _schedule_follower_replacements(
