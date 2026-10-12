@@ -54,6 +54,7 @@ from tests.testapp.models import (
     Shelf,
     Showroom,
     Supplier,
+    SupplierOrder,
     SupplierProfile,
     Tag,
     Team,
@@ -1562,6 +1563,66 @@ def test_a_category_created_then_bulk_given_a_product_resyncs_every_product_at_c
                 source_pk=lamp.pk,
                 title="Desk lamp",
                 url=f"/products/{lamp.pk}/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_profile_read_past_a_reverse_one_to_one_saved_replaces_every_supplier_order(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the SupplierOrder is registered, reading its supplier's profile body
+    # through a lookup path that crosses the foreign key `supplier`, then the
+    # reverse one-to-one by its query name (supplier_profile), which differs
+    # from its accessor (profile). Neither Supplier nor SupplierProfile is
+    # registered, so the profile reaches the orders only through the path.
+    rag.register(
+        SupplierOrder, fields=["reference", "supplier__supplier_profile__body"]
+    )
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the profile's save below is observed. One order is from
+    # the supplier whose profile is saved, the other from another supplier,
+    # with a profile of its own.
+    birch_mill = _create_birch_mill()
+    birch_profile = _create_a_profile_of(birch_mill, _PROFILE_BODY)
+    birch_order = SupplierOrder.objects.create(reference="PO-1", supplier=birch_mill)
+    oak_yard = _create_oak_yard()
+    _create_a_profile_of(oak_yard, "Seasoned oak beams.")
+    oak_order = SupplierOrder.objects.create(reference="PO-2", supplier=oak_yard)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        birch_profile.body = "Air-dried planks."
+        birch_profile.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every order is replaced, as committed, the one
+    # from the other supplier included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.supplierorder:{birch_order.pk}": [
+            NormalizedDocument(
+                text="PO-1\n\nAir-dried planks.",
+                source_app_label="testapp",
+                source_model="supplierorder",
+                source_pk=birch_order.pk,
+                title="PO-1",
+            ),
+        ],
+        f"testapp.supplierorder:{oak_order.pk}": [
+            NormalizedDocument(
+                text="PO-2\n\nSeasoned oak beams.",
+                source_app_label="testapp",
+                source_model="supplierorder",
+                source_pk=oak_order.pk,
+                title="PO-2",
             ),
         ],
     }
