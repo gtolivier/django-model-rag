@@ -1066,6 +1066,62 @@ def test_a_category_read_two_links_deep_saved_with_no_output_writes_no_row() -> 
 
 
 @pytest.mark.django_db
+def test_a_product_in_the_middle_of_an_offer_lookup_path_saved_replaces_every_offer(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, so the product is a link in the
+    # middle of the path.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the product's save below is observed. One offer is on the
+    # product saved, the other on another product, in another category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.name = "Reading lamp"
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every offer is replaced, as committed, the one on
+    # the other product included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{hammer_deal.pk}": [
+            NormalizedDocument(
+                text="Hammer deal\n\nTools",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=hammer_deal.pk,
+                title="Hammer deal",
+            ),
+        ],
+        f"testapp.offer:{lamp_sale.pk}": [
+            NormalizedDocument(
+                text="Lamp sale\n\nLighting",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=lamp_sale.pk,
+                title="Lamp sale",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
