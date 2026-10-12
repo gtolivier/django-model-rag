@@ -856,7 +856,11 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
-            if _is_followed_like_a_foreign_key(relation) or _is_many_to_many(relation)
+            if _is_followed_like_a_foreign_key(relation)
+            or _is_many_to_many(relation)
+            # A generic relation is the forward ForeignObject to many objects;
+            # importing GenericRelation here would load contenttypes too early.
+            or (isinstance(relation, ForeignObject) and relation.one_to_many)
         ]
         read_through_paths = [
             reached
