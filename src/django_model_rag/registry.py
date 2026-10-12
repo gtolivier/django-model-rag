@@ -837,6 +837,8 @@ class Registry:
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
         """List the reverse foreign keys ``model`` follows or depends on.
 
+        None when ``model`` is registered not to resync on related writes.
+
         Raises:
             NotRegistered: ``model`` is not registered.
         """
@@ -870,7 +872,8 @@ class Registry:
         its lookup paths and dependencies reach through their leading foreign
         keys, and the models of the many-to-many relations, forward or
         reverse, it depends on. Each is paired with the lookup, from
-        ``model``, that reaches it.
+        ``model``, that reaches it. None when ``model`` is registered not to
+        resync on related writes.
 
         Raises:
             NotRegistered: ``model`` is not registered.
