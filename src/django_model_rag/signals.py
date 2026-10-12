@@ -357,7 +357,11 @@ def _registered_subclasses_following(
 
 
 def _follows_lookup(registered_model: type[Model], lookup: str) -> bool:
-    """Return whether ``registered_model`` reads its rows' relations by ``lookup``."""
+    """Return whether ``registered_model`` reads its rows' relations by ``lookup``.
+
+    Even when it is registered not to resync on related writes: the changed
+    links are its rows' own.
+    """
     return any(
         followed_lookup == lookup
         for followed_lookup, _ in rag.own_relation_lookups(registered_model)
