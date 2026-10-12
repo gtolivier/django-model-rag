@@ -778,9 +778,10 @@ class Registry:
                 granted,
             )
 
-        self._add(model, build_extractor)
+        # Noted before listening: the senders depend on it.
         if not resync_on_related_writes:
             self._without_related_resync.add(model)
+        self._add(model, build_extractor)
 
     def register_extractor(
         self,
