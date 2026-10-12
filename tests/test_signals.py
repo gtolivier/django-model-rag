@@ -3777,6 +3777,63 @@ def test_creating_a_membership_guilds_following_their_members_resyncs_every_guil
 
 
 @pytest.mark.django_db
+def test_deleting_a_membership_guilds_following_their_members_resyncs_every_guild(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Guild is registered, following its members through its own
+    # many-to-many, whose through model is Membership: neither Craftsman nor
+    # Membership is.
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    # Created and linked outside the captured callbacks: their commit
+    # callbacks never run, so only the delete below is observed. The north
+    # guild has two members, one of which leaves; another guild exists, with a
+    # member of its own, untouched by the delete.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    mason = Craftsman.objects.create(name="Mason")
+    north = Guild.objects.create(name="North guild", code="north")
+    leaving = Membership.objects.create(guild=north, craftsman=carpenter)
+    Membership.objects.create(guild=north, craftsman=mason)
+    smith = Craftsman.objects.create(name="Smith")
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(smith)
+
+    # A row of the through model deleted directly: Django sends no
+    # m2m_changed, only post_delete on Membership. Neither the guild nor the
+    # craftsman is saved again.
+    with django_capture_on_commit_callbacks(execute=True):
+        leaving.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The guilds read the through model, so the commit resyncs every guild,
+    # the untouched one included: each guild's group is replaced in exactly
+    # one replace call, however the groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.guild:{north.pk}": 1,
+        f"testapp.guild:{south.pk}": 1,
+    }
+    # The changed guild's group as committed: its own name, then its remaining
+    # member's name only, the removed member gone.
+    assert _received_groups(built_outputs)[f"testapp.guild:{north.pk}"] == [
+        NormalizedDocument(
+            text="North guild\n\nMason",
+            source_app_label="testapp",
+            source_model="guild",
+            source_pk=north.pk,
+            title="North guild",
+        ),
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_a_mentor_to_a_person_following_its_mentors_replaces_only_its_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
