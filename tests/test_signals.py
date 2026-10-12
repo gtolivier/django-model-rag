@@ -107,6 +107,13 @@ def _statements(queries: CaptureQueriesContext) -> list[str]:
     return [query["sql"].split()[0] for query in queries.captured_queries]
 
 
+def _lists_every_row_of(model: type[Model], sql: str) -> bool:
+    """Whether ``sql`` lists every row of ``model``: a select from its table
+    with no WHERE clause, as a lookup of given rows or a cascade would have."""
+    table = connection.ops.quote_name(model._meta.db_table)
+    return sql.startswith("SELECT") and f"FROM {table}" in sql and "WHERE" not in sql
+
+
 def _register_categories_by_name() -> None:
     """Register Category, each instance extracted to one document: its name."""
 
@@ -2469,6 +2476,58 @@ def test_several_writes_to_models_an_offer_reads_in_one_transaction_resync_it_on
             ),
         ],
     }
+
+
+@pytest.mark.django_db
+def test_several_writes_to_categories_list_the_products_once_at_the_commit(
+    settings: Settings,
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, reading its category's name through a
+    # lookup path, with no follow: Category itself is not registered, so each
+    # write to it resyncs every product at the commit.
+    _register_products_reading_their_category_through_a_path()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the writes below are observed. The garden category has no
+    # product, so deleting it cascades to none.
+    tools = _create_the_tools_category()
+    lighting = _create_the_lighting_category()
+    garden = _create_the_garden_category()
+    _create_a_hammer(tools)
+    _create_a_plain_desk_lamp(lighting)
+
+    # The queries captured around the callbacks, so those they run at the
+    # commit are captured too.
+    with (
+        CaptureQueriesContext(connection) as queries,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        # Saves and a delete of the model the Product reads, mixed.
+        tools.name = "Hand tools"
+        tools.save()
+        garden.delete()
+        lighting.name = "Lamps"
+        lighting.save()
+        queries_in_the_body = len(queries.captured_queries)
+
+    # However many writes, saves and deletes alike, the products' rows are
+    # listed by one query, run at the commit: none while the body runs, a
+    # delete included, and not one per write at the commit.
+    listing_positions = [
+        position
+        for position, query in enumerate(queries.captured_queries)
+        if _lists_every_row_of(Product, query["sql"])
+    ]
+    listings_in_the_body = [
+        position for position in listing_positions if position < queries_in_the_body
+    ]
+    listings_at_the_commit = [
+        position for position in listing_positions if position >= queries_in_the_body
+    ]
+    assert (len(listings_in_the_body), len(listings_at_the_commit)) == (0, 1)
 
 
 @pytest.mark.django_db
