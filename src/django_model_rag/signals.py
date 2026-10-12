@@ -246,12 +246,14 @@ def sync_changed_relation(
 
     The instance is replaced for each registered model of it following the
     lookup its side reads the links with, and every row of the registered
-    models reading the instance's model is replaced too, whichever row it
-    reaches. On a many-to-many from a model to itself, the instance alone is
-    replaced when only its side is followed; otherwise the other side reads
-    the links too, so every row reading the model is resynced, the
-    instance's own included. From a remove() or clear() until it ends, the
-    through model whose rows it deletes is noted, for sync_deleted_instance.
+    models reading the instance's model by the lookup the other side reads the
+    links with is replaced too, whichever row it reaches; a model reading it
+    by another lookup path is not. On a many-to-many from a model to itself,
+    the instance alone is replaced when only its side is followed; otherwise
+    the other side reads the links too, so every row reading the model is
+    resynced, the instance's own included. From a remove() or clear() until it
+    ends, the through model whose rows it deletes is noted, for
+    sync_deleted_instance.
     """
     if not _signals_enabled():
         return
@@ -314,15 +316,23 @@ def _resync_every_row_following_the_links(instance: Model, link_lookup: str) -> 
     not read the links.
     """
     _schedule_follower_replacements(
-        _every_row_of(
-            registered_model
-            for registered_model in rag.registered_models()
-            if any(
-                lookup == link_lookup
-                for lookup, _ in _followed_lookups(registered_model, type(instance))
-            )
-        ),
+        _every_row_reading_by(type(instance), link_lookup),
         _followed_source_key(type(instance), instance),
+    )
+
+
+def _every_row_reading_by(sender: type[Model], lookup: str) -> list[_Follower]:
+    """Return every row of the registered models reading ``sender`` by ``lookup``.
+
+    Every row is returned, whichever row it reaches.
+    """
+    return _every_row_of(
+        registered_model
+        for registered_model in rag.registered_models()
+        if any(
+            followed_lookup == lookup
+            for followed_lookup, _ in _followed_lookups(registered_model, sender)
+        )
     )
 
 
