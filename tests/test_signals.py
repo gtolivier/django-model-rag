@@ -2558,6 +2558,40 @@ def test_a_model_registered_with_no_related_resync_still_replaces_its_own_saved_
     }
 
 
+def test_no_related_resync_connects_no_delete_listener_to_a_paths_models() -> None:
+    # Category and its proxy, and Product: the models the Offer reads only
+    # through its lookup path. Neither is registered, nor followed by anything.
+    path_models = (Product, Category, CategoryProxy)
+
+    try:
+        # Only the Offer is registered, reading its product's category's name
+        # through a lookup path two foreign keys deep, with the resync on
+        # related writes turned off: no delete of a product or a category
+        # resyncs an offer.
+        rag.register(
+            Offer,
+            fields=["title", "product__category__name"],
+            resync_on_related_writes=False,
+        )
+
+        # Django's deletion Collector fast-deletes only a model with no
+        # pre_delete and no post_delete listener: nothing listens to the
+        # deletes of the models read only through the path.
+        for sender in path_models:
+            assert not pre_delete.has_listeners(sender)
+            assert not post_delete.has_listeners(sender)
+    finally:
+        # Undo the registration, then drop any delete listener it left on the
+        # path's models, so that none outlives this test and keeps a later one
+        # from finding them fast-deleted.
+        if Offer in rag.registered_models():
+            rag.unregister(Offer)
+        for sender in path_models:
+            uid = f"django_model_rag.sync_delete.{sender._meta.label}"
+            pre_delete.disconnect(sender=sender, dispatch_uid=uid)
+            post_delete.disconnect(sender=sender, dispatch_uid=uid)
+
+
 @pytest.mark.django_db
 def test_an_extractor_registered_with_no_related_resync_still_replaces_a_childs_parent(
     settings: Settings,
