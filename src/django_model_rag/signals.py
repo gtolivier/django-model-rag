@@ -206,7 +206,8 @@ def sync_saved_instance(
     On an update, the followers from before the save were found at pre_save,
     and those of the row as saved are only found by a lookup at the commit. On
     a create, the followers the new row points to are read here, and looked up
-    again at the commit if there are any. The output configuration was checked
+    again at the commit if there are any, or if ``sender`` is the through model
+    of a followed many-to-many. The output configuration was checked
     before the save, by check_output_before_save.
     """
     if raw or not _signals_enabled():
@@ -225,7 +226,8 @@ def sync_saved_instance(
     if created:
         followers_at_save = _reverse_followers(sender, instance) + followers_at_save
     # A row just created has no follower pointing to it at its save, and
-    # costs the commit no lookup unless it points to a follower.
+    # costs the commit no lookup unless it points to a follower or links rows
+    # of a followed many-to-many.
     if (
         followers_at_save or not created or _is_through_of_followed(sender)
     ) and is_followed:
@@ -496,8 +498,9 @@ def _followers_as_committed(
     it now are looked up from the row as committed: on an update, those the
     save pointed it to; rows attached after the save, in the same transaction;
     and the rows a write sending no signal has since pointed it to. Every row
-    of a registered model reading ``sender`` by a lookup, or following it
-    through a to_field foreign key, is replaced too, whichever row it reaches.
+    of a registered model reading ``sender`` by a lookup, following it through
+    a to_field foreign key, or following a many-to-many whose through model it
+    is, is replaced too, whichever row it reaches.
     If looking them up fails, ``followers_at_save`` are still replaced, but on
     an update a follower the row was moved to is not.
     """
@@ -517,8 +520,9 @@ def _followers_as_committed(
 def _every_row_reading(sender: type[Model]) -> list[_Follower]:
     """Return every row of the registered models a write to ``sender`` resyncs whole.
 
-    Those models read ``sender`` by a lookup, or follow it through a to_field
-    foreign key: every row is returned, whichever row it reaches.
+    Those models read ``sender`` by a lookup, follow it through a to_field
+    foreign key, or follow a many-to-many whose through model it is: every row
+    is returned, whichever row it reaches.
     """
     return [
         (registered_model, follower_pk)
