@@ -822,9 +822,11 @@ class Registry:
             if depends_on:
                 _require_models_ready(model, "resolve depends_on")
                 _require_relations(model, depends_on)
-            self._add(model, extractor_class, _resolved_dependencies(model, depends_on))
+            dependencies = _resolved_dependencies(model, depends_on)
+            # Noted before listening: the senders depend on it.
             if not resync_on_related_writes:
                 self._without_related_resync.add(model)
+            self._add(model, extractor_class, dependencies)
             return extractor_class
 
         return decorator
