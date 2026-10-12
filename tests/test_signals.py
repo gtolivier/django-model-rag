@@ -2342,6 +2342,61 @@ def test_a_category_read_by_two_registered_models_saved_resyncs_each_of_them_onc
 
 
 @pytest.mark.django_db
+def test_a_model_registered_with_no_related_resync_still_replaces_its_own_saved_rows(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow, and with the
+    # resync on related writes turned off: a save of a category resyncs no
+    # offer. Neither Product nor Category is registered.
+    rag.register(
+        Offer,
+        fields=["title", "product__category__name"],
+        resync_on_related_writes=False,
+    )
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the writes below are observed. One offer is in each
+    # category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    Offer.objects.create(title="Lamp sale", product=lamp)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # A write to the model the Offer reads: the offer in that category
+        # reads the new name, yet is not resynced.
+        lighting.name = "Lamps"
+        lighting.save()
+        # A save of an offer itself, in the other category.
+        hammer_deal.title = "Hammer bargain"
+        hammer_deal.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Only the saved offer's group is replaced, as committed:
+    # not the one in the renamed category.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{hammer_deal.pk}": [
+            NormalizedDocument(
+                text="Hammer bargain\n\nTools",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=hammer_deal.pk,
+                title="Hammer bargain",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
