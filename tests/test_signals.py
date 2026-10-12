@@ -3924,6 +3924,77 @@ def test_clearing_the_mentees_of_a_mentor_replaces_only_the_mentors_group(
 
 
 @pytest.mark.django_db
+def test_adding_a_friend_to_a_friend_following_its_friends_resyncs_every_friend(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_friends_following_their_friends()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. Carol is a friend
+    # of no one, untouched by the add.
+    ada = Friend.objects.create(name="Ada")
+    bob = Friend.objects.create(name="Bob")
+    carol = Friend.objects.create(name="Carol")
+
+    # Added from Ada's side: Django sends m2m_changed with Ada as its instance
+    # and Bob's primary key in pk_set, and writes the link back too, since the
+    # many-to-many is symmetrical. No row is saved again: the add writes only
+    # the links between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        ada.friends.add(bob)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The instance's group is replaced, and the other side is a Friend too,
+    # read through the relation, so the commit resyncs every friend, the
+    # untouched one included: each friend's group is replaced in exactly one
+    # replace call, however the groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.friend:{ada.pk}": 1,
+        f"testapp.friend:{bob.pk}": 1,
+        f"testapp.friend:{carol.pk}": 1,
+    }
+    # Each replaced as committed: its own name, then its friend's, if any. Bob's
+    # group shows Ada's name, through the link back.
+    assert _received_groups(built_outputs) == {
+        f"testapp.friend:{ada.pk}": [
+            NormalizedDocument(
+                text="Ada\n\nBob",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=ada.pk,
+                title="Ada",
+            ),
+        ],
+        f"testapp.friend:{bob.pk}": [
+            NormalizedDocument(
+                text="Bob\n\nAda",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=bob.pk,
+                title="Bob",
+            ),
+        ],
+        f"testapp.friend:{carol.pk}": [
+            NormalizedDocument(
+                text="Carol",
+                source_app_label="testapp",
+                source_model="friend",
+                source_pk=carol.pk,
+                title="Carol",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_an_m2m_changed_sent_by_a_model_through_no_many_to_many_replaces_nothing(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
