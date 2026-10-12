@@ -2171,6 +2171,56 @@ def test_a_shelf_followed_by_a_to_field_foreign_key_saved_replaces_every_warehou
 
 
 @pytest.mark.django_db
+def test_no_related_resync_a_to_field_shelf_saved_replaces_its_own_warehouse_alone(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Warehouse is registered, following its shelves by the reverse
+    # side of Shelf's foreign key, which points to the warehouse's unique
+    # code, not its primary key, with the resync on related writes turned
+    # off: a shelf still replaces its own warehouse's group, and no other.
+    # Shelf itself is not registered.
+    rag.register(
+        Warehouse,
+        fields=["name"],
+        follow=["shelves"],
+        resync_on_related_writes=False,
+    )
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the shelf's save below is observed. One warehouse holds the
+    # shelf saved, the other only a shelf of its own.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(label="Timber", warehouse=north)
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(label="Glue", warehouse=south)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        timber.label = "Plywood"
+        timber.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. Only the group of the saved shelf's own warehouse is
+    # replaced, as committed: not the other warehouse's.
+    assert _received_groups(built_outputs) == {
+        f"testapp.warehouse:{north.pk}": [
+            NormalizedDocument(
+                text="North depot\n\nPlywood",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=north.pk,
+                title="North depot",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_seminar_followed_by_a_multi_column_relation_saved_replaces_every_venue(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
