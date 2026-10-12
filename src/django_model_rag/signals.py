@@ -229,13 +229,9 @@ def sync_saved_instance(
         # Rows may also be attached to it, or it to other rows, before the
         # commit, by a write that sends no signal: its followers are looked up
         # then.
-        transaction.on_commit(
-            partial(
-                _replace_followers_as_committed,
-                sender,
-                instance,
-                followers_at_save,
-            )
+        _resync_followers_at_commit(
+            _followed_source_key(sender, instance),
+            partial(_followers_as_committed, sender, instance, followers_at_save),
         )
         return
 
@@ -472,12 +468,12 @@ def _remember_cleared_pks(
     setattr(instance, _CLEARED_PKS_ATTRIBUTE, set(linked_pks))
 
 
-def _replace_followers_as_committed(
+def _followers_as_committed(
     sender: type[Model],
     instance: Model,
     followers_at_save: list[_Follower],
-) -> None:
-    """Replace the groups of ``followers_at_save`` and of the rows following it now.
+) -> list[_Follower]:
+    """Return ``followers_at_save`` and the rows following ``instance`` now.
 
     On a create, ``followers_at_save`` are the followers the new row points
     to; on an update, only those it had before the save. The rows following
@@ -500,9 +496,7 @@ def _replace_followers_as_committed(
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
         followers = followers_at_save
-
-    for replace_groups in _follower_replacers(followers, followed_source_key):
-        replace_groups()
+    return followers
 
 
 def _every_row_reading(sender: type[Model]) -> list[_Follower]:
@@ -535,8 +529,58 @@ def _schedule_follower_replacements(
 
     A failure is logged with the ``followed_source_key`` of the row they follow.
     """
-    for replace_groups in _follower_replacers(followers, followed_source_key):
-        transaction.on_commit(replace_groups)
+    if followers:
+        _resync_followers_at_commit(followed_source_key, lambda: followers)
+
+
+class _FollowerResync:
+    """A commit callback replacing the groups of the followers a write changes.
+
+    The callbacks of one transaction share the set of the followers already
+    replaced, so a group followed by several writes is replaced once.
+    """
+
+    def __init__(
+        self,
+        followed_source_key: str,
+        find_followers: Callable[[], list[_Follower]],
+        replaced: set[_Follower],
+    ) -> None:
+        self.followed_source_key = followed_source_key
+        self.find_followers = find_followers
+        self.replaced = replaced
+        self.ran = False
+
+    def __call__(self) -> None:
+        self.ran = True
+        followers = [
+            follower
+            for follower in self.find_followers()
+            if follower not in self.replaced
+        ]
+        self.replaced.update(followers)
+        for replace_groups in _follower_replacers(followers, self.followed_source_key):
+            replace_groups()
+
+
+def _resync_followers_at_commit(
+    followed_source_key: str, find_followers: Callable[[], list[_Follower]]
+) -> None:
+    """Replace, at the commit, the groups ``find_followers`` returns then."""
+    # The callbacks pending in the connection are those of the transaction.
+    latest = next(
+        (
+            callback
+            for _, callback, _ in reversed(transaction.get_connection().run_on_commit)
+            if isinstance(callback, _FollowerResync)
+        ),
+        None,
+    )
+    # One that already ran belongs to an earlier commit run.
+    replaced = set() if latest is None or latest.ran else latest.replaced
+    transaction.on_commit(
+        _FollowerResync(followed_source_key, find_followers, replaced)
+    )
 
 
 def _follower_replacers(
