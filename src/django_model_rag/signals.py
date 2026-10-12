@@ -483,9 +483,11 @@ def _replace_followers_as_committed(
     to; on an update, only those it had before the save. The rows following
     it now are looked up from the row as committed: on an update, those the
     save pointed it to; rows attached after the save, in the same transaction;
-    and the rows a write sending no signal has since pointed it to. If looking
-    them up fails, ``followers_at_save`` are still replaced, but on an update a
-    follower the row was moved to is not.
+    and the rows a write sending no signal has since pointed it to. Every row
+    of a registered model reading ``sender`` by a lookup is replaced too,
+    whichever row it reaches. If looking them up fails, ``followers_at_save``
+    are still replaced, but on an update a follower the row was moved to is
+    not.
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
