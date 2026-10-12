@@ -358,7 +358,10 @@ def _registered_subclasses_following(
 
 def _follows_lookup(registered_model: type[Model], lookup: str) -> bool:
     """Return whether ``registered_model`` reads its rows' relations by ``lookup``."""
-    return bool(_followed_lookups_named(registered_model, lookup))
+    return any(
+        followed_lookup == lookup
+        for followed_lookup, _ in rag.own_relation_lookups(registered_model)
+    )
 
 
 def _followed_lookups_named(

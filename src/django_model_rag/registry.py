@@ -941,6 +941,18 @@ class Registry:
         """
         if not self.resyncs_on_related_writes(model):
             return []
+        return self.own_relation_lookups(model)
+
+    def own_relation_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+        """List the models ``model`` reads through relations, whether it resyncs or not.
+
+        Same as ``relation_lookups``, but also for a model registered not to
+        resync on related writes: a change of its own links still replaces its
+        group.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
