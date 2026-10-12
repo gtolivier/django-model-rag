@@ -697,7 +697,8 @@ class Registry:
         url: an own field, or a lookup path such as ``bookmark__link``.
         ``permissions`` are given to every document of the model.
         ``resync_on_related_writes=False`` stops writes to the models it
-        reads from resyncing it: only its own saves do.
+        reads from resyncing it: only its own saves, and those of the
+        children it follows, replace its groups.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -769,6 +770,9 @@ class Registry:
         of ``model``: a forward foreign key or one-to-one, a reverse relation
         or a many-to-many as a one-link path, or a lookup path through forward
         foreign keys or one-to-ones.
+        ``resync_on_related_writes=False`` stops writes to the models it
+        depends on from resyncing it: only its own saves, and those of the
+        children it depends on, replace its groups.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered, checked
