@@ -45,6 +45,7 @@ from tests.testapp.models import (
     Photo,
     Product,
     Review,
+    Shelf,
     Showroom,
     Supplier,
     SupplierProfile,
@@ -55,6 +56,7 @@ from tests.testapp.models import (
     Topic,
     TopicProxy,
     Tournament,
+    Warehouse,
     Workshop,
 )
 
@@ -1874,6 +1876,59 @@ def test_a_tag_followed_by_generic_relation_saved_replaces_every_photo_at_the_co
                 source_model="photo",
                 source_pk=lathe.pk,
                 title="Lathe",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_shelf_followed_by_a_to_field_foreign_key_saved_replaces_every_warehouse(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Warehouse is registered, following its shelves by the reverse
+    # side of Shelf's foreign key, which points to the warehouse's unique
+    # code, not its primary key: Shelf itself is not registered.
+    rag.register(Warehouse, fields=["name"], follow=["shelves"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the shelf's save below is observed. One warehouse holds the
+    # shelf saved, the other only a shelf of its own.
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(label="Timber", warehouse=north)
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(label="Glue", warehouse=south)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        timber.label = "Plywood"
+        timber.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every warehouse is replaced, as committed, the one
+    # without the shelf saved included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.warehouse:{north.pk}": [
+            NormalizedDocument(
+                text="North depot\n\nPlywood",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=north.pk,
+                title="North depot",
+            ),
+        ],
+        f"testapp.warehouse:{south.pk}": [
+            NormalizedDocument(
+                text="South depot\n\nGlue",
+                source_app_label="testapp",
+                source_model="warehouse",
+                source_pk=south.pk,
+                title="South depot",
             ),
         ],
     }
