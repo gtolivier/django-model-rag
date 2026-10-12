@@ -821,8 +821,10 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
-    followers = _reverse_followers(sender, instance) + instance.__dict__.pop(
-        _REACHING_FOLLOWERS_ATTRIBUTE, []
+    followers = (
+        _reverse_followers(sender, instance)
+        + instance.__dict__.pop(_REACHING_FOLLOWERS_ATTRIBUTE, [])
+        + _every_row_reading(sender)
     )
     if not (nearest_registered_model_only or followers):
         return
