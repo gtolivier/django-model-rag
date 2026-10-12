@@ -1328,6 +1328,60 @@ def test_a_product_moved_by_update_after_its_category_save_is_replaced_at_the_co
 
 
 @pytest.mark.django_db
+def test_a_category_followed_by_foreign_key_saved_replaces_every_product_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, following its category through its own
+    # foreign key: Category itself is not.
+    _register_products_following_their_category()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the category's save below is observed. One product is in
+    # the category saved, the other in another category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every product is replaced, as committed, the one
+    # in the other category included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{hammer.pk}": [
+            NormalizedDocument(
+                text="Hammer\n\nTools",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=hammer.pk,
+                title="Hammer",
+                url=f"/products/{hammer.pk}/",
+            ),
+        ],
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Desk lamp\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+                title="Desk lamp",
+                url=f"/products/{lamp.pk}/",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_a_product_moved_by_update_after_its_category_save_is_replaced_via_lookup_path(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
