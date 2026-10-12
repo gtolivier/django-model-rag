@@ -255,7 +255,10 @@ def sync_changed_relation(
     model to itself, only the side whose lookup is followed is replaced. When
     the instance's model is not registered, every row of a registered model
     reading it by a lookup, or following it through a to_field foreign key, is
-    replaced too, whichever row it reaches.
+    replaced too, whichever row it reaches. So is it on a symmetrical
+    many-to-many, in place of the instance's groups: both sides read the links
+    through the relation, so every row reading it is resynced, the instance's
+    own included.
     """
     if not _signals_enabled():
         return
@@ -287,8 +290,6 @@ def sync_changed_relation(
     if action not in _CHANGING_ACTIONS:
         return
 
-    # A symmetrical many-to-many is read through the relation by both sides: every
-    # row reading it is resynced, the instance's own included.
     is_symmetrical = instance_side is model_side
     if not is_symmetrical:
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
