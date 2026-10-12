@@ -322,6 +322,7 @@ def sync_changed_relation(
         resyncs_readers_instead
         or not rag.is_registered(type(instance))
         or not links_model_to_itself
+        or not following_models
     ):
         _schedule_follower_replacements(
             _every_row_reading(type(instance)), followed_source_key
