@@ -45,6 +45,7 @@ from tests.testapp.models import (
     Photo,
     Product,
     Review,
+    Seminar,
     Shelf,
     Showroom,
     Supplier,
@@ -56,6 +57,7 @@ from tests.testapp.models import (
     Topic,
     TopicProxy,
     Tournament,
+    Venue,
     Warehouse,
     Workshop,
 )
@@ -1929,6 +1931,62 @@ def test_a_shelf_followed_by_a_to_field_foreign_key_saved_replaces_every_warehou
                 source_model="warehouse",
                 source_pk=south.pk,
                 title="South depot",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_seminar_followed_by_a_multi_column_relation_saved_replaces_every_venue(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Venue is registered, following its seminars by the reverse side
+    # of Seminar's ForeignObject, which matches the venue by its city and name,
+    # two columns, not its primary key: Seminar itself is not registered.
+    rag.register(Venue, fields=["name"], follow=["seminars"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the seminar's save below is observed. One venue hosts the
+    # seminar saved, the other only a seminar of its own.
+    hall = Venue.objects.create(city="Lyon", name="Town hall")
+    joinery = Seminar.objects.create(
+        title="Joinery", venue_city="Lyon", venue_name="Town hall"
+    )
+    library = Venue.objects.create(city="Lyon", name="Library")
+    Seminar.objects.create(title="Bookbinding", venue_city="Lyon", venue_name="Library")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        joinery.title = "Marquetry"
+        joinery.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every venue is replaced, as committed, the one
+    # without the seminar saved included, unchanged. Each seminar reads as its
+    # text columns, the two matching its venue included.
+    assert _received_groups(built_outputs) == {
+        f"testapp.venue:{hall.pk}": [
+            NormalizedDocument(
+                text="Town hall\n\nMarquetry\n\nLyon\n\nTown hall",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=hall.pk,
+                title="Town hall",
+            ),
+        ],
+        f"testapp.venue:{library.pk}": [
+            NormalizedDocument(
+                text="Library\n\nBookbinding\n\nLyon\n\nLibrary",
+                source_app_label="testapp",
+                source_model="venue",
+                source_pk=library.pk,
+                title="Library",
             ),
         ],
     }
