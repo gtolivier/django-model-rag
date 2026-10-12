@@ -2102,6 +2102,84 @@ def test_a_product_saved_through_a_multi_table_child_replaces_every_review(
     }
 
 
+def _register_new_products_by_their_category_name() -> None:
+    """Register only Product, with a custom extractor reading its name, then its
+    category's name: depends_on names the category, whose saves change its
+    documents. Its get_queryset() leaves out the second-hand products. Category
+    itself is not registered."""
+
+    @rag.register_extractor(Product, depends_on=["category"])
+    class NewProductExtractor(BaseExtractor[Product]):
+        def get_queryset(self, queryset: QuerySet[Product]) -> QuerySet[Product]:
+            return queryset.filter(condition="new")
+
+        def extract(self, instance: Product) -> NormalizedDocument:
+            return self.build_document(
+                instance, text=f"{instance.name}\n\n{instance.category.name}"
+            )
+
+
+@pytest.mark.django_db
+def test_a_category_saved_empties_the_group_of_a_product_get_queryset_leaves_out(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Product is registered, with a custom extractor whose
+    # depends_on names its category and whose get_queryset() keeps only the
+    # new products: Category itself is not registered.
+    _register_new_products_by_their_category_name()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the category's save below is observed. One product is in
+    # the category saved; the two others are in another category, one of them
+    # second-hand: only the resync of the whole model reaches it.
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    used_saw = Product.objects.create(
+        name="Saw",
+        description="A saw for planks.",
+        price="10.00",
+        category=tools,
+        condition="used",
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every product it keeps is replaced, as committed,
+    # and the second-hand one, which get_queryset() leaves out, gets an empty
+    # group, removing whatever the output still holds for it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.product:{lamp.pk}": [
+            NormalizedDocument(
+                text="Desk lamp\n\nLamps",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=lamp.pk,
+            ),
+        ],
+        f"testapp.product:{hammer.pk}": [
+            NormalizedDocument(
+                text="Hammer\n\nTools",
+                source_app_label="testapp",
+                source_model="product",
+                source_pk=hammer.pk,
+            ),
+        ],
+        f"testapp.product:{used_saw.pk}": [],
+    }
+
+
 @pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
