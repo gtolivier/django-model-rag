@@ -1,5 +1,6 @@
 import inspect
 import logging
+from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -2177,6 +2178,74 @@ def test_a_category_saved_empties_the_group_of_a_product_get_queryset_leaves_out
             ),
         ],
         f"testapp.product:{used_saw.pk}": [],
+    }
+
+
+@pytest.mark.django_db
+def test_several_writes_to_models_an_offer_reads_in_one_transaction_resync_it_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: neither
+    # Product nor Category is registered, and the Offer reads both.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the writes below are observed. One offer is on the product
+    # and in the category saved, the other on another product, in another
+    # category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # Two saves of one model the Offer reads, then one of another.
+        lamp.name = "Reading lamp"
+        lamp.save()
+        lamp.price = "30.00"
+        lamp.save()
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # However many writes touch the models the Offer reads, the commit
+    # resyncs it once: each offer's group is replaced in exactly one replace
+    # call, however the groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.offer:{hammer_deal.pk}": 1,
+        f"testapp.offer:{lamp_sale.pk}": 1,
+    }
+    # Each replaced as committed, after every write of the transaction.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{hammer_deal.pk}": [
+            NormalizedDocument(
+                text="Hammer deal\n\nTools",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=hammer_deal.pk,
+                title="Hammer deal",
+            ),
+        ],
+        f"testapp.offer:{lamp_sale.pk}": [
+            NormalizedDocument(
+                text="Lamp sale\n\nLamps",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=lamp_sale.pk,
+                title="Lamp sale",
+            ),
+        ],
     }
 
 
