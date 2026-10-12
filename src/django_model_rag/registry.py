@@ -555,12 +555,14 @@ def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
     return found
 
 
-def _models_reached_by_foreign_keys(
+def _models_reached_by_to_one_links(
     model: type[Model], path: str
 ) -> list[tuple[str, type[Model]]]:
-    """List the models the leading foreign keys of ``path`` reach from ``model``.
+    """List the models the leading to-one links of ``path`` reach from ``model``.
 
-    Each is paired with the lookup, from ``model``, that reaches it.
+    Those links are the forward foreign keys and one-to-ones, and the reverse
+    one-to-ones. Each model is paired with the lookup, from ``model``, that
+    reaches it.
     """
     names: list[str] = []
     reached: list[tuple[str, type[Model]]] = []
@@ -597,7 +599,7 @@ class _Dependencies:
     relations: "tuple[Field[Any, Any] | ForeignObjectRel, ...]" = ()
     """The relations, forward or reverse, named as one-link dependencies."""
     foreign_key_lookups: tuple[tuple[str, type[Model]], ...] = ()
-    """The models the dependencies reach through their leading foreign keys.
+    """The models the dependencies reach through their leading to-one links.
 
     Each is paired with the lookup, from the model, that reaches it.
     """
@@ -627,7 +629,7 @@ def _resolved_dependencies(model: type[Model], depends_on: FieldNames) -> _Depen
         foreign_key_lookups=tuple(
             reached
             for dependency in depends_on
-            for reached in _models_reached_by_foreign_keys(
+            for reached in _models_reached_by_to_one_links(
                 model, _dependency_lookup_path(dependency, relations)
             )
         ),
@@ -852,8 +854,8 @@ class Registry:
         """List the senders whose deletions change the group of ``model``.
 
         They are ``model`` and its proxies, and the models of the reverse
-        foreign keys ``model`` follows, the models it reads through foreign
-        keys, one or a chain, the through models of the many-to-many relations
+        foreign keys ``model`` follows, the models it reads through relations,
+        one or a chain, the through models of the many-to-many relations
         it follows or depends on, and their proxies.
         """
         followed_models = (
@@ -919,10 +921,10 @@ class Registry:
         Those are the models of the foreign keys and many-to-many relations,
         forward or reverse, and of the generic relations it follows, the models
         its lookup paths and dependencies reach through their leading foreign
-        keys, and the models of the many-to-many relations, forward or
-        reverse, it depends on. Each is paired with the lookup, from
-        ``model``, that reaches it. None when ``model`` is registered not to
-        resync on related writes.
+        keys and one-to-ones, the one-to-ones forward or reverse, and the
+        models of the many-to-many relations, forward or reverse, it depends
+        on. Each is paired with the lookup, from ``model``, that reaches it.
+        None when ``model`` is registered not to resync on related writes.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -939,7 +941,7 @@ class Registry:
         read_through_paths = [
             reached
             for path in self._lookup_paths(model)
-            for reached in _models_reached_by_foreign_keys(model, path)
+            for reached in _models_reached_by_to_one_links(model, path)
         ]
         depended_on = [
             *self._dependencies[model].foreign_key_lookups,

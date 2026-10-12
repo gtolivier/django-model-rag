@@ -630,8 +630,8 @@ def _reverse_followers(sender: type[Model], instance: Model) -> list[_Follower]:
 def _followers_reaching(sender: type[Model], instance: Model) -> list[_Follower]:
     """Return the registered rows following ``instance`` through a lookup.
 
-    They reach it through one foreign key of their own, a chain of them, or a
-    many-to-many.
+    They reach it through one foreign key of their own, a chain of foreign keys
+    and one-to-ones, the one-to-ones forward or reverse, or a many-to-many.
     """
     return _followers_looked_up(_followed_lookups, sender, instance)
 
@@ -694,8 +694,9 @@ def _followed_lookups(
 ) -> list[tuple[str, type[Model]]]:
     """Return the lookups through which ``registered_model`` reads ``sender``.
 
-    Each crosses one foreign key, a chain of them, or a many-to-many, and comes
-    with the model it reaches, one that ``sender``'s rows are rows of.
+    Each crosses one foreign key, a chain of foreign keys and one-to-ones, the
+    one-to-ones forward or reverse, or a many-to-many, and comes with the model
+    it reaches, one that ``sender``'s rows are rows of.
     """
     followed_models = _models_of_the_row(sender)
     return [
