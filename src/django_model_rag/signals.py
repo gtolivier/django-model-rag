@@ -484,10 +484,10 @@ def _replace_followers_as_committed(
     it now are looked up from the row as committed: on an update, those the
     save pointed it to; rows attached after the save, in the same transaction;
     and the rows a write sending no signal has since pointed it to. Every row
-    of a registered model reading ``sender`` by a lookup is replaced too,
-    whichever row it reaches. If looking them up fails, ``followers_at_save``
-    are still replaced, but on an update a follower the row was moved to is
-    not.
+    of a registered model reading ``sender`` by a lookup, or following it
+    through a to_field foreign key, is replaced too, whichever row it reaches.
+    If looking them up fails, ``followers_at_save`` are still replaced, but on
+    an update a follower the row was moved to is not.
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
@@ -506,7 +506,11 @@ def _replace_followers_as_committed(
 
 
 def _every_row_reading(sender: type[Model]) -> list[_Follower]:
-    """Return every row of the registered models reading ``sender`` by a lookup."""
+    """Return every row of the registered models a ``sender`` save resyncs whole.
+
+    Those models read ``sender`` by a lookup, or follow it through a to_field
+    foreign key: every row is returned, whichever row it reaches.
+    """
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
