@@ -5506,6 +5506,69 @@ def test_an_output_failing_on_one_deleted_instance_still_receives_the_other_ones
     assert _replaced(built_outputs) == [{f"testapp.category:{tools_pk}": []}]
 
 
+@pytest.mark.django_db
+def test_an_output_failing_on_one_resynced_model_still_receives_the_other_ones_groups(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Two registered models read the Category, neither following the other:
+    # the Offer through a lookup path two foreign keys deep, registered first,
+    # the Listing through a lookup path over its own foreign key, both with no
+    # follow. Neither Category nor Product is registered.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+    rag.register(Listing, fields=["title", "category__name"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the category's save below is observed. Their source keys
+    # are known before the output is configured to fail on one of them.
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+    lamp_stand = Listing.objects.create(
+        title="Lamp stand", link="/lamp-stand/", category=lighting
+    )
+    built_outputs.clear()
+
+    # The output fails on the offer's group, so on the Offer's resync alone.
+    settings.MODEL_RAG_OUTPUT = {
+        "BACKEND": FAILING_ON_KEY_BACKEND,
+        "OPTIONS": {"failing_source_key": f"testapp.offer:{lamp_sale.pk}"},
+    }
+
+    # An error escaping the commit callbacks would fail the test: the commit
+    # itself must not raise.
+    with (
+        caplog.at_level(logging.ERROR, logger=PACKAGE_LOGGER),
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        lighting.name = "Lamps"
+        lighting.save()
+
+    [record] = _package_log_records(caplog)
+    assert record.levelno == logging.ERROR
+    # The record names the model whose resync failed, and carries the error.
+    assert "testapp.offer" in record.getMessage()
+    assert record.exc_info is not None
+    assert isinstance(record.exc_info[1], FailingReplaceError)
+    # The Listing's resync, scheduled by the same commit, still reaches an
+    # output, as committed.
+    assert _received_groups(built_outputs) == {
+        f"testapp.listing:{lamp_stand.pk}": [
+            NormalizedDocument(
+                text="Lamp stand\n\nLamps",
+                source_app_label="testapp",
+                source_model="listing",
+                source_pk=lamp_stand.pk,
+                title="Lamp stand",
+            ),
+        ],
+    }
+
+
 def _selects_by(sql: str, params: Any, lookup: str, value: Any) -> bool:
     """Whether ``sql`` is a SELECT whose ``lookup`` compares a column with ``value``.
 
