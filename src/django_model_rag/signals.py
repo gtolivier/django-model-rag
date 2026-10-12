@@ -285,6 +285,11 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(following_models, instance, _group_replacer)
+    if not rag.is_registered(type(instance)):
+        _schedule_follower_replacements(
+            _every_row_reading(type(instance)),
+            _followed_source_key(type(instance), instance),
+        )
     followers_of_model = _registered_subclasses_following(model, model_link_lookup)
     if followers_of_model:
         # Only a clear leaves primary keys behind, found before it: pk_set is
