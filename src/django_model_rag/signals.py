@@ -487,7 +487,7 @@ def _followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = (
+        return (
             _committed_followers(sender, instance)
             + _every_row_reading(sender)
             + followers_at_save
@@ -495,8 +495,7 @@ def _followers_as_committed(
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
-        followers = followers_at_save
-    return followers
+        return followers_at_save
 
 
 def _every_row_reading(sender: type[Model]) -> list[_Follower]:
@@ -549,18 +548,17 @@ class _FollowerResync:
         self.followed_source_key = followed_source_key
         self.find_followers = find_followers
         self.replaced = replaced
-        self.ran = False
+        self.has_run = False
 
     def __call__(self) -> None:
-        self.ran = True
+        self.has_run = True
         followers = [
             follower
             for follower in self.find_followers()
             if follower not in self.replaced
         ]
         self.replaced.update(followers)
-        for replace_groups in _follower_replacers(followers, self.followed_source_key):
-            replace_groups()
+        _replace_follower_groups(followers, self.followed_source_key)
 
 
 def _resync_followers_at_commit(
@@ -577,41 +575,35 @@ def _resync_followers_at_commit(
         None,
     )
     # One that already ran belongs to an earlier commit run.
-    replaced = set() if latest is None or latest.ran else latest.replaced
+    replaced = set() if latest is None or latest.has_run else latest.replaced
     transaction.on_commit(
         _FollowerResync(followed_source_key, find_followers, replaced)
     )
 
 
-def _follower_replacers(
+def _replace_follower_groups(
     followers: list[_Follower], followed_source_key: str
-) -> list[Callable[[], None]]:
-    """Return one callback per model replacing the groups of its ``followers``."""
+) -> None:
+    """Replace the groups of ``followers``, one batch per model."""
     pks_by_model: dict[type[Model], list[Any]] = {}
     # dict.fromkeys drops the duplicates and keeps the order.
     for follower_model, follower_pk in dict.fromkeys(followers):
         pks_by_model.setdefault(follower_model, []).append(follower_pk)
-    return [
-        _batch_replacer(follower_model, follower_pks, followed_source_key)
-        for follower_model, follower_pks in pks_by_model.items()
-    ]
+    for follower_model, follower_pks in pks_by_model.items():
+        _replace_batch(follower_model, follower_pks, followed_source_key)
 
 
-def _batch_replacer(
+def _replace_batch(
     registered_model: type[Model], pks: list[Any], followed_source_key: str
-) -> Callable[[], None]:
-    """Return a commit callback replacing the groups of ``registered_model``'s rows."""
-
-    def replace_groups_as_committed() -> None:
-        for start in range(0, len(pks), _PKS_PER_QUERY):
-            chunk = pks[start : start + _PKS_PER_QUERY]
-            _send_group(
-                partial(_replace_groups, registered_model, chunk),
-                f"{registered_model._meta.label_lower} instances that follow "
-                f"{followed_source_key}",
-            )
-
-    return replace_groups_as_committed
+) -> None:
+    """Replace the groups of ``registered_model``'s rows ``pks``, as committed."""
+    for start in range(0, len(pks), _PKS_PER_QUERY):
+        chunk = pks[start : start + _PKS_PER_QUERY]
+        _send_group(
+            partial(_replace_groups, registered_model, chunk),
+            f"{registered_model._meta.label_lower} instances that follow "
+            f"{followed_source_key}",
+        )
 
 
 def _replace_groups(registered_model: type[Model], pks: list[Any]) -> None:
