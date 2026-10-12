@@ -28,9 +28,11 @@ from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag, through_model_of
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
-_CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
 _BEFORE_CLEAR = "pre_clear"
-_BEFORE_WRITE = frozenset({"pre_add", "pre_remove", _BEFORE_CLEAR})
+_BEFORE_UNLINK = frozenset({"pre_remove", _BEFORE_CLEAR})
+_AFTER_UNLINK = frozenset({"post_remove", "post_clear"})
+_CHANGING_ACTIONS = frozenset({"post_add"}) | _AFTER_UNLINK
+_BEFORE_WRITE = frozenset({"pre_add"}) | _BEFORE_UNLINK
 # The instance carries the primary keys of the rows its links reach, from before
 # a clear.
 _CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
@@ -272,7 +274,8 @@ def sync_changed_relation(
     many-to-many from a model to itself that is symmetrical or that registered
     models follow from both sides: both sides read the links through the
     relation, so every row reading it is resynced, the instance's own
-    included.
+    included. From a remove() or clear() until it ends, the through model
+    whose rows it deletes is noted, for sync_deleted_instance.
     """
     if not _signals_enabled():
         return
@@ -337,9 +340,9 @@ def sync_changed_relation(
 
 def _note_unlinking(action: str, through: type[Model]) -> None:
     """Remember the through model a remove() or clear() deletes the rows of."""
-    if action in {"pre_remove", _BEFORE_CLEAR}:
+    if action in _BEFORE_UNLINK:
         _through_being_unlinked.set(concrete_model_of(through))
-    elif action in {"post_remove", "post_clear"}:
+    elif action in _AFTER_UNLINK:
         _through_being_unlinked.set(None)
 
 
@@ -964,9 +967,10 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     """Empty the group of a deleted instance, and replace those following it.
 
     Every row of a registered model reading ``sender`` by a lookup, following
-    it through a to_field foreign key, or, unless a queryset deletes it,
-    following a many-to-many whose through model it is, is replaced too,
-    whichever row it reaches. Both happen once the transaction commits.
+    it through a to_field foreign key, or, unless the many-to-many's remove()
+    or clear() deletes it, following a many-to-many whose through model it is,
+    is replaced too, whichever row it reaches. Both happen once the
+    transaction commits.
     """
     if not _signals_enabled():
         return
@@ -976,7 +980,7 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     nearest_registered_model_only = _registered_models(sender)[:1]
     # A many-to-many's remove() and clear() delete the through rows by a
     # queryset, after sending m2m_changed, which resyncs the models they change:
-    # only a delete not made by a queryset resyncs every row following it.
+    # every other delete resyncs every row following it.
     every_row_reading = (
         _every_row_reading_besides_through
         if isinstance(kwargs.get("origin"), QuerySet)
