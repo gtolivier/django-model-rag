@@ -890,7 +890,7 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model in self._without_related_resync:
+        if not self.resyncs_on_related_writes(model):
             return []
 
         return [
@@ -939,7 +939,7 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model in self._without_related_resync:
+        if not self.resyncs_on_related_writes(model):
             return []
         followed = [
             (relation.name, relation.related_model)

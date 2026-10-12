@@ -510,7 +510,10 @@ def _follows_through(registered_model: type[Model], sender: type[Model]) -> bool
 
 
 def _follows_by_to_field(registered_model: type[Model], sender: type[Model]) -> bool:
-    """Return whether ``registered_model`` follows ``sender`` by a to_field key."""
+    """Return whether ``registered_model`` follows ``sender`` by a to_field key.
+
+    A model registered not to resync on related writes follows none.
+    """
     return rag.resyncs_on_related_writes(registered_model) and any(
         not relation.field.foreign_related_fields[0].primary_key
         for relation in _followed_reverse_relations(registered_model, sender)
