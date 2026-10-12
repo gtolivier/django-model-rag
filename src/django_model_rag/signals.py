@@ -517,19 +517,19 @@ def _followers_as_committed(
         return followers_at_save
 
 
-def _every_row_reading(sender: type[Model]) -> list[_Follower]:
+def _every_row_reading(sender: type[Model], *, through: bool = True) -> list[_Follower]:
     """Return every row of the registered models a write to ``sender`` resyncs whole.
 
     Those models read ``sender`` by a lookup, follow it through a to_field
-    foreign key, or follow a many-to-many whose through model it is: every row
-    is returned, whichever row it reaches.
+    foreign key, or, unless ``through`` is false, follow a many-to-many whose
+    through model it is: every row is returned, whichever row it reaches.
     """
     return [
         (registered_model, follower_pk)
         for registered_model in rag.registered_models()
         if _followed_lookups(registered_model, sender)
         or _follows_by_to_field(registered_model, sender)
-        or _follows_through(registered_model, sender)
+        or (through and _follows_through(registered_model, sender))
         for follower_pk in registered_model._base_manager.values_list("pk", flat=True)
     ]
 
@@ -923,10 +923,15 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # Django sends post_delete for each multi-table parent too, under its own
     # sender: the nearest registered model is the only group to empty here.
     nearest_registered_model_only = _registered_models(sender)[:1]
+    # A many-to-many's remove() and clear() delete the through rows by a
+    # queryset, after sending m2m_changed, which resyncs the models they change:
+    # only a delete not made by a queryset resyncs every row following it.
     followers = (
         _reverse_followers(sender, instance)
         + instance.__dict__.pop(_REACHING_FOLLOWERS_ATTRIBUTE, [])
-        + _every_row_reading(sender)
+        + _every_row_reading(
+            sender, through=not isinstance(kwargs.get("origin"), QuerySet)
+        )
     )
     if not (nearest_registered_model_only or followers):
         return

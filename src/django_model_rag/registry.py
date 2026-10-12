@@ -3,7 +3,7 @@
 import inspect
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeAlias, TypeGuard
+from typing import Any, TypeAlias, TypeGuard, cast
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
@@ -12,6 +12,7 @@ from django.db.models import (
     ForeignObject,
     ForeignObjectRel,
     ManyToManyField,
+    ManyToManyRel,
     Model,
 )
 from django.db.models.constants import LOOKUP_SEP
@@ -832,10 +833,14 @@ class Registry:
         foreign keys ``model`` follows, the models it reads through foreign
         keys, one or a chain, and their proxies.
         """
-        followed_models = [
-            relation.related_model
-            for relation in self.followed_reverse_relations(model)
-        ] + [reached for _, reached in self.foreign_key_lookups(model)]
+        followed_models = (
+            [
+                relation.related_model
+                for relation in self.followed_reverse_relations(model)
+            ]
+            + [reached for _, reached in self.foreign_key_lookups(model)]
+            + self._through_models(model)
+        )
         return _model_and_proxies(model) + [
             sender
             for followed_model in followed_models
@@ -843,6 +848,24 @@ class Registry:
             # rows under the concrete model, or under any of its proxies.
             for sender in _model_and_proxies(concrete_model_of(followed_model))
         ]
+
+    def _through_models(self, model: type[Model]) -> list[type[Model]]:
+        """List the through models of the many-to-many relations ``model`` follows."""
+        if model in self._without_related_resync:
+            return []
+
+        through_models = []
+        for relation in self._followed_or_depended_on_relations(model):
+            if not _is_many_to_many(relation):
+                continue
+
+            if isinstance(relation, ManyToManyField):
+                through = relation.remote_field.through
+            else:
+                through = cast("ManyToManyRel", relation).through
+            if through:
+                through_models.append(through)
+        return through_models
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
         """List the reverse foreign keys ``model`` follows or depends on.
