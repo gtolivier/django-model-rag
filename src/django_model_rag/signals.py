@@ -19,13 +19,12 @@ from django.db.models import (
     Q,
     QuerySet,
 )
-from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.extractors import query_name
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
-from django_model_rag.registry import concrete_model_of, rag, through_model_of
+from django_model_rag.registry import concrete_model_of, rag
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _BEFORE_UNLINK = frozenset({"pre_remove", "pre_clear"})
@@ -371,7 +370,7 @@ def _followed_lookups_named(
     """
     return [
         (followed_lookup, reached_model)
-        for followed_lookup, reached_model in rag.foreign_key_lookups(registered_model)
+        for followed_lookup, reached_model in rag.relation_lookups(registered_model)
         if followed_lookup == lookup
     ]
 
@@ -505,16 +504,9 @@ def _is_through_of_followed(sender: type[Model]) -> bool:
 def _follows_through(registered_model: type[Model], sender: type[Model]) -> bool:
     """Return whether ``registered_model`` follows a many-to-many through ``sender``."""
     return any(
-        _through_of(registered_model, lookup) is concrete_model_of(sender)
-        for lookup, _ in rag.foreign_key_lookups(registered_model)
+        concrete_model_of(through) is concrete_model_of(sender)
+        for through in rag.through_models(registered_model)
     )
-
-
-def _through_of(registered_model: type[Model], lookup: str) -> type[Model] | None:
-    """Return the concrete through model of the many-to-many ``lookup`` starts with."""
-    relation = registered_model._meta.get_field(lookup.split(LOOKUP_SEP, maxsplit=1)[0])
-    through = through_model_of(relation)
-    return concrete_model_of(through) if through else None
 
 
 def _follows_by_to_field(registered_model: type[Model], sender: type[Model]) -> bool:
@@ -701,7 +693,7 @@ def _followed_lookups(
     followed_models = _models_of_the_row(sender)
     return [
         (lookup, reached_model)
-        for lookup, reached_model in rag.foreign_key_lookups(registered_model)
+        for lookup, reached_model in rag.relation_lookups(registered_model)
         # A foreign key may name a proxy: it reaches its concrete model's rows.
         if concrete_model_of(reached_model) in followed_models
     ]

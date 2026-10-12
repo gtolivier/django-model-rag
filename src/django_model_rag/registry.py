@@ -531,7 +531,7 @@ def concrete_model_of(model: type[Model]) -> type[Model]:
     return model._meta.concrete_model or model
 
 
-def through_model_of(
+def _through_model_of(
     relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> type[Model] | None:
     """Return the through model of ``relation``, None unless it is a many-to-many."""
@@ -598,7 +598,7 @@ class _Dependencies:
     # quoted: Django's Field is generic for the type checker only
     relations: "tuple[Field[Any, Any] | ForeignObjectRel, ...]" = ()
     """The relations, forward or reverse, named as one-link dependencies."""
-    foreign_key_lookups: tuple[tuple[str, type[Model]], ...] = ()
+    to_one_lookups: tuple[tuple[str, type[Model]], ...] = ()
     """The models the dependencies reach through their leading to-one links.
 
     Each is paired with the lookup, from the model, that reaches it.
@@ -626,7 +626,7 @@ def _resolved_dependencies(model: type[Model], depends_on: FieldNames) -> _Depen
             for dependency in depends_on
             if dependency in relations
         ),
-        foreign_key_lookups=tuple(
+        to_one_lookups=tuple(
             reached
             for dependency in depends_on
             for reached in _models_reached_by_to_one_links(
@@ -863,8 +863,8 @@ class Registry:
                 relation.related_model
                 for relation in self.followed_reverse_relations(model)
             ]
-            + [reached for _, reached in self.foreign_key_lookups(model)]
-            + self._through_models(model)
+            + [reached for _, reached in self.relation_lookups(model)]
+            + self.through_models(model)
         )
         return _model_and_proxies(model) + [
             sender
@@ -874,11 +874,14 @@ class Registry:
             for sender in _model_and_proxies(concrete_model_of(followed_model))
         ]
 
-    def _through_models(self, model: type[Model]) -> list[type[Model]]:
+    def through_models(self, model: type[Model]) -> list[type[Model]]:
         """List the through models of the many-to-many relations ``model`` follows.
 
         Those it depends on in one link count too; none when ``model`` is
         registered not to resync on related writes.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
         """
         if model in self._without_related_resync:
             return []
@@ -886,7 +889,7 @@ class Registry:
         return [
             through
             for relation in self._followed_or_depended_on_relations(model)
-            if (through := through_model_of(relation))
+            if (through := _through_model_of(relation))
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
@@ -915,7 +918,7 @@ class Registry:
         """
         return [*self._followed_relations(model), *self._dependencies[model].relations]
 
-    def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+    def relation_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
         """List the models ``model`` reads through relations, one or a chain.
 
         Those are the models of the foreign keys and many-to-many relations,
@@ -944,7 +947,7 @@ class Registry:
             for reached in _models_reached_by_to_one_links(model, path)
         ]
         depended_on = [
-            *self._dependencies[model].foreign_key_lookups,
+            *self._dependencies[model].to_one_lookups,
             *(
                 (relation.name, relation.related_model)
                 for relation in self._dependencies[model].relations
