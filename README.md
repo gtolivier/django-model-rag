@@ -531,19 +531,20 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   that a registered model reaches through a forward foreign key or
   one-to-one — in `follow` (`Product` with `follow=["category"]`), or as a
   link of a lookup path in `fields`, `title_field`, `language_field` or
-  `url_field` (`"product__category__name"`, however many foreign keys
-  deep) — resyncs every row of that registered model at the commit, not
+  `url_field` (`"product__category__name"`, however many links deep, past
+  a reverse one-to-one too: `"supplier__supplier_profile__body"`) — resyncs every row of that registered model at the commit, not
   only the rows reaching the instance: one query lists their primary keys,
   and `run_queryset()` reloads them in batches of 500, through the
   extractor's `get_queryset()` — a row it leaves out gets an empty group.
   Nothing is pruned. A transaction resyncs each registered model this way
   once, however many of its writes call for it. A `GenericRelation` in
   `follow` works the same way: saving a tag resyncs every photo. Creating
-  an instance resyncs no model this way, since nothing reads it yet: rows
-  attached to it later in the same transaction by a write that sends no
-  signal (`bulk_create()`, `QuerySet.update()`) are not resynced. A path is followed through its
-  leading foreign keys only: past a reverse one-to-one, or through a
-  `GenericRelation`, nothing is resynced.
+  an instance counts as a save: rows attached to it later in the same
+  transaction by a write that sends no signal (`bulk_create()`,
+  `QuerySet.update()`) are read at the commit with the rest — so creating
+  a category resyncs every product, even when none is attached to it yet.
+  A `GenericRelation` in a lookup path is not followed: saving the object
+  it reaches resyncs nothing.
 - **A custom extractor's dependencies.** A custom extractor reads what it
   likes, so it declares the relations its documents depend on:
 
@@ -715,9 +716,8 @@ loading a fixture — though not the many-to-many links it sets (see
 `QuerySet.update()`, `bulk_create()`, `bulk_update()` and raw SQL. A change to
 a related object whose text a registered model reads by any other way than
 those above leaves that model's documents stale until they are saved again:
-a path past a reverse one-to-one or through a `GenericRelation`, or
-whatever a custom extractor reads without declaring it in
-`depends_on`. For all of these, run
+a lookup path through a `GenericRelation`, or whatever a custom extractor
+reads without declaring it in `depends_on`. For all of these, run
 `sync_model_rag`, or sync the instances concerned from a receiver of your
 own: in a `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
