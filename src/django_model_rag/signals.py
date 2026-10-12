@@ -252,7 +252,10 @@ def sync_changed_relation(
     Those are the groups of the instance and of the ``model`` rows that
     ``pk_set`` names, or a clear unlinks, each for a registered model following
     the lookup its own side reads the links with. On a many-to-many from a
-    model to itself, only the side whose lookup is followed is replaced.
+    model to itself, only the side whose lookup is followed is replaced. When
+    the instance's model is not registered, every row of a registered model
+    reading it by a lookup, or following it through a to_field foreign key, is
+    replaced too, whichever row it reaches.
     """
     if not _signals_enabled():
         return
@@ -285,10 +288,10 @@ def sync_changed_relation(
         return
 
     _schedule_commit_callbacks(following_models, instance, _group_replacer)
+    followed_source_key = _followed_source_key(type(instance), instance)
     if not rag.is_registered(type(instance)):
         _schedule_follower_replacements(
-            _every_row_reading(type(instance)),
-            _followed_source_key(type(instance), instance),
+            _every_row_reading(type(instance)), followed_source_key
         )
     followers_of_model = _registered_subclasses_following(model, model_link_lookup)
     if followers_of_model:
@@ -299,7 +302,7 @@ def sync_changed_relation(
         ) | instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, set())
         _schedule_follower_replacements(
             [(follower, pk) for follower in followers_of_model for pk in changed_pks],
-            _followed_source_key(type(instance), instance),
+            followed_source_key,
         )
 
 
@@ -504,7 +507,7 @@ def _followers_as_committed(
 
 
 def _every_row_reading(sender: type[Model]) -> list[_Follower]:
-    """Return every row of the registered models a ``sender`` save resyncs whole.
+    """Return every row of the registered models a write to ``sender`` resyncs whole.
 
     Those models read ``sender`` by a lookup, or follow it through a to_field
     foreign key: every row is returned, whichever row it reaches.
