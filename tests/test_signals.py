@@ -4334,6 +4334,74 @@ def test_deleting_memberships_by_a_queryset_resyncs_every_guild_following_member
 
 
 @pytest.mark.django_db
+def test_deleting_memberships_by_a_queryset_after_a_failed_clear_resyncs_guilds(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # Created and linked before Guild is registered, outside the captured
+    # callbacks: with no MODEL_RAG_OUTPUT, their own saves would fail
+    # otherwise, and only the delete below is observed. The north guild has
+    # three members, two of which leave; another guild exists, with a member
+    # of its own, untouched by the delete.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    joiner = Craftsman.objects.create(name="Joiner")
+    mason = Craftsman.objects.create(name="Mason")
+    north = Guild.objects.create(name="North guild", code="north")
+    Membership.objects.create(guild=north, craftsman=carpenter)
+    Membership.objects.create(guild=north, craftsman=joiner)
+    Membership.objects.create(guild=north, craftsman=mason)
+    smith = Craftsman.objects.create(name="Smith")
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(smith)
+
+    # Only the Guild is registered, following its members through its own
+    # many-to-many, whose through model is Membership: neither Craftsman nor
+    # Membership is.
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    # tests/settings.py defines no MODEL_RAG_OUTPUT: the clear fails before it
+    # deletes the memberships, in a block of its own so that the test's
+    # transaction goes on.
+    with (
+        pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"),
+        transaction.atomic(),
+    ):
+        north.members.clear()
+
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Rows of the through model deleted directly, by a queryset: Django sends
+    # no m2m_changed. Neither the guilds nor the craftsmen are saved again.
+    with django_capture_on_commit_callbacks(execute=True):
+        Membership.objects.filter(
+            guild=north, craftsman__in=[carpenter, joiner]
+        ).delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The failed clear left nothing behind: the guilds read the through model,
+    # so the commit resyncs every guild, the untouched one included, once for
+    # the whole delete.
+    replaced_source_keys = _replaced_source_keys(built_outputs)
+    assert Counter(replaced_source_keys) == {
+        f"testapp.guild:{north.pk}": 1,
+        f"testapp.guild:{south.pk}": 1,
+    }
+    # The changed guild's group as committed: its own name, then its remaining
+    # member's name only, the removed members gone.
+    assert _received_groups(built_outputs)[f"testapp.guild:{north.pk}"] == [
+        NormalizedDocument(
+            text="North guild\n\nMason",
+            source_app_label="testapp",
+            source_model="guild",
+            source_pk=north.pk,
+            title="North guild",
+        ),
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_a_mentor_to_a_person_following_its_mentors_replaces_only_its_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
