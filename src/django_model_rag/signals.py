@@ -218,7 +218,10 @@ def sync_saved_instance(
     # costs the commit no lookup unless it points to a follower or links rows
     # of a followed many-to-many.
     if (
-        followers_at_save or not created or _is_through_of_followed(sender)
+        followers_at_save
+        or not created
+        or _is_through_of_followed(sender)
+        or _is_followed_through_lookups(sender)
     ) and is_followed:
         # Rows may also be attached to it, or it to other rows, before the
         # commit, by a write that sends no signal: its followers are looked up
