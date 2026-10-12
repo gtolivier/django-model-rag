@@ -270,7 +270,12 @@ def sync_changed_relation(
     )
     model_lookups = _registered_lookups_named(model, model_link_lookup)
     if action in _BEFORE_WRITE:
-        _check_output_before_write(following_models, model_lookups)
+        try:
+            _check_output_before_write(following_models, model_lookups)
+        except Exception:
+            # The write never happens, and no post_ action will end the unlinking.
+            _through_being_unlinked.set(None)
+            raise
         return
 
     if action not in _CHANGING_ACTIONS:
