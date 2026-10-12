@@ -2049,6 +2049,60 @@ def test_a_seminar_followed_by_a_multi_column_relation_saved_replaces_every_venu
 
 
 @pytest.mark.django_db
+def test_a_product_saved_through_a_multi_table_child_replaces_every_review(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Review is registered, following its product through its own
+    # foreign key to Product: neither Product nor FeaturedProduct is.
+    rag.register(Review, follow=["product"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the featured product's save below is observed. One review
+    # is of the product saved, the other of another product.
+    lamp = _create_a_desk_lamp(_create_the_lighting_category())
+    sturdy = Review.objects.create(title="Sturdy", product=lamp)
+    hammer = _create_a_hammer(_create_the_tools_category())
+    heavy = Review.objects.create(title="Heavy", product=hammer)
+
+    # Django sends post_save with FeaturedProduct as its sender, not Product,
+    # though the save writes the Product row the reviews read.
+    with django_capture_on_commit_callbacks(execute=True):
+        lamp.name = "Reading lamp"
+        lamp.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every review is replaced, as committed, the one of
+    # the other product included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.review:{sturdy.pk}": [
+            NormalizedDocument(
+                text="Sturdy\n\nReading lamp\n\nA lamp for the desk.\n\nNew",
+                source_app_label="testapp",
+                source_model="review",
+                source_pk=sturdy.pk,
+                title="Sturdy",
+            ),
+        ],
+        f"testapp.review:{heavy.pk}": [
+            NormalizedDocument(
+                text="Heavy\n\nHammer\n\nA hammer for nails.\n\nNew",
+                source_app_label="testapp",
+                source_model="review",
+                source_pk=heavy.pk,
+                title="Heavy",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
