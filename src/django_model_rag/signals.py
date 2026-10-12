@@ -813,7 +813,8 @@ def remember_followers_before_delete(
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Empty the group of a deleted instance, and replace those following it.
 
-    Both happen once the transaction commits.
+    Every row of a registered model reading ``sender`` by a lookup is replaced
+    too, whichever row it reaches. Both happen once the transaction commits.
     """
     if not _signals_enabled():
         return
