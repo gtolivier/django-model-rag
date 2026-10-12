@@ -299,7 +299,9 @@ def sync_changed_relation(
     is_symmetrical = instance_side is model_side
     followers_of_model = _registered_subclasses_following(model, model_link_lookup)
     follows_both_sides = bool(following_models and followers_of_model)
-    resyncs_readers_instead = is_symmetrical or follows_both_sides
+    resyncs_readers_instead = is_symmetrical or (
+        follows_both_sides and model is type(instance)
+    )
     if not resyncs_readers_instead:
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
     followed_source_key = _followed_source_key(type(instance), instance)
