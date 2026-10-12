@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Callable, Iterable
+from contextvars import ContextVar
 from functools import partial, reduce
 from operator import or_
 from typing import Any, TypeAlias, cast
@@ -46,6 +47,12 @@ _Follower: TypeAlias = tuple[type[Model], Any]
 _LinkRelation: TypeAlias = "ManyToManyField[Any, Any] | ManyToManyRel"
 
 logger = logging.getLogger("django_model_rag")
+
+# The through model whose rows a remove() or clear() is deleting: from its
+# pre_ m2m_changed to its post_ one.
+_through_being_unlinked: ContextVar[type[Model] | None] = ContextVar(
+    "model_rag_through_being_unlinked", default=None
+)
 
 
 def _signals_enabled() -> bool:
@@ -271,6 +278,7 @@ def sync_changed_relation(
         return
 
     through = kwargs["sender"]
+    _note_unlinking(action, through)
     reverse = kwargs["reverse"]
     relations = _link_relations(through, instance, model, reverse)
     if relations is None:
@@ -325,6 +333,14 @@ def sync_changed_relation(
             [(follower, pk) for follower in followers_of_model for pk in changed_pks],
             followed_source_key,
         )
+
+
+def _note_unlinking(action: str, through: type[Model]) -> None:
+    """Remember the through model a remove() or clear() deletes the rows of."""
+    if action in {"pre_remove", _BEFORE_CLEAR}:
+        _through_being_unlinked.set(concrete_model_of(through))
+    elif action in {"post_remove", "post_clear"}:
+        _through_being_unlinked.set(None)
 
 
 def _check_output_before_write(
@@ -964,6 +980,7 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     every_row_reading = (
         _every_row_reading_besides_through
         if isinstance(kwargs.get("origin"), QuerySet)
+        and _through_being_unlinked.get() is concrete_model_of(sender)
         else _every_row_reading
     )
     followers = (
