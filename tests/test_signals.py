@@ -3837,6 +3837,53 @@ def test_adding_a_course_to_a_topic_following_its_courses_replaces_the_topics_gr
 
 
 @pytest.mark.django_db
+def test_adding_a_course_to_a_topic_resyncs_no_lesson_reading_its_topic(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # The Topic follows its courses; the Lesson reads its topic's title by a
+    # lookup path, with no follow. Course itself is not registered.
+    _register_topics_following_their_courses()
+    rag.register(Lesson, fields=["title", "topic__title"])
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves never run, so only the add below is observed. A lesson exists on
+    # the topic the course is added to, another on a topic left untouched.
+    woodworking = _create_the_woodworking_topic()
+    carving = _create_the_carving_topic()
+    Lesson.objects.create(title="Dovetail joints", topic=woodworking)
+    Lesson.objects.create(title="Spoon carving", topic=carving)
+    basics = Course.objects.create(title="Woodworking basics")
+
+    # Added from the topic's side: the add writes only the link between the
+    # topic and the course. No Topic row and no Course row is saved, so no
+    # lesson's text can change.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The Topic's group alone is replaced, as committed: its own title and
+    # summary, then the added course's title. No lesson's group is replaced.
+    assert _replaced(built_outputs) == [
+        {
+            f"testapp.topic:{woodworking.pk}": [
+                NormalizedDocument(
+                    text="Woodworking\n\nJoints and finishes.\n\nWoodworking basics",
+                    source_app_label="testapp",
+                    source_model="topic",
+                    source_pk=woodworking.pk,
+                    title="Woodworking",
+                ),
+            ],
+        }
+    ]
+
+
+@pytest.mark.django_db
 def test_adding_a_topic_to_a_course_both_sides_following_resyncs_every_topic(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
