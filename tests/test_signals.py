@@ -42,11 +42,13 @@ from tests.testapp.models import (
     Offer,
     Page,
     Person,
+    Photo,
     Product,
     Review,
     Showroom,
     Supplier,
     SupplierProfile,
+    Tag,
     Team,
     TextPlugin,
     TextPluginProxy,
@@ -1820,6 +1822,58 @@ def test_a_course_followed_by_reverse_many_to_many_saved_replaces_every_topic(
                 source_model="topic",
                 source_pk=carving.pk,
                 title="Carving",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_tag_followed_by_generic_relation_saved_replaces_every_photo_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Photo is registered, following its tags through its generic
+    # relation: Tag itself is not.
+    rag.register(Photo, follow=["tags"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the tag's save below is observed. One photo carries the
+    # tag saved, the other only a tag of its own.
+    workbench = Photo.objects.create(title="Workbench")
+    oak = Tag.objects.create(content_object=workbench, label="Oak")
+    lathe = Photo.objects.create(title="Lathe")
+    Tag.objects.create(content_object=lathe, label="Turning")
+
+    with django_capture_on_commit_callbacks(execute=True):
+        oak.label = "Walnut"
+        oak.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every photo is replaced, as committed, the one
+    # without the tag saved included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.photo:{workbench.pk}": [
+            NormalizedDocument(
+                text="Workbench\n\nWalnut",
+                source_app_label="testapp",
+                source_model="photo",
+                source_pk=workbench.pk,
+                title="Workbench",
+            ),
+        ],
+        f"testapp.photo:{lathe.pk}": [
+            NormalizedDocument(
+                text="Lathe\n\nTurning",
+                source_app_label="testapp",
+                source_model="photo",
+                source_pk=lathe.pk,
+                title="Lathe",
             ),
         ],
     }
