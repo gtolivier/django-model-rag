@@ -1558,6 +1558,58 @@ def test_a_followed_topic_deleted_with_no_output_fails_and_signals_off_costs_not
 
 
 @pytest.mark.django_db
+def test_a_topic_followed_by_a_set_null_foreign_key_deleted_replaces_every_workshop(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Workshop is registered, following its topic through its own
+    # foreign key, SET_NULL on delete: Topic itself is not.
+    _register_workshops_following_their_topic()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the topic's delete below is observed. One workshop is on
+    # the topic deleted, the other on another topic.
+    woodworking = _create_the_woodworking_topic()
+    pottery = _create_a_pottery_workshop(woodworking)
+    carving = _create_the_carving_topic()
+    whittling = Workshop.objects.create(title="Whittling", topic=carving)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.delete()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The delete resyncs the whole registered model at the
+    # commit: the group of every workshop is replaced, as committed, the one
+    # on the other topic included, unchanged; the one on the deleted topic
+    # has lost it, its foreign key set to null.
+    assert _received_groups(built_outputs) == {
+        f"testapp.workshop:{pottery.pk}": [
+            NormalizedDocument(
+                text="Pottery",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=pottery.pk,
+                title="Pottery",
+            ),
+        ],
+        f"testapp.workshop:{whittling.pk}": [
+            NormalizedDocument(
+                text="Whittling\n\nCarving\n\nKnives and gouges.",
+                source_app_label="testapp",
+                source_model="workshop",
+                source_pk=whittling.pk,
+                title="Whittling",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
