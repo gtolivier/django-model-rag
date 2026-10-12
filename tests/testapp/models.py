@@ -253,19 +253,6 @@ class Workshop(models.Model):
     )
 
 
-# --- A foreign key to a model with an optional relation -----------------
-# A Session points to a Workshop, which may point to a Topic through its
-# SET_NULL foreign key: a lookup path from a Session reaches the Topic two
-# links deep, the last one nulled when the Topic is deleted.
-
-
-class Session(models.Model):
-    title = models.CharField(max_length=200)
-    workshop = models.ForeignKey(
-        Workshop, related_name="sessions", on_delete=models.CASCADE
-    )
-
-
 # --- A many-to-many relation --------------------------------------------
 # A Course covers several Topics, and a Topic may belong to several Courses.
 
@@ -273,17 +260,6 @@ class Session(models.Model):
 class Course(models.Model):
     title = models.CharField(max_length=200)
     topics = models.ManyToManyField(Topic, related_name="courses")
-
-
-# --- A multi-table child of a model with a many-to-many -----------------
-# A MasterClass is a Course with an instructor of its own, in a table of its
-# own: it inherits the Course's many-to-many ``topics``, whose links name its
-# Course row, yet Django sends m2m_changed with the MasterClass, not a Course,
-# as its instance.
-
-
-class MasterClass(Course):
-    instructor = models.CharField(max_length=200)
 
 
 # --- A reverse relation without a related_name --------------------------
@@ -348,19 +324,6 @@ class SupplierOrder(models.Model):
 
 class FeaturedProduct(Product):
     tagline = models.CharField(max_length=200)
-
-
-# --- A foreign key to a multi-table child -------------------------------
-# A Spotlight points to a FeaturedProduct, which reaches its Product row by
-# the implicit parent link ``product_ptr``: a lookup path from a Spotlight
-# crosses that link past its first one.
-
-
-class Spotlight(models.Model):
-    title = models.CharField(max_length=200)
-    featured_product = models.ForeignKey(
-        FeaturedProduct, related_name="spotlights", on_delete=models.CASCADE
-    )
 
 
 # --- Multi-table inheritance under a primary key of its own -------------
@@ -668,31 +631,6 @@ class Shelf(models.Model):
     )
 
 
-# --- A foreign key to a unique, nullable column -------------------------
-# A Bin may point to a Depot by the Depot's unique code, a slug, not by its
-# primary key, or to nothing, its foreign key being nullable. A Depot's code
-# is nullable too: a Depot may have none yet, stored as None. The Depot
-# reaches its Bins by the reverse foreign key ``bins``, matched to it by that
-# code.
-
-
-class Depot(models.Model):
-    name = models.CharField(max_length=200)
-    code = models.SlugField(unique=True, blank=True, null=True)
-
-
-class Bin(models.Model):
-    label = models.CharField(max_length=100)
-    depot = models.ForeignKey(
-        Depot,
-        to_field="code",
-        related_name="bins",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
-
-
 # --- A default manager that already follows a foreign key --------------
 # A Listing's default manager follows its foreign key ``category`` with
 # select_related(), as a project may do so that every listing it shows comes
@@ -877,19 +815,6 @@ class CategoryProxy(Category):
         proxy = True
 
 
-# --- A foreign key to a proxy model -------------------------------------
-# A Banner points to a CategoryProxy, not to Category: its foreign key reaches
-# the Category's row, yet names the proxy as its model, while saving a plain
-# Category sends the save's signals with Category as their sender.
-
-
-class Banner(models.Model):
-    title = models.CharField(max_length=200)
-    category = models.ForeignKey(
-        CategoryProxy, related_name="banners", on_delete=models.CASCADE
-    )
-
-
 # --- A proxy of a followed model ----------------------------------------
 # A TextPluginProxy is a TextPlugin under another class: saving or deleting
 # one writes or deletes the TextPlugin's row, which its Page may follow, yet
@@ -911,56 +836,6 @@ class TextPluginProxy(TextPlugin):
 class TopicProxy(Topic):
     class Meta:
         proxy = True
-
-
-# --- A many-to-many to a proxy model ------------------------------------
-# A Curriculum covers several SubjectProxies, not Subjects: its many-to-many
-# reaches the Subject's rows, yet names the proxy as its model, and Django
-# sends m2m_changed with the proxy, not Subject, as the model of the links'
-# other side. Subject has a model of its own, so that no other model's delete
-# gains the delete of its links.
-
-
-class Subject(models.Model):
-    title = models.CharField(max_length=200)
-
-
-class SubjectProxy(Subject):
-    class Meta:
-        proxy = True
-
-
-class Curriculum(models.Model):
-    title = models.CharField(max_length=200)
-    subjects = models.ManyToManyField(SubjectProxy, related_name="curricula")
-
-
-# --- A SET_NULL foreign key to a proxy model ----------------------------
-# A Meetup may point to a ThemeProxy, not to Theme, or to nothing: its
-# foreign key reaches the Theme's row and is set to null when that row is
-# deleted, yet names the proxy as its model, while deleting a plain Theme
-# sends the delete's signals with Theme as their sender. Theme has a model
-# of its own, so that no other model's delete gains the Meetup's update.
-
-
-class Theme(models.Model):
-    name = models.CharField(max_length=200)
-
-
-class ThemeProxy(Theme):
-    class Meta:
-        proxy = True
-
-
-class Meetup(models.Model):
-    title = models.CharField(max_length=200)
-    theme = models.ForeignKey(
-        ThemeProxy,
-        related_name="meetups",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-    )
 
 
 # --- A multi-table child of a followed model ----------------------------
@@ -1013,17 +888,6 @@ class Seminar(models.Model):
         to_fields=["city", "name"],
         related_name="seminars",
     )
-
-
-# --- A foreign key to a model with a multi-column relation --------------
-# A Talk points to a Seminar by a plain foreign key, and the Seminar points to
-# its Venue through the multi-column ForeignObject ``venue``: a lookup path
-# from a Talk crosses that relation past its first link.
-
-
-class Talk(models.Model):
-    title = models.CharField(max_length=200)
-    seminar = models.ForeignKey(Seminar, related_name="talks", on_delete=models.CASCADE)
 
 
 # --- A multi-column relation over integer columns -----------------------
