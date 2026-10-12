@@ -3206,6 +3206,68 @@ def test_adding_a_topic_to_a_course_following_its_topics_resyncs_no_other_course
 
 
 @pytest.mark.django_db
+def test_adding_a_course_to_a_topic_courses_following_their_topics_resyncs_every_course(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many: Topic itself is not.
+    _register_courses_following_their_topics()
+
+    # Created and linked outside the captured callbacks: their commit
+    # callbacks never run, so only the add below is observed. Another course
+    # exists, with a topic of its own, untouched by the add.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    carving = _create_the_carving_topic()
+    whittling = Course.objects.create(title="Whittling basics")
+    whittling.topics.add(carving)
+
+    # Added from the topic's side: Django sends m2m_changed with the topic,
+    # which is not registered, as its instance. Neither row is saved again:
+    # the add writes only the link between them.
+    with django_capture_on_commit_callbacks(execute=True):
+        woodworking.courses.add(basics)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The instance side is an unregistered topic, so the commit resyncs every
+    # course, the untouched one included: each course's group is replaced in
+    # exactly one replace call, however the groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.course:{basics.pk}": 1,
+        f"testapp.course:{whittling.pk}": 1,
+    }
+    # Each replaced as committed: its own title, then its topic's text.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics\n\nWoodworking\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+                title="Woodworking basics",
+            ),
+        ],
+        f"testapp.course:{whittling.pk}": [
+            NormalizedDocument(
+                text="Whittling basics\n\nCarving\n\nKnives and gouges.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=whittling.pk,
+                title="Whittling basics",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_removing_a_topic_from_a_course_following_its_topics_replaces_the_courses_group(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
