@@ -80,6 +80,12 @@ def _replaced(built_outputs: list[TrackedRecordingOutput]) -> ReplaceCalls:
     return [groups for output in built_outputs for groups in output.replaced]
 
 
+def _replaced_source_keys(built_outputs: list[TrackedRecordingOutput]) -> list[str]:
+    """The source key of every group replaced, across every output built, once
+    per replace call that carried it, in call order."""
+    return [source_key for groups in _replaced(built_outputs) for source_key in groups]
+
+
 def _received_groups(
     built_outputs: list[TrackedRecordingOutput],
 ) -> dict[str, list[NormalizedDocument]]:
@@ -279,6 +285,14 @@ def _create_the_carving_topic() -> Topic:
     return Topic.objects.create(
         summary="Knives and gouges.", title="Carving", slug="carving"
     )
+
+
+def _create_the_whittling_course_on_carving() -> Course:
+    """Create the Carving topic, then the Whittling basics course, linked to it."""
+    carving = _create_the_carving_topic()
+    whittling = Course.objects.create(title="Whittling basics")
+    whittling.topics.add(carving)
+    return whittling
 
 
 @pytest.mark.django_db
@@ -549,6 +563,11 @@ def _create_the_about_page() -> Page:
 def _create_the_workshop_page() -> Page:
     """Create the Our workshop page."""
     return Page.objects.create(title="Our workshop", slug="our-workshop")
+
+
+def _create_the_news_page() -> Page:
+    """Create the News page."""
+    return Page.objects.create(title="News", slug="news")
 
 
 # The body a text plugin is created with unless another one is given, and the
@@ -1060,6 +1079,36 @@ def _register_offers_reading_their_category_two_foreign_keys_deep() -> None:
     rag.register(Offer, fields=["title", "product__category__name"])
 
 
+@dataclass(frozen=True, kw_only=True)
+class _OfferInEachCategory:
+    """The rows _create_an_offer_in_tools_and_in_lighting() creates that the
+    tests name."""
+
+    tools: Category
+    hammer_deal: Offer
+    lighting: Category
+    lamp: Product
+    lamp_sale: Offer
+
+
+def _create_an_offer_in_tools_and_in_lighting() -> _OfferInEachCategory:
+    """Create the Tools category, a Hammer in it and its Hammer deal offer, then
+    the Lighting category, a Desk lamp in it and its Lamp sale offer."""
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+    return _OfferInEachCategory(
+        tools=tools,
+        hammer_deal=hammer_deal,
+        lighting=lighting,
+        lamp=lamp,
+        lamp_sale=lamp_sale,
+    )
+
+
 def _create_the_garden_category() -> Category:
     """Create the Garden category."""
     return Category.objects.create(name="Garden")
@@ -1101,12 +1150,8 @@ def test_a_product_in_the_middle_of_an_offer_lookup_path_saved_replaces_every_of
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the product's save below is observed. One offer is on the
     # product saved, the other on another product, in another category.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+    offers = _create_an_offer_in_tools_and_in_lighting()
+    hammer_deal, lamp, lamp_sale = offers.hammer_deal, offers.lamp, offers.lamp_sale
 
     with django_capture_on_commit_callbacks(execute=True):
         lamp.name = "Reading lamp"
@@ -1210,7 +1255,7 @@ def test_a_plugin_bulk_created_after_its_page_save_is_replaced_at_the_commit(
         # Attached after the page's save, in the same transaction, by a write
         # that sends no signal: only the page's save is observed.
         (chairs,) = TextPlugin.objects.bulk_create(
-            [TextPlugin(page=about, body="We build chairs by hand.")]
+            [TextPlugin(page=about, body=_PLUGIN_BODY)]
         )
 
     # Merged across replace calls: how the groups are batched is not what this
@@ -1240,7 +1285,7 @@ def test_a_plugin_moved_by_update_after_its_page_save_is_replaced_at_the_commit(
 
     # Created outside the captured callbacks: their commit callbacks never
     # run. The plugin starts on another page; the page it moves to has none.
-    news = Page.objects.create(title="News", slug="news")
+    news = _create_the_news_page()
     chairs = _create_a_plugin_on(news)
     about = _create_the_about_page()
 
@@ -1280,7 +1325,7 @@ def test_a_plugin_moved_away_by_update_after_its_page_save_is_replaced_at_the_co
     # run. The plugin starts on the saved page; the page it moves to has none.
     about = _create_the_about_page()
     chairs = _create_a_plugin_on(about)
-    news = Page.objects.create(title="News", slug="news")
+    news = _create_the_news_page()
 
     with django_capture_on_commit_callbacks(execute=True):
         about.title = "Our workshop"
@@ -1373,7 +1418,7 @@ def test_a_plugin_created_then_moved_by_update_replaces_both_pages_at_commit(
     workshop = _create_the_workshop_page()
 
     with django_capture_on_commit_callbacks(execute=True):
-        chairs = TextPlugin.objects.create(page=about, body="We build chairs by hand.")
+        chairs = _create_a_plugin_on(about)
         # Moved to the other page after its creation, in the same transaction,
         # by a write that sends no signal: only the creation, on its first
         # page, is observed.
@@ -1930,9 +1975,7 @@ def test_a_topic_followed_by_many_to_many_saved_replaces_every_course_at_the_com
     woodworking = _create_the_woodworking_topic()
     basics = Course.objects.create(title="Woodworking basics")
     basics.topics.add(woodworking)
-    carving = _create_the_carving_topic()
-    whittling = Course.objects.create(title="Whittling basics")
-    whittling.topics.add(carving)
+    whittling = _create_the_whittling_course_on_carving()
 
     with django_capture_on_commit_callbacks(execute=True):
         # A save alone: no link is written, so no m2m_changed is sent.
@@ -2332,12 +2375,9 @@ def test_several_writes_to_models_an_offer_reads_in_one_transaction_resync_it_on
     # run, so only the writes below are observed. One offer is on the product
     # and in the category saved, the other on another product, in another
     # category.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+    offers = _create_an_offer_in_tools_and_in_lighting()
+    hammer_deal, lamp_sale = offers.hammer_deal, offers.lamp_sale
+    lighting, lamp = offers.lighting, offers.lamp
 
     with django_capture_on_commit_callbacks(execute=True):
         # Two saves of one model the Offer reads, then one of another.
@@ -2353,9 +2393,7 @@ def test_several_writes_to_models_an_offer_reads_in_one_transaction_resync_it_on
     # However many writes touch the models the Offer reads, the commit
     # resyncs it once: each offer's group is replaced in exactly one replace
     # call, however the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.offer:{hammer_deal.pk}": 1,
         f"testapp.offer:{lamp_sale.pk}": 1,
@@ -2401,15 +2439,12 @@ def test_a_category_read_by_two_registered_models_saved_resyncs_each_of_them_onc
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the category's save below is observed. Of each registered
     # model, one row is in the category saved, the other in another category.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    offers = _create_an_offer_in_tools_and_in_lighting()
+    hammer_deal, lamp_sale = offers.hammer_deal, offers.lamp_sale
+    tools, lighting = offers.tools, offers.lighting
     hammer_rack = Listing.objects.create(
         title="Hammer rack", link="/hammer-rack/", category=tools
     )
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
     lamp_stand = Listing.objects.create(
         title="Lamp stand", link="/lamp-stand/", category=lighting
     )
@@ -2423,9 +2458,7 @@ def test_a_category_read_by_two_registered_models_saved_resyncs_each_of_them_onc
     # The one save resyncs both registered models at the commit, each once:
     # every row's group is replaced in exactly one replace call, however the
     # groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.offer:{hammer_deal.pk}": 1,
         f"testapp.offer:{lamp_sale.pk}": 1,
@@ -2495,12 +2528,8 @@ def test_a_model_registered_with_no_related_resync_still_replaces_its_own_saved_
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the writes below are observed. One offer is in each
     # category.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    Offer.objects.create(title="Lamp sale", product=lamp)
+    offers = _create_an_offer_in_tools_and_in_lighting()
+    hammer_deal, lighting = offers.hammer_deal, offers.lighting
 
     with django_capture_on_commit_callbacks(execute=True):
         # A write to the model the Offer reads: the offer in that category
@@ -3195,9 +3224,7 @@ def test_updating_a_match_followed_by_two_registered_models_looks_each_up_once(
         ],
     }
     # Each group sent once: no following row is replaced twice.
-    sent_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    sent_source_keys = _replaced_source_keys(built_outputs)
     assert sorted(sent_source_keys) == sorted(
         [
             f"testapp.team:{lyon.pk}",
@@ -3309,9 +3336,7 @@ def test_adding_a_topic_to_a_course_following_its_topics_resyncs_no_other_course
     # exists, with a topic of its own, untouched by the add.
     woodworking = _create_the_woodworking_topic()
     basics = Course.objects.create(title="Woodworking basics")
-    carving = _create_the_carving_topic()
-    whittling = Course.objects.create(title="Whittling basics")
-    whittling.topics.add(carving)
+    _create_the_whittling_course_on_carving()
 
     with django_capture_on_commit_callbacks(execute=True):
         basics.topics.add(woodworking)
@@ -3320,9 +3345,7 @@ def test_adding_a_topic_to_a_course_following_its_topics_resyncs_no_other_course
 
     # The add is handled on the course's side alone: its group is replaced in
     # exactly one replace call, and no other course is resynced.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {f"testapp.course:{basics.pk}": 1}
     # Replaced as committed: its own title, then the added topic's text.
     assert _received_groups(built_outputs) == {
@@ -3355,9 +3378,7 @@ def test_adding_a_course_to_a_topic_courses_following_their_topics_resyncs_every
     # exists, with a topic of its own, untouched by the add.
     woodworking = _create_the_woodworking_topic()
     basics = Course.objects.create(title="Woodworking basics")
-    carving = _create_the_carving_topic()
-    whittling = Course.objects.create(title="Whittling basics")
-    whittling.topics.add(carving)
+    whittling = _create_the_whittling_course_on_carving()
 
     # Added from the topic's side: Django sends m2m_changed with the topic,
     # which is not registered, as its instance. Neither row is saved again:
@@ -3370,9 +3391,7 @@ def test_adding_a_course_to_a_topic_courses_following_their_topics_resyncs_every
     # The instance side is an unregistered topic, so the commit resyncs every
     # course, the untouched one included: each course's group is replaced in
     # exactly one replace call, however the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.course:{basics.pk}": 1,
         f"testapp.course:{whittling.pk}": 1,
@@ -3419,9 +3438,7 @@ def test_adding_a_course_to_a_registered_topic_followed_by_courses_resyncs_every
     # exists, with a topic of its own, untouched by the add.
     woodworking = _create_the_woodworking_topic()
     basics = Course.objects.create(title="Woodworking basics")
-    carving = _create_the_carving_topic()
-    whittling = Course.objects.create(title="Whittling basics")
-    whittling.topics.add(carving)
+    whittling = _create_the_whittling_course_on_carving()
 
     # Added from the topic's side: Django sends m2m_changed with the topic,
     # registered this time, as its instance, and the course among the primary
@@ -3437,9 +3454,7 @@ def test_adding_a_course_to_a_registered_topic_followed_by_courses_resyncs_every
     # registered: each course's group is replaced in exactly one replace call,
     # however the groups are batched. The topic follows nothing, so its own
     # group is not replaced.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.course:{basics.pk}": 1,
         f"testapp.course:{whittling.pk}": 1,
@@ -3487,9 +3502,7 @@ def test_clearing_the_courses_of_a_topic_followed_by_courses_resyncs_every_cours
     basics = Course.objects.create(title="Woodworking basics")
     joinery = Course.objects.create(title="Joinery")
     woodworking.courses.add(basics, joinery)
-    carving = _create_the_carving_topic()
-    whittling = Course.objects.create(title="Whittling basics")
-    whittling.topics.add(carving)
+    whittling = _create_the_whittling_course_on_carving()
 
     # Cleared from the topic's side: Django sends m2m_changed with the topic,
     # which is not registered, as its instance. No row is saved again: the
@@ -3502,9 +3515,7 @@ def test_clearing_the_courses_of_a_topic_followed_by_courses_resyncs_every_cours
     # The instance side is an unregistered topic, so the commit resyncs every
     # course, the untouched one included: each course's group is replaced in
     # exactly one replace call, however the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.course:{basics.pk}": 1,
         f"testapp.course:{joinery.pk}": 1,
@@ -3695,9 +3706,7 @@ def test_adding_a_topic_to_a_course_both_sides_following_resyncs_every_topic(
     # their courses, so the commit resyncs every topic, the untouched one
     # included. Each group is replaced in exactly one replace call, however
     # the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.course:{basics.pk}": 1,
         f"testapp.topic:{woodworking.pk}": 1,
@@ -4028,9 +4037,7 @@ def test_creating_a_membership_guilds_following_their_members_resyncs_every_guil
     # The guilds read the through model, so the commit resyncs every guild,
     # the untouched one included: each guild's group is replaced in exactly
     # one replace call, however the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.guild:{north.pk}": 1,
         f"testapp.guild:{south.pk}": 1,
@@ -4085,9 +4092,7 @@ def test_deleting_a_membership_guilds_following_their_members_resyncs_every_guil
     # The guilds read the through model, so the commit resyncs every guild,
     # the untouched one included: each guild's group is replaced in exactly
     # one replace call, however the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.guild:{north.pk}": 1,
         f"testapp.guild:{south.pk}": 1,
@@ -4146,9 +4151,7 @@ def test_deleting_memberships_by_a_queryset_resyncs_every_guild_following_member
     # the untouched one included, once for the whole delete: each guild's
     # group is replaced in exactly one replace call, however the groups are
     # batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.guild:{north.pk}": 1,
         f"testapp.guild:{south.pk}": 1,
@@ -4402,9 +4405,7 @@ def test_adding_a_mentor_to_a_person_following_both_sides_resyncs_every_person(
     # untouched one included. Each person's group is replaced in exactly one
     # replace call, however the groups are batched: the resync and the
     # replacement of the instance do not replace Ada's group twice.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.person:{ada.pk}": 1,
         f"testapp.person:{bob.pk}": 1,
@@ -4476,9 +4477,7 @@ def test_adding_a_mentor_to_a_person_following_its_mentees_resyncs_every_person(
     # so the commit resyncs every person, Ada and the untouched one included.
     # Each person's group is replaced in exactly one replace call, however the
     # groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.person:{ada.pk}": 1,
         f"testapp.person:{bob.pk}": 1,
@@ -4546,9 +4545,7 @@ def test_adding_a_friend_to_a_friend_following_its_friends_resyncs_every_friend(
     # read through the relation, so the commit resyncs every friend, the
     # untouched one included: each friend's group is replaced in exactly one
     # replace call, however the groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.friend:{ada.pk}": 1,
         f"testapp.friend:{bob.pk}": 1,
@@ -5640,12 +5637,7 @@ def test_a_category_an_offer_reads_saved_in_a_rolled_back_transaction_resyncs_no
     # Created before Offer is registered: in autocommit (transaction=True),
     # their own commit callbacks would otherwise run, and send the offers'
     # groups.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    Offer.objects.create(title="Hammer deal", product=hammer)
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    Offer.objects.create(title="Lamp sale", product=lamp)
+    lighting = _create_an_offer_in_tools_and_in_lighting().lighting
 
     # Only the Offer is registered, reading its product's category's name
     # through a lookup path two foreign keys deep, with no follow: a save of
@@ -5679,12 +5671,9 @@ def test_a_write_after_a_rolled_back_savepoint_that_scheduled_the_resync_resyncs
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the writes below are observed. One offer is in each
     # category.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+    offers = _create_an_offer_in_tools_and_in_lighting()
+    hammer_deal, lamp_sale = offers.hammer_deal, offers.lamp_sale
+    tools, lighting = offers.tools, offers.lighting
 
     with django_capture_on_commit_callbacks(execute=True):
         # The first write the Offer reads happens in a savepoint (a nested
@@ -5704,9 +5693,7 @@ def test_a_write_after_a_rolled_back_savepoint_that_scheduled_the_resync_resyncs
     # The later write still resyncs every offer at the commit, each once:
     # each offer's group is replaced in exactly one replace call, however the
     # groups are batched.
-    replaced_source_keys = [
-        source_key for groups in _replaced(built_outputs) for source_key in groups
-    ]
+    replaced_source_keys = _replaced_source_keys(built_outputs)
     assert Counter(replaced_source_keys) == {
         f"testapp.offer:{hammer_deal.pk}": 1,
         f"testapp.offer:{lamp_sale.pk}": 1,
@@ -5753,12 +5740,7 @@ def test_a_category_an_offer_reads_saved_with_signals_off_resyncs_nothing(
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the category's save below is observed. One offer is in each
     # category.
-    tools = _create_the_tools_category()
-    hammer = _create_a_hammer(tools)
-    Offer.objects.create(title="Hammer deal", product=hammer)
-    lighting = _create_the_lighting_category()
-    lamp = _create_a_plain_desk_lamp(lighting)
-    Offer.objects.create(title="Lamp sale", product=lamp)
+    lighting = _create_an_offer_in_tools_and_in_lighting().lighting
 
     settings.MODEL_RAG_SIGNALS = False
 
@@ -6049,26 +6031,21 @@ def test_an_output_failing_on_one_resynced_model_still_receives_the_other_ones_g
     }
 
 
-def _selects_by(sql: str, params: Any, lookup: str, value: Any) -> bool:
-    """Whether ``sql`` is a SELECT whose ``lookup`` compares a column with ``value``.
-
-    The parameter compared is the lookup's own, found by counting the
-    placeholders before it: a query's other parameters (such as the constant
-    exists() selects) may hold the same value without being the lookup's.
-    """
-    if not sql.startswith("SELECT") or lookup not in sql:
-        return False
-    lookup_param_index = sql[: sql.index(lookup)].count("%s")
-    return bool(params[lookup_param_index] == value)
-
-
 # How a query on Category compares a row's primary key with a parameter.
 CATEGORY_PK_LOOKUP = '"testapp_category"."id" = %s'
 
 
 def _reads_category_row(sql: str, params: Any, pk: Any) -> bool:
-    """Whether ``sql`` is a SELECT looking up the Category row of primary key ``pk``."""
-    return _selects_by(sql, params, CATEGORY_PK_LOOKUP, pk)
+    """Whether ``sql`` is a SELECT looking up the Category row of primary key ``pk``.
+
+    The parameter compared is the lookup's own, found by counting the
+    placeholders before it: a query's other parameters (such as the constant
+    exists() selects) may hold the same value without being the lookup's.
+    """
+    if not sql.startswith("SELECT") or CATEGORY_PK_LOOKUP not in sql:
+        return False
+    lookup_param_index = sql[: sql.index(CATEGORY_PK_LOOKUP)].count("%s")
+    return bool(params[lookup_param_index] == pk)
 
 
 @pytest.mark.django_db
