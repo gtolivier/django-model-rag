@@ -34,12 +34,15 @@ from tests.testapp.models import (
     CategoryProxy,
     ClearanceProduct,
     Course,
+    Craftsman,
     Exhibit,
     FeaturedProduct,
     Friend,
+    Guild,
     Lesson,
     Listing,
     Match,
+    Membership,
     Musician,
     Offer,
     Page,
@@ -3717,6 +3720,59 @@ def test_setting_the_bands_of_a_musician_replaces_the_musicians_group(
                 ),
             ],
         },
+    ]
+
+
+@pytest.mark.django_db
+def test_creating_a_membership_guilds_following_their_members_resyncs_every_guild(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Guild is registered, following its members through its own
+    # many-to-many, whose through model is Membership: neither Craftsman nor
+    # Membership is.
+    rag.register(Guild, fields=["name"], follow=["members"])
+
+    # Created and linked outside the captured callbacks: their commit
+    # callbacks never run, so only the create below is observed. Another guild
+    # exists, with a member of its own, untouched by the create.
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    north = Guild.objects.create(name="North guild", code="north")
+    smith = Craftsman.objects.create(name="Smith")
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(smith)
+
+    # A row of the through model created directly: Django sends no
+    # m2m_changed, only post_save on Membership. Neither the guild nor the
+    # craftsman is saved again.
+    with django_capture_on_commit_callbacks(execute=True):
+        Membership.objects.create(guild=north, craftsman=carpenter)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The guilds read the through model, so the commit resyncs every guild,
+    # the untouched one included: each guild's group is replaced in exactly
+    # one replace call, however the groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.guild:{north.pk}": 1,
+        f"testapp.guild:{south.pk}": 1,
+    }
+    # The changed guild's group as committed: its own name, then its new
+    # member's name.
+    assert _received_groups(built_outputs)[f"testapp.guild:{north.pk}"] == [
+        NormalizedDocument(
+            text="North guild\n\nCarpenter",
+            source_app_label="testapp",
+            source_model="guild",
+            source_pk=north.pk,
+            title="North guild",
+        ),
     ]
 
 
