@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterable
 from contextvars import ContextVar
 from functools import partial, reduce
 from operator import or_
-from typing import Any, TypeAlias, cast
+from typing import Any, TypeAlias
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
@@ -22,20 +22,16 @@ from django.db.models import (
 from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import model_source_key
-from django_model_rag.extractors import query_name, through_key_to_parent
+from django_model_rag.extractors import query_name
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
 from django_model_rag.registry import concrete_model_of, rag, through_model_of
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
-_BEFORE_CLEAR = "pre_clear"
-_BEFORE_UNLINK = frozenset({"pre_remove", _BEFORE_CLEAR})
+_BEFORE_UNLINK = frozenset({"pre_remove", "pre_clear"})
 _AFTER_UNLINK = frozenset({"post_remove", "post_clear"})
 _CHANGING_ACTIONS = frozenset({"post_add"}) | _AFTER_UNLINK
 _BEFORE_WRITE = frozenset({"pre_add"}) | _BEFORE_UNLINK
-# The instance carries the primary keys of the rows its links reach, from before
-# a clear.
-_CLEARED_PKS_ATTRIBUTE = "_model_rag_cleared_pks"
 # The instance carries its followers from before the save to after it.
 _PREVIOUS_FOLLOWERS_ATTRIBUTE = "_model_rag_previous_followers"
 # It carries the followers pointing to it from before the delete to after it.
@@ -161,9 +157,7 @@ def remember_followers_before_save(
 ) -> None:
     """Keep the followers the row had before the save, for the commit to replace.
 
-    A save may move the row to other followers: the old ones change too. It
-    may point the row to other followers, or change the columns other
-    followers name it by.
+    A save may move the row to other followers: the old ones change too.
     """
     # An instance built with an existing primary key is "adding" yet saved as an
     # UPDATE: only a missing primary key means there is no row before the save.
@@ -182,21 +176,7 @@ def remember_followers_before_save(
     setattr(
         instance,
         _PREVIOUS_FOLLOWERS_ATTRIBUTE,
-        _committed_followers(sender, instance),
-    )
-
-
-def _committed_followers(sender: type[Model], instance: Model) -> list[_Follower]:
-    """Return the registered rows following ``instance``'s row as committed.
-
-    Both those reaching it through foreign keys and those it points to through
-    a reverse relation are looked up by its primary key, joined against the
-    columns in the database: before the save, they are those of the row as it
-    was, even if the save changes them; at the commit, those of the row then,
-    even through a write sending no signal.
-    """
-    return _followers_reaching(sender, instance) + _followers_pointed_to(
-        sender, instance
+        _followers_pointed_to(sender, instance),
     )
 
 
@@ -258,25 +238,18 @@ def sync_changed_relation(
     instance: Model,
     action: str,
     model: type[Model],
-    pk_set: set[Any] | None = None,
     **kwargs: Any,
 ) -> None:
     """Replace, once the transaction commits, the groups a change of links alters.
 
-    Those are the groups of the instance and of the ``model`` rows that
-    ``pk_set`` names, or a clear unlinks, each for a registered model following
-    the lookup its own side reads the links with. On a many-to-many from a
-    model to itself, only the side whose lookup is followed is replaced. When
-    the many-to-many links two different models, the instance's model is not
-    registered, or no registered model of the instance follows the links,
-    every row of a registered model reading it by a lookup, or
-    following it through a to_field foreign key, is replaced too, whichever
-    row it reaches. So is it, in place of the instance's groups, on a
-    many-to-many from a model to itself that is symmetrical or that registered
-    models follow from both sides: both sides read the links through the
-    relation, so every row reading it is resynced, the instance's own
-    included. From a remove() or clear() until it ends, the through model
-    whose rows it deletes is noted, for sync_deleted_instance.
+    The instance is replaced for each registered model of it following the
+    lookup its side reads the links with, and every row of the registered
+    models reading the instance's model is replaced too, whichever row it
+    reaches. On a many-to-many from a model to itself, the instance alone is
+    replaced when only its side is followed; otherwise the other side reads
+    the links too, so every row reading the model is resynced, the
+    instance's own included. From a remove() or clear() until it ends, the
+    through model whose rows it deletes is noted, for sync_deleted_instance.
     """
     if not _signals_enabled():
         return
@@ -295,49 +268,35 @@ def sync_changed_relation(
     )
     model_lookups = _registered_lookups_named(model, model_link_lookup)
     if action in _BEFORE_WRITE:
-        # Primary keys left by a clear that failed after pre_clear are not this
-        # change's.
-        instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, None)
         _check_output_before_write(following_models, model_lookups)
-        if action == _BEFORE_CLEAR:
-            cleared_lookups = model_lookups or _registered_subclasses_lookups(
-                instance, model, model_link_lookup
-            )
-            _remember_cleared_pks(instance, model, cleared_lookups)
         return
 
     if action not in _CHANGING_ACTIONS:
         return
 
-    is_symmetrical = instance_side is model_side
-    links_model_to_itself = model is type(instance)
-    followers_of_model = _registered_subclasses_following(model, model_link_lookup)
-    follows_both_sides = bool(following_models and followers_of_model)
-    resyncs_readers_instead = is_symmetrical or (
-        follows_both_sides and links_model_to_itself
-    )
-    if not resyncs_readers_instead:
+    if model is not type(instance):
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
-    followed_source_key = _followed_source_key(type(instance), instance)
-    if (
-        resyncs_readers_instead
-        or not rag.is_registered(type(instance))
-        or not links_model_to_itself
-        or not following_models
+        _resync_every_row_reading(instance)
+    elif following_models and not _registered_subclasses_following(
+        model, model_link_lookup
     ):
-        _schedule_follower_replacements(
-            _every_row_reading(type(instance)), followed_source_key
-        )
-    if followers_of_model:
-        # Only a clear leaves primary keys behind, found before it: pk_set is
-        # None then.
-        changed_pks = _primary_keys_named(
-            _through_key(model_side), model, pk_set or set()
-        ) | instance.__dict__.pop(_CLEARED_PKS_ATTRIBUTE, set())
-        _schedule_follower_replacements(
-            [(follower, pk) for follower in followers_of_model for pk in changed_pks],
-            followed_source_key,
-        )
+        # From a model to itself, read by the instance's side alone.
+        _schedule_commit_callbacks(following_models, instance, _group_replacer)
+    else:
+        # From a model to itself, read by the other side too: the instance's
+        # rows are among the rows resynced.
+        _resync_every_row_reading(instance)
+
+
+def _resync_every_row_reading(instance: Model) -> None:
+    """Replace, at the commit, every row of the registered models reading ``instance``.
+
+    Those are the models reading the instance's model, whichever row they reach.
+    """
+    _schedule_follower_replacements(
+        _every_row_reading(type(instance)),
+        _followed_source_key(type(instance), instance),
+    )
 
 
 def _note_unlinking(action: str, through: type[Model]) -> None:
@@ -444,34 +403,6 @@ def _link_relations(
     return (field.remote_field, field) if reverse else (field, field.remote_field)
 
 
-def _through_key(
-    relation: _LinkRelation,
-) -> "ForeignObject[Any, Any]":
-    """Return the through model's foreign key to the side ``relation`` is read from."""
-    # A through model reaches each side of its many-to-many by a foreign key.
-    return cast("ForeignObject[Any, Any]", through_key_to_parent(relation))
-
-
-def _primary_keys_named(
-    key_to_model: "ForeignObject[Any, Any]", model: type[Model], keys: set[Any]
-) -> set[Any]:
-    """Return the primary keys of the ``model`` rows that ``keys`` name.
-
-    The through model's foreign key to ``model``, ``key_to_model``, may point to
-    a unique column other than its primary key, and ``keys`` are then values of
-    that column.
-    """
-    target_field = key_to_model.target_field
-    if target_field.primary_key:
-        return keys
-
-    return set(
-        model._base_manager.filter(**{f"{target_field.name}__in": keys}).values_list(
-            "pk", flat=True
-        )
-    )
-
-
 def _registered_lookups_named(
     model: type[Model], link_lookup: str
 ) -> list[tuple[str, type[Model]]]:
@@ -485,39 +416,6 @@ def _registered_lookups_named(
     return _followed_lookups_named(model, link_lookup)
 
 
-def _registered_subclasses_lookups(
-    instance: Model, model: type[Model], link_lookup: str
-) -> list[tuple[str, type[Model]]]:
-    """Return the lookups by which ``model``'s registered subclasses reach the instance.
-
-    The rows of a model that is not registered are followed by its registered
-    subclasses. ``link_lookup`` is the lookup ``model``'s side reads the changed
-    links with; there are none when no registered subclass follows it.
-    """
-    if not _registered_subclasses_following(model, link_lookup):
-        return []
-    return [(link_lookup, type(instance))]
-
-
-def _remember_cleared_pks(
-    instance: Model, model: type[Model], model_lookups: list[tuple[str, type[Model]]]
-) -> None:
-    """Keep the primary keys of the registered rows a clear is about to unlink.
-
-    Django sends no primary keys with the clear: they can only be found before
-    it. They are those of the ``model`` rows whose ``model_lookups``, the
-    lookups they read the links with, reach the instance: none without
-    lookups.
-    """
-    if not model_lookups:
-        return
-
-    # The lookup reaches a multi-table child by the row of the parent holding
-    # the links.
-    linked_pks = _pks_reaching(model, _lookups_to_group_pks(instance, model_lookups))
-    setattr(instance, _CLEARED_PKS_ATTRIBUTE, set(linked_pks))
-
-
 def _followers_as_committed(
     sender: type[Model],
     instance: Model,
@@ -526,20 +424,19 @@ def _followers_as_committed(
     """Return ``followers_at_save`` and the rows following ``instance`` now.
 
     On a create, ``followers_at_save`` are the followers the new row points
-    to; on an update, only those it had before the save. The rows following
-    it now are looked up from the row as committed: on an update, those the
-    save pointed it to; rows attached after the save, in the same transaction;
-    and the rows a write sending no signal has since pointed it to. Every row
-    of a registered model reading ``sender`` by a lookup, following it through
-    a to_field foreign key, or following a many-to-many whose through model it
-    is, is replaced too, whichever row it reaches.
+    to; on an update, only those it had before the save. The rows it points
+    to now are looked up from the row as committed: on an update, those the
+    save pointed it to, and those a write sending no signal has since pointed
+    it to. Every row of a registered model reading ``sender`` by a lookup,
+    following it through a to_field foreign key, or following a many-to-many
+    whose through model it is, is replaced too, whichever row it reaches.
     If looking them up fails, ``followers_at_save`` are still replaced, but on
     an update a follower the row was moved to is not.
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
         return (
-            _committed_followers(sender, instance)
+            _followers_pointed_to(sender, instance)
             + _every_row_reading(sender)
             + followers_at_save
         )
