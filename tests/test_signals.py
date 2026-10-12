@@ -38,6 +38,7 @@ from tests.testapp.models import (
     FeaturedProduct,
     Friend,
     Lesson,
+    Listing,
     Match,
     Musician,
     Offer,
@@ -2244,6 +2245,97 @@ def test_several_writes_to_models_an_offer_reads_in_one_transaction_resync_it_on
                 source_model="offer",
                 source_pk=lamp_sale.pk,
                 title="Lamp sale",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_a_category_read_by_two_registered_models_saved_resyncs_each_of_them_once(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Two registered models read the Category, neither following the other:
+    # the Offer through a lookup path two foreign keys deep, the Listing
+    # through a lookup path over its own foreign key, both with no follow.
+    # Neither Category nor Product is registered.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+    rag.register(Listing, fields=["title", "category__name"])
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the category's save below is observed. Of each registered
+    # model, one row is in the category saved, the other in another category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    hammer_rack = Listing.objects.create(
+        title="Hammer rack", link="/hammer-rack/", category=tools
+    )
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+    lamp_stand = Listing.objects.create(
+        title="Lamp stand", link="/lamp-stand/", category=lighting
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The one save resyncs both registered models at the commit, each once:
+    # every row's group is replaced in exactly one replace call, however the
+    # groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.offer:{hammer_deal.pk}": 1,
+        f"testapp.offer:{lamp_sale.pk}": 1,
+        f"testapp.listing:{hammer_rack.pk}": 1,
+        f"testapp.listing:{lamp_stand.pk}": 1,
+    }
+    # Each replaced as committed, the rows in the other category included,
+    # unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{hammer_deal.pk}": [
+            NormalizedDocument(
+                text="Hammer deal\n\nTools",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=hammer_deal.pk,
+                title="Hammer deal",
+            ),
+        ],
+        f"testapp.offer:{lamp_sale.pk}": [
+            NormalizedDocument(
+                text="Lamp sale\n\nLamps",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=lamp_sale.pk,
+                title="Lamp sale",
+            ),
+        ],
+        f"testapp.listing:{hammer_rack.pk}": [
+            NormalizedDocument(
+                text="Hammer rack\n\nTools",
+                source_app_label="testapp",
+                source_model="listing",
+                source_pk=hammer_rack.pk,
+                title="Hammer rack",
+            ),
+        ],
+        f"testapp.listing:{lamp_stand.pk}": [
+            NormalizedDocument(
+                text="Lamp stand\n\nLamps",
+                source_app_label="testapp",
+                source_model="listing",
+                source_pk=lamp_stand.pk,
+                title="Lamp stand",
             ),
         ],
     }
