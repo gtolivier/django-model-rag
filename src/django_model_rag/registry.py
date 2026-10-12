@@ -757,7 +757,11 @@ class Registry:
             self._without_related_resync.add(model)
 
     def register_extractor(
-        self, model: type[M], *, depends_on: FieldNames = ()
+        self,
+        model: type[M],
+        *,
+        depends_on: FieldNames = (),
+        resync_on_related_writes: bool = True,
     ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
 
@@ -789,6 +793,8 @@ class Registry:
                 _require_models_ready(model, "resolve depends_on")
                 _require_relations(model, depends_on)
             self._add(model, extractor_class, _resolved_dependencies(model, depends_on))
+            if not resync_on_related_writes:
+                self._without_related_resync.add(model)
             return extractor_class
 
         return decorator
@@ -837,13 +843,9 @@ class Registry:
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
         """List the reverse foreign keys ``model`` follows or depends on.
 
-        None when ``model`` is registered not to resync on related writes.
-
         Raises:
             NotRegistered: ``model`` is not registered.
         """
-        if model in self._without_related_resync:
-            return []
         # A model may both follow a relation and depend on it: list it once,
         # since each reverse relation costs a query when finding followers.
         return list(
