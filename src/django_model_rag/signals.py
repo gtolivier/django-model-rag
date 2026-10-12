@@ -1,7 +1,7 @@
 """Signal receivers that keep the output in step with saved and deleted instances."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from functools import partial, reduce
 from operator import or_
 from typing import Any, TypeAlias, cast
@@ -24,7 +24,7 @@ from django_model_rag.documents import model_source_key
 from django_model_rag.extractors import query_name, through_key_to_parent
 from django_model_rag.output import check_output_configuration, configured_output
 from django_model_rag.pipeline import SyncPipeline
-from django_model_rag.registry import concrete_model_of, rag
+from django_model_rag.registry import concrete_model_of, rag, through_model_of
 
 _SIGNALS_SETTING = "MODEL_RAG_SIGNALS"
 _CHANGING_ACTIONS = frozenset({"post_add", "post_remove", "post_clear"})
@@ -517,19 +517,47 @@ def _followers_as_committed(
         return followers_at_save
 
 
-def _every_row_reading(sender: type[Model], *, through: bool = True) -> list[_Follower]:
+def _every_row_reading(sender: type[Model]) -> list[_Follower]:
     """Return every row of the registered models a write to ``sender`` resyncs whole.
 
     Those models read ``sender`` by a lookup, follow it through a to_field
-    foreign key, or, unless ``through`` is false, follow a many-to-many whose
-    through model it is: every row is returned, whichever row it reaches.
+    foreign key, or follow a many-to-many whose through model it is: every row
+    is returned, whichever row it reaches.
     """
+    return _every_row_of(
+        registered_model
+        for registered_model in rag.registered_models()
+        if _reads_besides_through(registered_model, sender)
+        or _follows_through(registered_model, sender)
+    )
+
+
+def _every_row_reading_besides_through(sender: type[Model]) -> list[_Follower]:
+    """Return every row of the registered models reading ``sender`` besides through.
+
+    Those models read ``sender`` by a lookup or follow it through a to_field
+    foreign key; following a many-to-many whose through model it is does not
+    count: every row is returned, whichever row it reaches.
+    """
+    return _every_row_of(
+        registered_model
+        for registered_model in rag.registered_models()
+        if _reads_besides_through(registered_model, sender)
+    )
+
+
+def _reads_besides_through(registered_model: type[Model], sender: type[Model]) -> bool:
+    """Return whether ``registered_model`` reads ``sender`` by a lookup or to_field."""
+    return bool(_followed_lookups(registered_model, sender)) or _follows_by_to_field(
+        registered_model, sender
+    )
+
+
+def _every_row_of(registered_models: Iterable[type[Model]]) -> list[_Follower]:
+    """Return every row of ``registered_models``, as followers."""
     return [
         (registered_model, follower_pk)
-        for registered_model in rag.registered_models()
-        if _followed_lookups(registered_model, sender)
-        or _follows_by_to_field(registered_model, sender)
-        or (through and _follows_through(registered_model, sender))
+        for registered_model in registered_models
         for follower_pk in registered_model._base_manager.values_list("pk", flat=True)
     ]
 
@@ -553,13 +581,7 @@ def _follows_through(registered_model: type[Model], sender: type[Model]) -> bool
 def _through_of(registered_model: type[Model], lookup: str) -> type[Model] | None:
     """Return the concrete through model of the many-to-many ``lookup`` starts with."""
     relation = registered_model._meta.get_field(lookup.split(LOOKUP_SEP, maxsplit=1)[0])
-    if not relation.many_to_many:
-        return None
-
-    if isinstance(relation, ManyToManyRel):
-        through = relation.through
-    else:
-        through = cast("ManyToManyField[Any, Any]", relation).remote_field.through
+    through = through_model_of(relation)
     return concrete_model_of(through) if through else None
 
 
@@ -914,8 +936,10 @@ def remember_followers_before_delete(
 def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -> None:
     """Empty the group of a deleted instance, and replace those following it.
 
-    Every row of a registered model reading ``sender`` by a lookup is replaced
-    too, whichever row it reaches. Both happen once the transaction commits.
+    Every row of a registered model reading ``sender`` by a lookup, following
+    it through a to_field foreign key, or, unless a queryset deletes it,
+    following a many-to-many whose through model it is, is replaced too,
+    whichever row it reaches. Both happen once the transaction commits.
     """
     if not _signals_enabled():
         return
@@ -926,12 +950,15 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # A many-to-many's remove() and clear() delete the through rows by a
     # queryset, after sending m2m_changed, which resyncs the models they change:
     # only a delete not made by a queryset resyncs every row following it.
+    every_row_reading = (
+        _every_row_reading_besides_through
+        if isinstance(kwargs.get("origin"), QuerySet)
+        else _every_row_reading
+    )
     followers = (
         _reverse_followers(sender, instance)
         + instance.__dict__.pop(_REACHING_FOLLOWERS_ATTRIBUTE, [])
-        + _every_row_reading(
-            sender, through=not isinstance(kwargs.get("origin"), QuerySet)
-        )
+        + every_row_reading(sender)
     )
     if not (nearest_registered_model_only or followers):
         return
