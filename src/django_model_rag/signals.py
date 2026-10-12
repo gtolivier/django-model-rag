@@ -273,8 +273,8 @@ def sync_changed_relation(
         try:
             _check_output_before_write(following_models, model_lookups)
         except Exception:
-            # The write never happens, and no post_ action will end the unlinking.
-            _through_being_unlinked.set(None)
+            # The write never happens: no post_ action will end the unlinking.
+            _end_unlinking()
             raise
         return
 
@@ -311,7 +311,12 @@ def _note_unlinking(action: str, through: type[Model]) -> None:
     if action in _BEFORE_UNLINK:
         _through_being_unlinked.set(concrete_model_of(through))
     elif action in _AFTER_UNLINK:
-        _through_being_unlinked.set(None)
+        _end_unlinking()
+
+
+def _end_unlinking() -> None:
+    """Forget the through model a remove() or clear() was deleting the rows of."""
+    _through_being_unlinked.set(None)
 
 
 def _check_output_before_write(
