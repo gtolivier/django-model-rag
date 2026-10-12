@@ -18,6 +18,7 @@ from django.db.models import (
     Q,
     QuerySet,
 )
+from django.db.models.constants import LOOKUP_SEP
 
 from django_model_rag.documents import model_source_key
 from django_model_rag.extractors import query_name, through_key_to_parent
@@ -225,7 +226,9 @@ def sync_saved_instance(
         followers_at_save = _reverse_followers(sender, instance) + followers_at_save
     # A row just created has no follower pointing to it at its save, and
     # costs the commit no lookup unless it points to a follower.
-    if (followers_at_save or not created) and is_followed:
+    if (
+        followers_at_save or not created or _is_through_of_followed(sender)
+    ) and is_followed:
         # Rows may also be attached to it, or it to other rows, before the
         # commit, by a write that sends no signal: its followers are looked up
         # then.
@@ -522,8 +525,38 @@ def _every_row_reading(sender: type[Model]) -> list[_Follower]:
         for registered_model in rag.registered_models()
         if _followed_lookups(registered_model, sender)
         or _follows_by_to_field(registered_model, sender)
+        or _follows_through(registered_model, sender)
         for follower_pk in registered_model._base_manager.values_list("pk", flat=True)
     ]
+
+
+def _is_through_of_followed(sender: type[Model]) -> bool:
+    """Return whether a registered model follows a many-to-many through ``sender``."""
+    return any(
+        _follows_through(registered_model, sender)
+        for registered_model in rag.registered_models()
+    )
+
+
+def _follows_through(registered_model: type[Model], sender: type[Model]) -> bool:
+    """Return whether ``registered_model`` follows a many-to-many through ``sender``."""
+    return any(
+        _through_of(registered_model, lookup) is concrete_model_of(sender)
+        for lookup, _ in rag.foreign_key_lookups(registered_model)
+    )
+
+
+def _through_of(registered_model: type[Model], lookup: str) -> type[Model] | None:
+    """Return the concrete through model of the many-to-many ``lookup`` starts with."""
+    relation = registered_model._meta.get_field(lookup.split(LOOKUP_SEP, maxsplit=1)[0])
+    if not relation.many_to_many:
+        return None
+
+    if isinstance(relation, ManyToManyRel):
+        through = relation.through
+    else:
+        through = cast("ManyToManyField[Any, Any]", relation).remote_field.through
+    return concrete_model_of(through) if through else None
 
 
 def _follows_by_to_field(registered_model: type[Model], sender: type[Model]) -> bool:
@@ -769,9 +802,11 @@ def _rows_in_any(
 
 def _is_followed(sender: type[Model]) -> bool:
     """Return whether a registered model follows ``sender``'s instances."""
-    return _is_followed_through_lookups(
-        sender
-    ) or _is_followed_through_reverse_relations(sender)
+    return (
+        _is_followed_through_lookups(sender)
+        or _is_followed_through_reverse_relations(sender)
+        or _is_through_of_followed(sender)
+    )
 
 
 def _is_followed_through_reverse_relations(sender: type[Model]) -> bool:
