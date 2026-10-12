@@ -489,7 +489,11 @@ def _replace_followers_as_committed(
     """
     followed_source_key = _followed_source_key(sender, instance)
     try:
-        followers = _committed_followers(sender, instance) + followers_at_save
+        followers = (
+            _committed_followers(sender, instance)
+            + _every_row_reading(sender)
+            + followers_at_save
+        )
     except Exception:
         # An error escaping a commit callback would break the commit.
         logger.exception("Looking up the followers of %s failed", followed_source_key)
@@ -497,6 +501,16 @@ def _replace_followers_as_committed(
 
     for replace_groups in _follower_replacers(followers, followed_source_key):
         replace_groups()
+
+
+def _every_row_reading(sender: type[Model]) -> list[_Follower]:
+    """Return every row of the registered models reading ``sender`` by a lookup."""
+    return [
+        (registered_model, follower_pk)
+        for registered_model in rag.registered_models()
+        if _followed_lookups(registered_model, sender)
+        for follower_pk in registered_model._base_manager.values_list("pk", flat=True)
+    ]
 
 
 def _schedule_follower_replacements(
