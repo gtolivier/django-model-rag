@@ -1716,6 +1716,61 @@ def test_a_topic_followed_by_a_set_null_foreign_key_deleted_replaces_every_works
 
 
 @pytest.mark.django_db
+def test_a_topic_followed_by_many_to_many_saved_replaces_every_course_at_the_commit(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Course is registered, following its topics through its own
+    # many-to-many: Topic itself is not.
+    _register_courses_following_their_topics()
+
+    # Created and linked outside the captured callbacks: their commit
+    # callbacks never run, so only the topic's save below is observed. One
+    # course has the topic saved, the other only another topic.
+    woodworking = _create_the_woodworking_topic()
+    basics = Course.objects.create(title="Woodworking basics")
+    basics.topics.add(woodworking)
+    carving = _create_the_carving_topic()
+    whittling = Course.objects.create(title="Whittling basics")
+    whittling.topics.add(carving)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # A save alone: no link is written, so no m2m_changed is sent.
+        woodworking.title = "Joinery"
+        woodworking.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Merged across replace calls: how the groups are batched is not what this
+    # test is about. The save resyncs the whole registered model at the
+    # commit: the group of every course is replaced, as committed, the one
+    # without the topic saved included, unchanged.
+    assert _received_groups(built_outputs) == {
+        f"testapp.course:{basics.pk}": [
+            NormalizedDocument(
+                text="Woodworking basics\n\nJoinery\n\nJoints and finishes.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=basics.pk,
+                title="Woodworking basics",
+            ),
+        ],
+        f"testapp.course:{whittling.pk}": [
+            NormalizedDocument(
+                text="Whittling basics\n\nCarving\n\nKnives and gouges.",
+                source_app_label="testapp",
+                source_model="course",
+                source_pk=whittling.pk,
+                title="Whittling basics",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_saving_a_registered_instance_also_followed_replaces_its_group_and_the_other(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],
