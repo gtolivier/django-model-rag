@@ -297,18 +297,20 @@ def sync_changed_relation(
         return
 
     is_symmetrical = instance_side is model_side
-    if not is_symmetrical:
+    followers_of_model = _registered_subclasses_following(model, model_link_lookup)
+    follows_both_sides = bool(following_models and followers_of_model)
+    if not is_symmetrical and not follows_both_sides:
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
     followed_source_key = _followed_source_key(type(instance), instance)
     if (
         is_symmetrical
+        or follows_both_sides
         or not rag.is_registered(type(instance))
         or model is not type(instance)
     ):
         _schedule_follower_replacements(
             _every_row_reading(type(instance)), followed_source_key
         )
-    followers_of_model = _registered_subclasses_following(model, model_link_lookup)
     if followers_of_model:
         # Only a clear leaves primary keys behind, found before it: pk_set is
         # None then.
