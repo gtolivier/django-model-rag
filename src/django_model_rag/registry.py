@@ -877,6 +877,10 @@ class Registry:
             for sender in _model_and_proxies(concrete_model_of(followed_model))
         ]
 
+    def resyncs_on_related_writes(self, model: type[Model]) -> bool:
+        """Tell whether writes to the models ``model`` depends on resync its rows."""
+        return model not in self._without_related_resync
+
     def through_models(self, model: type[Model]) -> list[type[Model]]:
         """List the through models of the many-to-many relations ``model`` follows.
 
