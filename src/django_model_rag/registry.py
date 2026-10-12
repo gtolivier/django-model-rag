@@ -311,6 +311,13 @@ def _is_followed_like_a_foreign_key(
     )
 
 
+def _is_reverse_one_to_one(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> bool:
+    """Tell whether ``relation`` is a reverse one-to-one."""
+    return isinstance(relation, ForeignObjectRel) and bool(relation.one_to_one)
+
+
 def _is_many_to_many(
     relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> "TypeGuard[ManyToManyField[Any, Any] | ForeignObjectRel]":
@@ -559,9 +566,10 @@ def _models_reached_by_foreign_keys(
     reached: list[tuple[str, type[Model]]] = []
     for link in path_links(model, path):
         related_model = link.relation.related_model
-        if not _is_followed_like_a_foreign_key(link.relation) or not isinstance(
-            related_model, type
-        ):
+        if not (
+            _is_followed_like_a_foreign_key(link.relation)
+            or _is_reverse_one_to_one(link.relation)
+        ) or not isinstance(related_model, type):
             break
         names.append(link.name)
         reached.append((LOOKUP_SEP.join(names), related_model))
