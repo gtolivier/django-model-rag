@@ -283,7 +283,7 @@ def sync_changed_relation(
 
     if model is not type(instance):
         _schedule_commit_callbacks(following_models, instance, _group_replacer)
-        _resync_every_row_reading(instance)
+        _resync_every_row_following_the_links(instance, model_link_lookup)
     elif following_models and not _registered_subclasses_following(
         model, model_link_lookup
     ):
@@ -302,6 +302,26 @@ def _resync_every_row_reading(instance: Model) -> None:
     """
     _schedule_follower_replacements(
         _every_row_reading(type(instance)),
+        _followed_source_key(type(instance), instance),
+    )
+
+
+def _resync_every_row_following_the_links(instance: Model, link_lookup: str) -> None:
+    """Replace, at the commit, every row reading the instance by ``link_lookup``.
+
+    ``link_lookup`` is the lookup the changed links are read with from the
+    other side: a model reading the instance's model by another lookup does
+    not read the links.
+    """
+    _schedule_follower_replacements(
+        _every_row_of(
+            registered_model
+            for registered_model in rag.registered_models()
+            if any(
+                lookup == link_lookup
+                for lookup, _ in _followed_lookups(registered_model, type(instance))
+            )
+        ),
         _followed_source_key(type(instance), instance),
     )
 
