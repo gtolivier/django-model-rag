@@ -4780,6 +4780,45 @@ def test_a_write_after_a_rolled_back_savepoint_that_scheduled_the_resync_resyncs
     }
 
 
+@pytest.mark.django_db
+def test_a_category_an_offer_reads_saved_with_signals_off_resyncs_nothing(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    # A working output, so that only the setting can keep the save from
+    # resyncing the offers.
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: with signals
+    # on, a save of a category schedules a resync of every offer for the
+    # commit. Category itself is not registered.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the category's save below is observed. One offer is in each
+    # category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    Offer.objects.create(title="Lamp sale", product=lamp)
+
+    settings.MODEL_RAG_SIGNALS = False
+
+    # The commit callbacks run: one resyncing the offers would build an output.
+    with django_capture_on_commit_callbacks(execute=True):
+        lighting.name = "Lamps"
+        lighting.save()
+
+    # The row is written, yet no offer's group, nor any other, is sent, even
+    # after the commit: no output is built.
+    assert Category.objects.get(pk=lighting.pk).name == "Lamps"
+    assert built_outputs == []
+
+
 class _ExtractionError(Exception):
     """Raised by an extractor that fails on the instance it is given."""
 
