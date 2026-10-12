@@ -630,6 +630,8 @@ class Registry:
         self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
         # The relations a custom extractor reads through, declared by its model.
         self._dependencies: dict[type[Model], _Dependencies] = {}
+        # The models registered not to resync on writes to the models they read.
+        self._without_related_resync: set[type[Model]] = set()
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -680,6 +682,7 @@ class Registry:
         language: str | None = None,
         url_field: str | None = None,
         permissions: PermissionNames = (),
+        resync_on_related_writes: bool = True,
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -693,6 +696,8 @@ class Registry:
         ``url_field`` names the field whose stripped value is the document
         url: an own field, or a lookup path such as ``bookmark__link``.
         ``permissions`` are given to every document of the model.
+        ``resync_on_related_writes=False`` stops writes to the models it
+        reads from resyncing it: only its own saves do.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -748,6 +753,8 @@ class Registry:
             )
 
         self._add(model, build_extractor)
+        if not resync_on_related_writes:
+            self._without_related_resync.add(model)
 
     def register_extractor(
         self, model: type[M], *, depends_on: FieldNames = ()
@@ -796,6 +803,7 @@ class Registry:
         senders = self._delete_senders(model)
         del self._registrations[model]
         del self._dependencies[model]
+        self._without_related_resync.discard(model)
         # A sender another registered model still listens to keeps its listener.
         kept = {
             sender
@@ -832,6 +840,8 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
+        if model in self._without_related_resync:
+            return []
         # A model may both follow a relation and depend on it: list it once,
         # since each reverse relation costs a query when finding followers.
         return list(
@@ -865,6 +875,8 @@ class Registry:
         Raises:
             NotRegistered: ``model`` is not registered.
         """
+        if model in self._without_related_resync:
+            return []
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
