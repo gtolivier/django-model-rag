@@ -2592,6 +2592,44 @@ def test_no_related_resync_connects_no_delete_listener_to_a_paths_models() -> No
             post_delete.disconnect(sender=sender, dispatch_uid=uid)
 
 
+def test_no_related_resync_extractor_has_no_delete_listener_on_a_fks_model() -> None:
+    # Category and its proxy: the models the Product's extractor depends on
+    # only through a forward foreign key. Neither is registered, nor followed
+    # by anything.
+    foreign_key_models = (Category, CategoryProxy)
+
+    try:
+        # Only Product is registered, with a custom extractor reading its name
+        # and its category's name: depends_on names the category, a forward
+        # foreign key, with the resync on related writes turned off: no delete
+        # of a category resyncs a product.
+        @rag.register_extractor(
+            Product, depends_on=["category"], resync_on_related_writes=False
+        )
+        class CategorizedProductExtractor(BaseExtractor[Product]):
+            def extract(self, instance: Product) -> NormalizedDocument:
+                return self.build_document(
+                    instance, text=f"{instance.name}\n\n{instance.category.name}"
+                )
+
+        # Django's deletion Collector fast-deletes only a model with no
+        # pre_delete and no post_delete listener: nothing listens to the
+        # deletes of the models depended on only through the foreign key.
+        for sender in foreign_key_models:
+            assert not pre_delete.has_listeners(sender)
+            assert not post_delete.has_listeners(sender)
+    finally:
+        # Undo the registration, then drop any delete listener it left on the
+        # foreign key's models, so that none outlives this test and keeps a
+        # later one from finding them fast-deleted.
+        if Product in rag.registered_models():
+            rag.unregister(Product)
+        for sender in foreign_key_models:
+            uid = f"django_model_rag.sync_delete.{sender._meta.label}"
+            pre_delete.disconnect(sender=sender, dispatch_uid=uid)
+            post_delete.disconnect(sender=sender, dispatch_uid=uid)
+
+
 @pytest.mark.django_db
 def test_an_extractor_registered_with_no_related_resync_still_replaces_a_childs_parent(
     settings: Settings,
