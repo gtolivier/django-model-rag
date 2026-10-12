@@ -50,6 +50,10 @@ logger = logging.getLogger("django_model_rag")
 _through_being_unlinked: ContextVar[type[Model] | None] = ContextVar(
     "model_rag_through_being_unlinked", default=None
 )
+# The rows of each model listed so far by the callbacks of the commit running.
+_rows_listed_at_commit: ContextVar[dict[type[Model], list[Any]] | None] = ContextVar(
+    "model_rag_rows_listed_at_commit", default=None
+)
 
 
 def _signals_enabled() -> bool:
@@ -502,26 +506,31 @@ def _every_row_reading(sender: type[Model]) -> list[_Follower]:
     foreign key, or follow a many-to-many whose through model it is: every row
     is returned, whichever row it reaches.
     """
-    return _every_row_of(
+    return _every_row_of(_models_reading(sender))
+
+
+def _models_reading(sender: type[Model]) -> list[type[Model]]:
+    """Return the registered models a write to ``sender`` resyncs whole."""
+    return [
         registered_model
         for registered_model in rag.registered_models()
         if _reads_besides_through(registered_model, sender)
         or _follows_through(registered_model, sender)
-    )
+    ]
 
 
-def _every_row_reading_besides_through(sender: type[Model]) -> list[_Follower]:
-    """Return every row of the registered models reading ``sender`` besides through.
+def _models_reading_besides_through(sender: type[Model]) -> list[type[Model]]:
+    """Return the registered models reading ``sender`` besides through.
 
     Those models read ``sender`` by a lookup or follow it through a to_field
     foreign key; following a many-to-many whose through model it is does not
-    count: every row is returned, whichever row it reaches.
+    count.
     """
-    return _every_row_of(
+    return [
         registered_model
         for registered_model in rag.registered_models()
         if _reads_besides_through(registered_model, sender)
-    )
+    ]
 
 
 def _reads_besides_through(registered_model: type[Model], sender: type[Model]) -> bool:
@@ -532,12 +541,21 @@ def _reads_besides_through(registered_model: type[Model], sender: type[Model]) -
 
 
 def _every_row_of(registered_models: Iterable[type[Model]]) -> list[_Follower]:
-    """Return every row of ``registered_models``, as followers."""
-    return [
-        (registered_model, follower_pk)
-        for registered_model in registered_models
-        for follower_pk in registered_model._base_manager.values_list("pk", flat=True)
-    ]
+    """Return every row of ``registered_models``, as followers.
+
+    Within a commit run, a model's rows are listed once.
+    """
+    listed = _rows_listed_at_commit.get()
+    if listed is None:
+        listed = {}
+    followers: list[_Follower] = []
+    for registered_model in registered_models:
+        if registered_model not in listed:
+            listed[registered_model] = list(
+                registered_model._base_manager.values_list("pk", flat=True)
+            )
+        followers.extend((registered_model, pk) for pk in listed[registered_model])
+    return followers
 
 
 def _is_through_of_followed(sender: type[Model]) -> bool:
@@ -590,19 +608,22 @@ class _FollowerResync:
         followed_source_key: str,
         find_followers: Callable[[], list[_Follower]],
         replaced: set[_Follower],
+        listed: dict[type[Model], list[Any]],
     ) -> None:
         self.followed_source_key = followed_source_key
         self.find_followers = find_followers
         self.replaced = replaced
+        self.listed = listed
         self.has_run = False
 
     def __call__(self) -> None:
         self.has_run = True
-        followers = [
-            follower
-            for follower in self.find_followers()
-            if follower not in self.replaced
-        ]
+        token = _rows_listed_at_commit.set(self.listed)
+        try:
+            found = self.find_followers()
+        finally:
+            _rows_listed_at_commit.reset(token)
+        followers = [follower for follower in found if follower not in self.replaced]
         self.replaced.update(followers)
         _replace_follower_groups(followers, self.followed_source_key)
 
@@ -621,9 +642,13 @@ def _resync_followers_at_commit(
         None,
     )
     # One that already ran belongs to an earlier commit run.
-    replaced = set() if latest is None or latest.has_run else latest.replaced
+    if latest is None or latest.has_run:
+        replaced: set[_Follower] = set()
+        listed: dict[type[Model], list[Any]] = {}
+    else:
+        replaced, listed = latest.replaced, latest.listed
     transaction.on_commit(
-        _FollowerResync(followed_source_key, find_followers, replaced)
+        _FollowerResync(followed_source_key, find_followers, replaced, listed)
     )
 
 
@@ -926,24 +951,28 @@ def sync_deleted_instance(sender: type[Model], instance: Model, **kwargs: Any) -
     # A many-to-many's remove() and clear() delete the through rows by a
     # queryset, after sending m2m_changed, which resyncs the models they change:
     # every other delete resyncs every row following it.
-    every_row_reading = (
-        _every_row_reading_besides_through
+    models_reading = (
+        _models_reading_besides_through
         if isinstance(kwargs.get("origin"), QuerySet)
         and _through_being_unlinked.get() is concrete_model_of(sender)
-        else _every_row_reading
+        else _models_reading
+    )(sender)
+    followers = _reverse_followers(sender, instance) + instance.__dict__.pop(
+        _REACHING_FOLLOWERS_ATTRIBUTE, []
     )
-    followers = (
-        _reverse_followers(sender, instance)
-        + instance.__dict__.pop(_REACHING_FOLLOWERS_ATTRIBUTE, [])
-        + every_row_reading(sender)
-    )
-    if not (nearest_registered_model_only or followers):
+    if not (nearest_registered_model_only or followers or models_reading):
         return
 
     # Fail at the delete, not at the commit, if the output is misconfigured.
     check_output_configuration()
     _schedule_commit_callbacks(nearest_registered_model_only, instance, _group_emptier)
-    _schedule_follower_replacements(followers, _followed_source_key(sender, instance))
+    # The rows of the models reading it are listed at the commit, once for all
+    # the writes of the transaction.
+    if followers or models_reading:
+        _resync_followers_at_commit(
+            _followed_source_key(sender, instance),
+            lambda: followers + _every_row_of(models_reading),
+        )
 
 
 def _group_emptier(
