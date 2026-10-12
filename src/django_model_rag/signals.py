@@ -258,9 +258,10 @@ def sync_changed_relation(
     ``pk_set`` names, or a clear unlinks, each for a registered model following
     the lookup its own side reads the links with. On a many-to-many from a
     model to itself, only the side whose lookup is followed is replaced. When
-    the instance's model is not registered, every row of a registered model
-    reading it by a lookup, or following it through a to_field foreign key, is
-    replaced too, whichever row it reaches. So is it on a symmetrical
+    the many-to-many links two different models, or the instance's model is
+    not registered, every row of a registered model reading it by a lookup, or
+    following it through a to_field foreign key, is replaced too, whichever
+    row it reaches. So is it on a symmetrical
     many-to-many, in place of the instance's groups: both sides read the links
     through the relation, so every row reading it is resynced, the instance's
     own included.
