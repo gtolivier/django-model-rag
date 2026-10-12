@@ -4709,6 +4709,77 @@ def test_a_category_an_offer_reads_saved_in_a_rolled_back_transaction_resyncs_no
     assert _replaced(built_outputs) == []
 
 
+@pytest.mark.django_db
+def test_a_write_after_a_rolled_back_savepoint_that_scheduled_the_resync_resyncs_it(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    # Only the Offer is registered, reading its product's category's name
+    # through a lookup path two foreign keys deep, with no follow: a save of a
+    # category schedules a resync of every offer for the commit.
+    _register_offers_reading_their_category_two_foreign_keys_deep()
+
+    # Created outside the captured callbacks: their commit callbacks never
+    # run, so only the writes below are observed. One offer is in each
+    # category.
+    tools = _create_the_tools_category()
+    hammer = _create_a_hammer(tools)
+    hammer_deal = Offer.objects.create(title="Hammer deal", product=hammer)
+    lighting = _create_the_lighting_category()
+    lamp = _create_a_plain_desk_lamp(lighting)
+    lamp_sale = Offer.objects.create(title="Lamp sale", product=lamp)
+
+    with django_capture_on_commit_callbacks(execute=True):
+        # The first write the Offer reads happens in a savepoint (a nested
+        # atomic block) that rolls back: the resync it scheduled is discarded
+        # with it.
+        with pytest.raises(_RolledBackError), transaction.atomic():
+            lighting.name = "Lamps"
+            lighting.save()
+            raise _RolledBackError
+        # A later write in the same transaction, outside the savepoint, to a
+        # model the Offer reads.
+        tools.name = "Hand tools"
+        tools.save()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # The later write still resyncs every offer at the commit, each once:
+    # each offer's group is replaced in exactly one replace call, however the
+    # groups are batched.
+    replaced_source_keys = [
+        source_key for groups in _replaced(built_outputs) for source_key in groups
+    ]
+    assert Counter(replaced_source_keys) == {
+        f"testapp.offer:{hammer_deal.pk}": 1,
+        f"testapp.offer:{lamp_sale.pk}": 1,
+    }
+    # Each replaced as committed: the rolled-back rename is not in it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.offer:{hammer_deal.pk}": [
+            NormalizedDocument(
+                text="Hammer deal\n\nHand tools",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=hammer_deal.pk,
+                title="Hammer deal",
+            ),
+        ],
+        f"testapp.offer:{lamp_sale.pk}": [
+            NormalizedDocument(
+                text="Lamp sale\n\nLighting",
+                source_app_label="testapp",
+                source_model="offer",
+                source_pk=lamp_sale.pk,
+                title="Lamp sale",
+            ),
+        ],
+    }
+
+
 class _ExtractionError(Exception):
     """Raised by an extractor that fails on the instance it is given."""
 
