@@ -1203,7 +1203,7 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
         a later queryset delete of its rows there does not resync the
         models following the many-to-many. A failing output check before
         the write resets it.
-  - [ ] **A supported scope, written in the README**: the three cases, the
+  - [x] **A supported scope, written in the README**: the three cases, the
     shapes cases 1 and 2 cover, the cost of case 3 and its opt-out, the
     full resync as the safety net, and one database (10c, dropped).
   - [ ] **The remaining tests, checked against that README.** A test stays
