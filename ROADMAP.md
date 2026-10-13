@@ -1152,7 +1152,7 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
 
   Steps, each one pull request:
   - [x] **This note.**
-  - [ ] **Model resync**, with `/tdd:feature`. Its first commit removes
+  - [x] **Model resync**, with `/tdd:feature`. Its first commit removes
     the tests that pin the exact lookups of case 3, listed in the pull
     request, the suite still green: removing the code first would leave
     `main` with no sync through forward relations. The tests of #26 stay,
