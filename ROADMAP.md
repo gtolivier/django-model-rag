@@ -1168,8 +1168,9 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
     removed tests used go too, and the test bench migrations are
     regenerated as one (`makemigrations`).
     - **Known limits, left by #48** (its review and CodeRabbit's): a
-      needless query or resync, or a failure reported at the commit
-      rather than before the write; never a stale group.
+      needless query or resync, a failure reported at the commit
+      rather than before the write, or, after a failure only, a group
+      stale until the next write or `sync_model_rag`.
       - The output check before a many-to-many write ignores the
         registered subclasses: if only a multi-table child of Course (a
         MasterClass, say) follows `topics`, a misconfigured output is
@@ -1191,6 +1192,15 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
         side, every registered model reading the model by any lookup is
         resynced, not only those following the links; and an opted-out
         model's own group is not replaced there.
+      - A transaction's resyncs note a row as replaced before its batch
+        is sent: if the output fails, the failure is logged and a later
+        callback of the same commit does not retry that row. The next
+        write to it, or `sync_model_rag`, repairs it.
+      - A `remove()` or `clear()` whose join-row DELETE raises leaves the
+        through model noted as being unlinked in that execution context:
+        a later queryset delete of its rows there does not resync the
+        models following the many-to-many. A failing output check before
+        the write resets it.
   - [ ] **A supported scope, written in the README**: the three cases, the
     shapes cases 1 and 2 cover, the cost of case 3 and its opt-out, the
     full resync as the safety net, and one database (10c, dropped).
