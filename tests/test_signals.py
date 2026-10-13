@@ -2124,6 +2124,26 @@ def test_a_tag_followed_by_generic_relation_saved_replaces_every_photo_at_the_co
     }
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ShelfInEachWarehouse:
+    """The rows _create_two_warehouses_with_a_shelf_each() creates that the
+    tests name."""
+
+    north: Warehouse
+    timber: Shelf
+    south: Warehouse
+
+
+def _create_two_warehouses_with_a_shelf_each() -> _ShelfInEachWarehouse:
+    """Create the North depot with a Timber shelf, then the South depot with a
+    Glue shelf, each shelf pointing to its warehouse's unique code."""
+    north = Warehouse.objects.create(name="North depot", code="north")
+    timber = Shelf.objects.create(label="Timber", warehouse=north)
+    south = Warehouse.objects.create(name="South depot", code="south")
+    Shelf.objects.create(label="Glue", warehouse=south)
+    return _ShelfInEachWarehouse(north=north, timber=timber, south=south)
+
+
 @pytest.mark.django_db
 def test_a_shelf_followed_by_a_to_field_foreign_key_saved_replaces_every_warehouse(
     settings: Settings,
@@ -2140,10 +2160,8 @@ def test_a_shelf_followed_by_a_to_field_foreign_key_saved_replaces_every_warehou
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the shelf's save below is observed. One warehouse holds the
     # shelf saved, the other only a shelf of its own.
-    north = Warehouse.objects.create(name="North depot", code="north")
-    timber = Shelf.objects.create(label="Timber", warehouse=north)
-    south = Warehouse.objects.create(name="South depot", code="south")
-    Shelf.objects.create(label="Glue", warehouse=south)
+    warehouses = _create_two_warehouses_with_a_shelf_each()
+    north, timber, south = warehouses.north, warehouses.timber, warehouses.south
 
     with django_capture_on_commit_callbacks(execute=True):
         timber.label = "Plywood"
@@ -2200,10 +2218,8 @@ def test_no_related_resync_a_to_field_shelf_saved_replaces_its_own_warehouse_alo
     # Created outside the captured callbacks: their commit callbacks never
     # run, so only the shelf's save below is observed. One warehouse holds the
     # shelf saved, the other only a shelf of its own.
-    north = Warehouse.objects.create(name="North depot", code="north")
-    timber = Shelf.objects.create(label="Timber", warehouse=north)
-    south = Warehouse.objects.create(name="South depot", code="south")
-    Shelf.objects.create(label="Glue", warehouse=south)
+    warehouses = _create_two_warehouses_with_a_shelf_each()
+    north, timber = warehouses.north, warehouses.timber
 
     with django_capture_on_commit_callbacks(execute=True):
         timber.label = "Plywood"
@@ -2667,6 +2683,16 @@ def test_a_model_registered_with_no_related_resync_still_replaces_its_own_saved_
     }
 
 
+def _drop_delete_listeners_of(senders: Sequence[type[Model]]) -> None:
+    """Disconnect the package's pre_delete and post_delete listeners from each
+    of ``senders``, by the dispatch uid the registry connects them with, if any
+    is connected."""
+    for sender in senders:
+        uid = f"django_model_rag.sync_delete.{sender._meta.label}"
+        pre_delete.disconnect(sender=sender, dispatch_uid=uid)
+        post_delete.disconnect(sender=sender, dispatch_uid=uid)
+
+
 def test_no_related_resync_connects_no_delete_listener_to_a_paths_models() -> None:
     # Category and its proxy, and Product: the models the Offer reads only
     # through its lookup path. Neither is registered, nor followed by anything.
@@ -2695,10 +2721,7 @@ def test_no_related_resync_connects_no_delete_listener_to_a_paths_models() -> No
         # from finding them fast-deleted.
         if Offer in rag.registered_models():
             rag.unregister(Offer)
-        for sender in path_models:
-            uid = f"django_model_rag.sync_delete.{sender._meta.label}"
-            pre_delete.disconnect(sender=sender, dispatch_uid=uid)
-            post_delete.disconnect(sender=sender, dispatch_uid=uid)
+        _drop_delete_listeners_of(path_models)
 
 
 def test_no_related_resync_extractor_has_no_delete_listener_on_a_fks_model() -> None:
@@ -2733,10 +2756,7 @@ def test_no_related_resync_extractor_has_no_delete_listener_on_a_fks_model() -> 
         # later one from finding them fast-deleted.
         if Product in rag.registered_models():
             rag.unregister(Product)
-        for sender in foreign_key_models:
-            uid = f"django_model_rag.sync_delete.{sender._meta.label}"
-            pre_delete.disconnect(sender=sender, dispatch_uid=uid)
-            post_delete.disconnect(sender=sender, dispatch_uid=uid)
+        _drop_delete_listeners_of(foreign_key_models)
 
 
 @pytest.mark.django_db
@@ -4380,6 +4400,36 @@ def test_deleting_a_membership_guilds_following_their_members_resyncs_every_guil
     ]
 
 
+@dataclass(frozen=True, kw_only=True)
+class _ThreeMemberGuildAndAnother:
+    """The rows _create_a_three_member_guild_and_another() creates that the
+    tests name."""
+
+    carpenter: Craftsman
+    joiner: Craftsman
+    north: Guild
+    south: Guild
+
+
+def _create_a_three_member_guild_and_another() -> _ThreeMemberGuildAndAnother:
+    """Create the North guild with the Carpenter, the Joiner and the Mason as
+    members, each by a Membership row, then the South guild with the Smith as
+    its member."""
+    carpenter = Craftsman.objects.create(name="Carpenter")
+    joiner = Craftsman.objects.create(name="Joiner")
+    mason = Craftsman.objects.create(name="Mason")
+    north = Guild.objects.create(name="North guild", code="north")
+    Membership.objects.create(guild=north, craftsman=carpenter)
+    Membership.objects.create(guild=north, craftsman=joiner)
+    Membership.objects.create(guild=north, craftsman=mason)
+    smith = Craftsman.objects.create(name="Smith")
+    south = Guild.objects.create(name="South guild", code="south")
+    south.members.add(smith)
+    return _ThreeMemberGuildAndAnother(
+        carpenter=carpenter, joiner=joiner, north=north, south=south
+    )
+
+
 @pytest.mark.django_db
 def test_deleting_memberships_by_a_queryset_resyncs_every_guild_following_members(
     settings: Settings,
@@ -4397,16 +4447,9 @@ def test_deleting_memberships_by_a_queryset_resyncs_every_guild_following_member
     # callbacks never run, so only the delete below is observed. The north
     # guild has three members, two of which leave; another guild exists, with
     # a member of its own, untouched by the delete.
-    carpenter = Craftsman.objects.create(name="Carpenter")
-    joiner = Craftsman.objects.create(name="Joiner")
-    mason = Craftsman.objects.create(name="Mason")
-    north = Guild.objects.create(name="North guild", code="north")
-    Membership.objects.create(guild=north, craftsman=carpenter)
-    Membership.objects.create(guild=north, craftsman=joiner)
-    Membership.objects.create(guild=north, craftsman=mason)
-    smith = Craftsman.objects.create(name="Smith")
-    south = Guild.objects.create(name="South guild", code="south")
-    south.members.add(smith)
+    guilds = _create_a_three_member_guild_and_another()
+    carpenter, joiner = guilds.carpenter, guilds.joiner
+    north, south = guilds.north, guilds.south
 
     # Rows of the through model deleted directly, by a queryset: Django sends
     # no m2m_changed. Neither the guilds nor the craftsmen are saved again.
@@ -4450,16 +4493,9 @@ def test_deleting_memberships_by_a_queryset_after_a_failed_clear_resyncs_guilds(
     # otherwise, and only the delete below is observed. The north guild has
     # three members, two of which leave; another guild exists, with a member
     # of its own, untouched by the delete.
-    carpenter = Craftsman.objects.create(name="Carpenter")
-    joiner = Craftsman.objects.create(name="Joiner")
-    mason = Craftsman.objects.create(name="Mason")
-    north = Guild.objects.create(name="North guild", code="north")
-    Membership.objects.create(guild=north, craftsman=carpenter)
-    Membership.objects.create(guild=north, craftsman=joiner)
-    Membership.objects.create(guild=north, craftsman=mason)
-    smith = Craftsman.objects.create(name="Smith")
-    south = Guild.objects.create(name="South guild", code="south")
-    south.members.add(smith)
+    guilds = _create_a_three_member_guild_and_another()
+    carpenter, joiner = guilds.carpenter, guilds.joiner
+    north, south = guilds.north, guilds.south
 
     # Only the Guild is registered, following its members through its own
     # many-to-many, whose through model is Membership: neither Craftsman nor
