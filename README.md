@@ -750,6 +750,20 @@ delete raising this way is rolled back. A change of many-to-many links that
 a registered model follows or depends on checks it before the join rows
 are written or deleted, for the same reason.
 
+**Reacting to a failure.** The signals do not retry. Route the errors of
+the `django_model_rag` logger to your alerting (Sentry, the admins' mail…).
+The message names what was not synced: `shop.product:42` for a saved
+product, or `shop.product instances that follow shop.category:12` for the
+products resynced after a write to a category. Its traceback gives the
+cause. The message names the model, not each row: a failing batch of rows
+leaves some of them unsent. Once the cause is fixed, or has passed,
+`python manage.py sync_model_rag shop.product` repairs that model. Retry
+transient errors in the output's `replace()`, with backoff: a rate-limited
+embedding API, a timeout. Only the output can tell which exceptions are
+transient; a dimension mismatch, say, would fail again. Handing the sync to
+a task queue, with its retries, is planned (feature 12b in the
+[roadmap](ROADMAP.md)).
+
 **Several changes, one transaction.** Each saved or deleted instance gets a
 commit callback of its own: saving ten registered instances in a
 transaction makes ten `replace()` calls, and deleting a queryset of 10,000

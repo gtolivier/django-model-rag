@@ -1195,7 +1195,9 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
       - A transaction's resyncs note a row as replaced before its batch
         is sent: if the output fails, the failure is logged and a later
         callback of the same commit does not retry that row. The next
-        write to it, or `sync_model_rag`, repairs it.
+        write to it, or `sync_model_rag`, repairs it. 12b removes the
+        case: one send per transaction, and in `notify` a task queue's
+        retries.
       - A `remove()` or `clear()` whose join-row DELETE raises leaves the
         through model noted as being unlinked in that execution context:
         a later queryset delete of its rows there does not resync the
@@ -1230,7 +1232,10 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
   for a key whose row is gone. Settles the batching left open by 10 and
   11a. Since 11f, the signal also says when a whole model is to resync
   (case 3 of 11f): no keys for that model, which the project hands to
-  `run_queryset()`. A task queue is then where case 3's cost goes.
+  `run_queryset()`. A task queue is then where case 3's cost goes, and
+  where a failed output is retried. Sending each row once per transaction
+  also removes the limit, left by #48, of a row a later callback of the
+  same commit does not retry.
 
 ## Not planned here
 
