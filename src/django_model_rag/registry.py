@@ -859,7 +859,9 @@ class Registry:
         They are ``model`` and its proxies, and the models of the reverse
         foreign keys ``model`` follows, the models it reads through relations,
         one or a chain, the through models of the many-to-many relations
-        it follows or depends on, and their proxies.
+        it follows or depends on, and their proxies. When ``model`` is
+        registered not to resync on related writes, the models it reads through
+        relations and the through models are left out.
         """
         followed_models = (
             [
