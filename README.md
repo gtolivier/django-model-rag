@@ -537,7 +537,8 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   and `run_queryset()` reloads them in batches of 500, through the
   extractor's `get_queryset()` — a row it leaves out gets an empty group.
   Nothing is pruned. A transaction resyncs each registered model this way
-  once, however many of its writes call for it. A `GenericRelation` in
+  once, however many of its writes call for it: its saves and deletes list
+  the model's rows in one query, at the commit. A `GenericRelation` in
   `follow` works the same way: saving a tag resyncs every photo. Creating
   an instance counts as a save: rows attached to it later in the same
   transaction by a write that sends no signal (`bulk_create()`,
@@ -605,9 +606,11 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   each write it reads costs as much as the model is large.
   `resync_on_related_writes=False`, on `rag.register()` or
   `rag.register_extractor()`, turns it off for that model: only its own
-  saves and deletes, and those of the children it follows through a
-  foreign key to its primary key, then update its groups. The
-  `sync_model_rag` command repairs the rest.
+  saves and deletes, those of the children it follows — through a foreign
+  key to its primary key, or with a `to_field` the parent the child points
+  to alone — and the changes of its own many-to-many links made from its
+  side (`course.topics.add(topic)` still replaces that course's group) then
+  update its groups. The `sync_model_rag` command repairs the rest.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
