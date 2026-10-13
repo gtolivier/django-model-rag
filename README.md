@@ -538,12 +538,14 @@ the groups of both; a parent deleted with its children (cascade) gets only
 its empty group. Saving or deleting through a proxy of the child counts
 too, and so does saving a multi-table child of it.
 
-Finding the parent costs no query: the child's foreign key already holds
-its primary key. A save of a child that already has a primary key — it may
-move — reads its row as committed first, in `pre_save`, so a model whose
-primary key gets a default (a UUID) pays that read on each insert. A model nothing
-follows costs its saves no query, only a check, in Python, of what each
-registered model follows.
+Finding the parent costs the save no query: the child's foreign key
+already holds its primary key. At the commit, one query finds the parents
+the child points to as committed, after any write since the save that
+sent no signal. A save of a child that already has a primary key — it may
+move — also reads its row as committed first, in `pre_save`, so a model
+whose primary key gets a default (a UUID) pays that read on each insert. A
+model nothing follows costs its saves no query, only a check, in Python, of
+what each registered model follows.
 
 **3. Everything else, a model resync.** A write to a model that a
 registered model reads in any other way resyncs every row of that
@@ -561,16 +563,19 @@ The other ways are:
   write to a row at its other end, and a change of its links (below);
 - a `GenericRelation` in `follow`: saving a tag resyncs every photo;
 - a reverse foreign key that does not hold the parent's primary key — a
-  `to_field`, or several columns (a `ForeignObject`): the model resync
-  comes on top of the parent the child points to.
+  `to_field`, or a `ForeignObject` whose first column is not the primary
+  key: the model resync comes on top of the parent the child points to. A
+  `ForeignObject` whose first column is the primary key gets only the
+  parents it points to, found by one query.
 
 One query lists the model's primary keys, and `run_queryset()` reloads
 them in batches of 500, through the extractor's `get_queryset()` — a row it
 leaves out gets an empty group. Nothing is pruned: a deleted row is emptied
 by its own delete (case 1). A transaction resyncs each registered model
 once, however many of its writes call for it: its rows are listed in one
-query, at the commit. Creating an instance counts as a save: rows attached
-to it later in the same transaction by a write that sends no signal
+query, at the commit (for a change of many-to-many links, when its signal
+arrives: below). Creating an instance counts as a save: rows attached to
+it later in the same transaction by a write that sends no signal
 (`bulk_create()`, `QuerySet.update()`) are read at the commit with the
 rest — so creating a category resyncs every product, even when none is
 attached to it yet.
@@ -590,29 +595,34 @@ through model. A many-to-many from a model to itself is covered too: when
 only the side the change is made from follows it — with `Person`
 following `mentors`, `ada.mentors.add(grace)` — Ada's group alone is
 replaced; otherwise (symmetrical, the default, or followed from the other
-side) every row of the model is resynced. Rows of a custom `through` model
-created, changed or deleted directly — `Enrollment.objects.create(...)`,
-an admin inline of the through model, a queryset delete — send no
-`m2m_changed`: they resync every row of the registered models following
-the many-to-many.
+side) every row of the model is resynced — or, for a model opted out of
+case 3 (below), no group at all: with `Person` following a symmetrical
+`friends`, `ada.friends.add(bob)` replaces neither Ada's group nor Bob's.
+Rows of a custom `through` model created, changed or deleted directly —
+`Enrollment.objects.create(...)`, an admin inline of the through model, a
+queryset delete — send no `m2m_changed`: they resync every row of the
+registered models following the many-to-many. Unlike a save or a delete,
+a change of links lists the rows it resyncs when its signal arrives, once
+per call: rows created later in the transaction by a write that sends no
+signal are not read by it.
 
 **The cost of case 3, and its opt-out.** A model resync re-extracts every
 row of the reading model and hands them all to the output: its cost grows
 with that model's table, not with the write. Saving a category resyncs
 every product, not only its own. This suits the tables a forward relation
 usually points to — categories, authors, venues — which are written
-rarely; an output that skips a document whose text has not changed keeps
-it cheaper. The work runs in the process that commits (see *How the
+rarely. The work runs in the process that commits (see *How the
 signals run*, below). For a large model read through a model written
 often, `resync_on_related_writes=False`, on `rag.register()` or
 `rag.register_extractor()`, turns case 3 off for that model. Its groups
 are then updated only by its own saves and deletes, by those of the
-children it follows — through a foreign key to its primary key, or with a
-`to_field` the parent the child points to alone — and by the changes of
-its own many-to-many links made from its side (`course.topics.add(topic)`
-still replaces that course's group). Run `sync_model_rag` for that model,
-or resync it from a receiver of your own (see *Outside the scope*), for
-the rest.
+children it follows — the parent the child points to alone, whatever its
+foreign key holds — and by the changes of its own many-to-many links made
+from its side (`course.topics.add(topic)` still replaces that course's
+group), except on a many-to-many to itself that is symmetrical or followed
+from both sides, whose changes replace no group. Run `sync_model_rag` for
+that model, or resync it from a receiver of your own (see *Outside the
+scope*), for the rest.
 
 ### A custom extractor's dependencies
 
@@ -647,7 +657,7 @@ is already registered raises `AlreadyRegistered` first, whatever
 
 ### Outside the scope
 
-The signals send nothing for:
+The signals do not cover:
 
 - **Writes they do not see.** Raw saves, such as `loaddata` loading a
   fixture — though not the many-to-many links it sets (see *Fixtures*,
@@ -670,7 +680,10 @@ The signals send nothing for:
   a lookup path or depends on: they keep Django's fast delete, since the
   package listens to `pre_delete` and `post_delete` only for registered
   models, the models they reach that way, and their proxies — and only
-  while a registered model reaches them.
+  while a registered model reaches them. A model opted out of case 3
+  reaches only the children it follows: the models it reads by a lookup
+  path and the through models of its many-to-many are not listened to for
+  it.
 - **Several databases.** The signals assume one database. A save or a
   delete on another database alias is not skipped, but handled as if it
   were on the default database — its work waits for the default database's
@@ -681,6 +694,15 @@ The signals send nothing for:
   the signals off (*Turning them off*, below) and run `sync_model_rag`.
   Supporting them, feature 10c, is dropped; the [roadmap](ROADMAP.md) keeps
   its analysis.
+- **Known limits.** For a model opted out of case 3, the changes of a
+  many-to-many to itself that is symmetrical or followed from both sides
+  (above). When the output fails on a model resync, the rest of the commit
+  does not retry the rows of that batch: the next write to them, or
+  `sync_model_rag`, repairs them. A `remove()` or `clear()` whose DELETE
+  raises leaves its through model noted as being unlinked: a later
+  queryset delete of its rows, in the same execution context, resyncs
+  nothing. The [roadmap](ROADMAP.md) lists these, with the needless
+  queries left.
 
 For all of these, run `sync_model_rag`, or sync the instances concerned
 from a receiver of your own: in a `transaction.on_commit` callback, call

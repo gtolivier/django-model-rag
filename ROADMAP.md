@@ -1203,6 +1203,10 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
         a later queryset delete of its rows there does not resync the
         models following the many-to-many. A failing output check before
         the write resets it.
+      - A `ForeignObject` over several columns whose first one is the
+        parent's primary key is taken for case 2, with one query to find
+        the parents it points to, and no model resync; untested. Only the
+        first column is checked.
   - [x] **A supported scope, written in the README**: the three cases, the
     shapes cases 1 and 2 cover, the cost of case 3 and its opt-out, the
     full resync as the safety net, and one database (10c, dropped).
