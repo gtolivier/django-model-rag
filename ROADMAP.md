@@ -758,8 +758,9 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
     looks up no follower — a null foreign key does not reach it.
   - **Left out**: rows attached by a write that sends no signal to a row
     created in the same transaction are not resynced — see 11c-quater.
-- [ ] **11c-quater. Followers looked up at the commit after a creation** —
-  not planned unless a project runs into it. 11c-ter keeps the lookup at
+- [x] **11c-quater. Followers looked up at the commit after a creation** —
+  lifted by 11f: a creation resyncs, at the commit, every row of the
+  models reading it. Was not planned unless a project ran into it. 11c-ter keeps the lookup at
   the save for a creation, so a row attached by `bulk_create()` or
   `QuerySet.update()` to a row created in the same transaction is not
   resynced. Looking them up at the commit after a creation too would cost
@@ -813,8 +814,10 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
     11d-bis); a symmetrical many-to-many from a model to itself (covered
     since 11e); a many-to-many declared to a proxy model
     (`ManyToManyField(TopicProxy)`).
-- [ ] **11d-bis. Resync through rows of a custom through model** — not
-  planned unless a project runs into it. A many-to-many with `through=`
+- [x] **11d-bis. Resync through rows of a custom through model** —
+  lifted by 11f: a row of a custom through model written directly resyncs
+  every row of the models reading the many-to-many. Was not planned unless
+  a project ran into it. A many-to-many with `through=`
   gets its links from rows of that model, which a project can create,
   change or delete directly — `Enrollment.objects.create(...)`, an admin
   inline of the through model — without `m2m_changed`. Nothing is resynced
@@ -1148,8 +1151,8 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
   and every known limit #45 left.
 
   Steps, each one pull request:
-  - [ ] **This note.**
-  - [ ] **Model resync**, with `/tdd:feature`. Its first commit removes
+  - [x] **This note.**
+  - [x] **Model resync**, with `/tdd:feature`. Its first commit removes
     the tests that pin the exact lookups of case 3, listed in the pull
     request, the suite still green: removing the code first would leave
     `main` with no sync through forward relations. The tests of #26 stay,
@@ -1164,6 +1167,42 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
     refactor steps remove the dead code. The test bench models only the
     removed tests used go too, and the test bench migrations are
     regenerated as one (`makemigrations`).
+    - **Known limits, left by #48** (its review and CodeRabbit's): a
+      needless query or resync, a failure reported at the commit
+      rather than before the write, or, after a failure only, a group
+      stale until the next write or `sync_model_rag`.
+      - The output check before a many-to-many write ignores the
+        registered subclasses: if only a multi-table child of Course (a
+        MasterClass, say) follows `topics`, a misconfigured output is
+        reported at the commit only, where the failure is logged.
+      - A delete still looks up, in `pre_delete`, the registered rows
+        reaching the row by a lookup, although the commit lists every row
+        of their models anyway: one query per deleted row and reading
+        model, for nothing.
+      - Whether a model is followed is computed again on each save of any
+        model, from the registered extractors and their relations: Python
+        work that grows with the number of registered models. An index
+        from sender to reading models, built at registration, would make
+        it a lookup.
+      - A many-to-many change lists the rows of the models it resyncs when
+        the signal arrives, not at the commit: several `add()` calls in
+        one transaction list them once each, though each row is still
+        replaced once.
+      - On a many-to-many from a model to itself followed from the other
+        side, every registered model reading the model by any lookup is
+        resynced, not only those following the links; and an opted-out
+        model's own group is not replaced there.
+      - A transaction's resyncs note a row as replaced before its batch
+        is sent: if the output fails, the failure is logged and a later
+        callback of the same commit does not retry that row. The next
+        write to it, or `sync_model_rag`, repairs it. 12b removes the
+        case: one send per transaction, and in `notify` a task queue's
+        retries.
+      - A `remove()` or `clear()` whose join-row DELETE raises leaves the
+        through model noted as being unlinked in that execution context:
+        a later queryset delete of its rows there does not resync the
+        models following the many-to-many. A failing output check before
+        the write resets it.
   - [ ] **A supported scope, written in the README**: the three cases, the
     shapes cases 1 and 2 cover, the cost of case 3 and its opt-out, the
     full resync as the safety net, and one database (10c, dropped).
@@ -1193,7 +1232,10 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
   for a key whose row is gone. Settles the batching left open by 10 and
   11a. Since 11f, the signal also says when a whole model is to resync
   (case 3 of 11f): no keys for that model, which the project hands to
-  `run_queryset()`. A task queue is then where case 3's cost goes.
+  `run_queryset()`. A task queue is then where case 3's cost goes, and
+  where a failed output is retried. Sending each row once per transaction
+  also removes the limit, left by #48, of a row a later callback of the
+  same commit does not retry.
 
 ## Not planned here
 

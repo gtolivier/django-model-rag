@@ -3,7 +3,7 @@
 import inspect
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any, TypeAlias, TypeGuard
+from typing import Any, TypeAlias, TypeGuard, cast
 
 from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
@@ -12,6 +12,7 @@ from django.db.models import (
     ForeignObject,
     ForeignObjectRel,
     ManyToManyField,
+    ManyToManyRel,
     Model,
 )
 from django.db.models.constants import LOOKUP_SEP
@@ -310,6 +311,13 @@ def _is_followed_like_a_foreign_key(
     )
 
 
+def _is_reverse_one_to_one(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> bool:
+    """Tell whether ``relation`` is a reverse one-to-one."""
+    return isinstance(relation, ForeignObjectRel) and bool(relation.one_to_one)
+
+
 def _is_many_to_many(
     relation: "Field[Any, Any] | ForeignObjectRel",
 ) -> "TypeGuard[ManyToManyField[Any, Any] | ForeignObjectRel]":
@@ -317,6 +325,17 @@ def _is_many_to_many(
     return isinstance(relation, ManyToManyField) or (
         isinstance(relation, ForeignObjectRel) and relation.many_to_many
     )
+
+
+def _is_generic_relation(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> "TypeGuard[ForeignObject[Any, Any]]":
+    """Tell whether ``relation`` is a generic relation.
+
+    A generic relation is the forward ForeignObject to many objects; importing
+    GenericRelation here would load contenttypes too early.
+    """
+    return isinstance(relation, ForeignObject) and relation.one_to_many
 
 
 def _require_forward_relations(
@@ -512,6 +531,20 @@ def concrete_model_of(model: type[Model]) -> type[Model]:
     return model._meta.concrete_model or model
 
 
+def _through_model_of(
+    relation: "Field[Any, Any] | ForeignObjectRel",
+) -> type[Model] | None:
+    """Return the through model of ``relation``, None unless it is a many-to-many."""
+    if not _is_many_to_many(relation):
+        return None
+
+    if isinstance(relation, ManyToManyField):
+        through = relation.remote_field.through
+    else:
+        through = cast("ManyToManyRel", relation).through
+    return through or None
+
+
 def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
     """Return ``model`` and its proxies, which Django deletes under their own."""
     # Not apps.get_models(): a model is registered while the apps still load.
@@ -522,20 +555,23 @@ def _model_and_proxies(model: type[Model]) -> list[type[Model]]:
     return found
 
 
-def _models_reached_by_foreign_keys(
+def _models_reached_by_to_one_links(
     model: type[Model], path: str
 ) -> list[tuple[str, type[Model]]]:
-    """List the models the leading foreign keys of ``path`` reach from ``model``.
+    """List the models the leading to-one links of ``path`` reach from ``model``.
 
-    Each is paired with the lookup, from ``model``, that reaches it.
+    Those links are the forward foreign keys and one-to-ones, and the reverse
+    one-to-ones. Each model is paired with the lookup, from ``model``, that
+    reaches it.
     """
     names: list[str] = []
     reached: list[tuple[str, type[Model]]] = []
     for link in path_links(model, path):
         related_model = link.relation.related_model
-        if not _is_followed_like_a_foreign_key(link.relation) or not isinstance(
-            related_model, type
-        ):
+        if not (
+            _is_followed_like_a_foreign_key(link.relation)
+            or _is_reverse_one_to_one(link.relation)
+        ) or not isinstance(related_model, type):
             break
         names.append(link.name)
         reached.append((LOOKUP_SEP.join(names), related_model))
@@ -562,8 +598,8 @@ class _Dependencies:
     # quoted: Django's Field is generic for the type checker only
     relations: "tuple[Field[Any, Any] | ForeignObjectRel, ...]" = ()
     """The relations, forward or reverse, named as one-link dependencies."""
-    foreign_key_lookups: tuple[tuple[str, type[Model]], ...] = ()
-    """The models the dependencies reach through their leading foreign keys.
+    to_one_lookups: tuple[tuple[str, type[Model]], ...] = ()
+    """The models the dependencies reach through their leading to-one links.
 
     Each is paired with the lookup, from the model, that reaches it.
     """
@@ -590,10 +626,10 @@ def _resolved_dependencies(model: type[Model], depends_on: FieldNames) -> _Depen
             for dependency in depends_on
             if dependency in relations
         ),
-        foreign_key_lookups=tuple(
+        to_one_lookups=tuple(
             reached
             for dependency in depends_on
-            for reached in _models_reached_by_foreign_keys(
+            for reached in _models_reached_by_to_one_links(
                 model, _dependency_lookup_path(dependency, relations)
             )
         ),
@@ -619,6 +655,8 @@ class Registry:
         self._registrations: dict[type[Model], Callable[[], BaseExtractor[Any]]] = {}
         # The relations a custom extractor reads through, declared by its model.
         self._dependencies: dict[type[Model], _Dependencies] = {}
+        # The models registered not to resync on writes to the models they read.
+        self._without_related_resync: set[type[Model]] = set()
 
     def registered_models(self) -> list[type[Model]]:
         """List the registered models, in registration order."""
@@ -669,6 +707,7 @@ class Registry:
         language: str | None = None,
         url_field: str | None = None,
         permissions: PermissionNames = (),
+        resync_on_related_writes: bool = True,
     ) -> None:
         """Register ``model`` with the fields to extract.
 
@@ -682,6 +721,9 @@ class Registry:
         ``url_field`` names the field whose stripped value is the document
         url: an own field, or a lookup path such as ``bookmark__link``.
         ``permissions`` are given to every document of the model.
+        ``resync_on_related_writes=False`` stops writes to the models it
+        reads from resyncing it: only its own saves, and those of the
+        children it follows, replace its groups.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered.
@@ -736,10 +778,16 @@ class Registry:
                 granted,
             )
 
-        self._add(model, build_extractor)
+        self._add(
+            model, build_extractor, resync_on_related_writes=resync_on_related_writes
+        )
 
     def register_extractor(
-        self, model: type[M], *, depends_on: FieldNames = ()
+        self,
+        model: type[M],
+        *,
+        depends_on: FieldNames = (),
+        resync_on_related_writes: bool = True,
     ) -> Callable[[type[BaseExtractor[M]]], type[BaseExtractor[Any]]]:
         """Register the decorated extractor class as the one of ``model``.
 
@@ -747,6 +795,9 @@ class Registry:
         of ``model``: a forward foreign key or one-to-one, a reverse relation
         or a many-to-many as a one-link path, or a lookup path through forward
         foreign keys or one-to-ones.
+        ``resync_on_related_writes=False`` stops writes to the models it
+        depends on from resyncing it: only its own saves, and those of the
+        children it depends on, replace its groups.
 
         Raises:
             AlreadyRegistered: ``model`` is already registered, checked
@@ -770,7 +821,12 @@ class Registry:
             if depends_on:
                 _require_models_ready(model, "resolve depends_on")
                 _require_relations(model, depends_on)
-            self._add(model, extractor_class, _resolved_dependencies(model, depends_on))
+            self._add(
+                model,
+                extractor_class,
+                _resolved_dependencies(model, depends_on),
+                resync_on_related_writes=resync_on_related_writes,
+            )
             return extractor_class
 
         return decorator
@@ -785,6 +841,7 @@ class Registry:
         senders = self._delete_senders(model)
         del self._registrations[model]
         del self._dependencies[model]
+        self._without_related_resync.discard(model)
         # A sender another registered model still listens to keeps its listener.
         kept = {
             sender
@@ -800,19 +857,48 @@ class Registry:
         """List the senders whose deletions change the group of ``model``.
 
         They are ``model`` and its proxies, and the models of the reverse
-        foreign keys ``model`` follows, the models it reads through foreign
-        keys, one or a chain, and their proxies.
+        foreign keys ``model`` follows, the models it reads through relations,
+        one or a chain, the through models of the many-to-many relations
+        it follows or depends on, and their proxies. When ``model`` is
+        registered not to resync on related writes, the models it reads through
+        relations and the through models are left out.
         """
-        followed_models = [
-            relation.related_model
-            for relation in self.followed_reverse_relations(model)
-        ] + [reached for _, reached in self.foreign_key_lookups(model)]
+        followed_models = (
+            [
+                relation.related_model
+                for relation in self.followed_reverse_relations(model)
+            ]
+            + [reached for _, reached in self.relation_lookups(model)]
+            + self.through_models(model)
+        )
         return _model_and_proxies(model) + [
             sender
             for followed_model in followed_models
             # A foreign key may name a proxy: Django deletes the concrete model's
             # rows under the concrete model, or under any of its proxies.
             for sender in _model_and_proxies(concrete_model_of(followed_model))
+        ]
+
+    def resyncs_on_related_writes(self, model: type[Model]) -> bool:
+        """Tell whether writes to the models ``model`` depends on resync its rows."""
+        return model not in self._without_related_resync
+
+    def through_models(self, model: type[Model]) -> list[type[Model]]:
+        """List the through models of the many-to-many relations ``model`` follows.
+
+        Those it depends on in one link count too; none when ``model`` is
+        registered not to resync on related writes.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        if not self.resyncs_on_related_writes(model):
+            return []
+
+        return [
+            through
+            for relation in self._followed_or_depended_on_relations(model)
+            if (through := _through_model_of(relation))
         ]
 
     def followed_reverse_relations(self, model: type[Model]) -> list[ForeignObjectRel]:
@@ -841,14 +927,30 @@ class Registry:
         """
         return [*self._followed_relations(model), *self._dependencies[model].relations]
 
-    def foreign_key_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+    def relation_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
         """List the models ``model`` reads through relations, one or a chain.
 
         Those are the models of the foreign keys and many-to-many relations,
-        forward or reverse, it follows, the models its lookup paths and
-        dependencies reach through their leading foreign keys, and the models
-        of the many-to-many relations, forward or reverse, it depends on. Each
-        is paired with the lookup, from ``model``, that reaches it.
+        forward or reverse, and of the generic relations it follows, the models
+        its lookup paths and dependencies reach through their leading foreign
+        keys and one-to-ones, the one-to-ones forward or reverse, and the
+        models of the many-to-many relations, forward or reverse, it depends
+        on. Each is paired with the lookup, from ``model``, that reaches it.
+        None when ``model`` is registered not to resync on related writes.
+
+        Raises:
+            NotRegistered: ``model`` is not registered.
+        """
+        if not self.resyncs_on_related_writes(model):
+            return []
+        return self.own_relation_lookups(model)
+
+    def own_relation_lookups(self, model: type[Model]) -> list[tuple[str, type[Model]]]:
+        """List the models ``model`` reads through relations, whether it resyncs or not.
+
+        Same as ``relation_lookups``, but also for a model registered not to
+        resync on related writes: a change of its own links still replaces its
+        group.
 
         Raises:
             NotRegistered: ``model`` is not registered.
@@ -856,15 +958,17 @@ class Registry:
         followed = [
             (relation.name, relation.related_model)
             for relation in self._followed_relations(model)
-            if _is_followed_like_a_foreign_key(relation) or _is_many_to_many(relation)
+            if _is_followed_like_a_foreign_key(relation)
+            or _is_many_to_many(relation)
+            or _is_generic_relation(relation)
         ]
         read_through_paths = [
             reached
             for path in self._lookup_paths(model)
-            for reached in _models_reached_by_foreign_keys(model, path)
+            for reached in _models_reached_by_to_one_links(model, path)
         ]
         depended_on = [
-            *self._dependencies[model].foreign_key_lookups,
+            *self._dependencies[model].to_one_lookups,
             *(
                 (relation.name, relation.related_model)
                 for relation in self._dependencies[model].relations
@@ -907,6 +1011,8 @@ class Registry:
         model: type[Model],
         factory: Callable[[], BaseExtractor[Any]],
         dependencies: _Dependencies = _NO_DEPENDENCIES,
+        *,
+        resync_on_related_writes: bool,
     ) -> None:
         """Register ``model`` and listen to its deletions, and its own only."""
         from django_model_rag.signals import (  # noqa: PLC0415  # signals imports this module
@@ -916,6 +1022,9 @@ class Registry:
 
         self._registrations[model] = factory
         self._dependencies[model] = dependencies
+        # Noted before listening: the senders depend on it.
+        if not resync_on_related_writes:
+            self._without_related_resync.add(model)
         # A listener without sender would also stop Django from fast-deleting
         # the models that are not registered.
         for sender in self._delete_senders(model):

@@ -519,33 +519,33 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   both; a parent deleted with its children (cascade) gets only its empty
   group. Saving or deleting through a proxy of the child counts too, and
   so does saving a multi-table child of it. Finding the parent costs no
-  query when the foreign key targets its primary key, one query for a
-  `to_field`, none for a null foreign key; a save of an instance that
-  already has a primary key — it may move — reads its row as committed
-  first, in `pre_save`, so a model whose primary key gets a default (a
-  UUID) pays that read on each insert. A model nothing follows
+  query when the foreign key targets its primary key, none for a null
+  foreign key; a foreign key with a `to_field` resyncs every row of the
+  parent's model instead, as a followed parent does (below). A save of an
+  instance that already has a primary key — it may move — reads its row as
+  committed first, in `pre_save`, so a model whose primary key gets a
+  default (a UUID) pays that read on each insert. A model nothing follows
   costs its saves no query, only a check, in Python, of what each
   registered model follows.
 - **A followed parent or a lookup path.** Saving or deleting an instance
   that a registered model reaches through a forward foreign key or
   one-to-one — in `follow` (`Product` with `follow=["category"]`), or as a
   link of a lookup path in `fields`, `title_field`, `language_field` or
-  `url_field` (`"product__category__name"`, however many foreign keys
-  deep) — replaces the groups of the registered instances that reach it.
-  They are read in batches of 500, one query per batch and per registered
-  model; creating an instance costs no query, since nothing points to it
-  yet — unless its primary key gets a default (a UUID), which makes
-  `pre_save` look them up on each insert too. A save of an existing row
-  looks them up twice: in `pre_save`, those that reach the row before it
-  changes the columns they name it by (a `to_field`, or the columns of a
-  multi-column `ForeignObject`), and at the commit, those that reach it
-  then — rows attached later in the transaction by a write that sends no
-  signal (`bulk_create()`, `QuerySet.update()`) included. Rows attached
-  that way to a row created in the same transaction are not resynced. A
-  delete looks them up in `pre_delete`, before an `on_delete=SET_NULL`
-  clears their foreign keys. A path is followed through its leading foreign
-  keys only: past a reverse one-to-one, or through a `GenericRelation`,
-  nothing is resynced.
+  `url_field` (`"product__category__name"`, however many links deep, past
+  a reverse one-to-one too: `"supplier__supplier_profile__body"`) — resyncs every row of that registered model at the commit, not
+  only the rows reaching the instance: one query lists their primary keys,
+  and `run_queryset()` reloads them in batches of 500, through the
+  extractor's `get_queryset()` — a row it leaves out gets an empty group.
+  Nothing is pruned. A transaction resyncs each registered model this way
+  once, however many of its writes call for it: its saves and deletes list
+  the model's rows in one query, at the commit. A `GenericRelation` in
+  `follow` works the same way: saving a tag resyncs every photo. Creating
+  an instance counts as a save: rows attached to it later in the same
+  transaction by a write that sends no signal (`bulk_create()`,
+  `QuerySet.update()`) are read at the commit with the rest — so creating
+  a category resyncs every product, even when none is attached to it yet.
+  A `GenericRelation` in a lookup path is not followed: saving the object
+  it reaches resyncs nothing.
 - **A custom extractor's dependencies.** A custom extractor reads what it
   likes, so it declares the relations its documents depend on:
 
@@ -564,11 +564,12 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   `Page`), a many-to-many, forward or reverse, on its own
   (`depends_on=["topics"]` on `Course`, `depends_on=["courses"]` on
   `Topic`), or a path through forward foreign keys (`"product__category"`).
-  Saving or deleting an instance at the end of the path replaces the groups
-  of the registered instances that reach it, as for `follow` and lookup
-  paths above, and so does changing the links of a many-to-many (below);
-  one that the extractor's `get_queryset()` filters out gets an empty
-  group. Errors are raised at registration, with `ImproperlyConfigured`:
+  Saving or deleting an instance at the end of the path updates the
+  registered model as `follow` and lookup paths do above: the parent a
+  child read through a reverse relation points to, every row for the
+  rest. Changing the links of a many-to-many does too (below). A row
+  the extractor's `get_queryset()` filters out gets an empty group.
+  Errors are raised at registration, with `ImproperlyConfigured`:
   `depends_on` that is not a list or a tuple, an item that is not a string,
   a link that is not a relation, a many-to-many in a path of several links,
   a generic foreign key or `GenericRelation`, a path of several links that
@@ -579,26 +580,37 @@ registered model updates the output named by `MODEL_RAG_OUTPUT`:
   forward or reverse (`Course` with `follow=["topics"]`, `Topic` with
   `follow=["courses"]`), or depends on one, is resynced both when a row at
   the other end changes and when the links do. Saving or deleting a topic
-  replaces the groups of the courses linked to it, found as for a followed
-  parent above (a delete looks them up before the join rows go).
+  resyncs every course, as for a followed parent above.
   `add()`, `remove()`, `clear()` and `set()`, from either side
-  (`course.topics.add(topic)` or `topic.courses.add(course)`), replace at
-  the commit the groups of the registered instances, on each side, whose
-  links changed — for `clear()`, those linked before it. They are seen
+  (`course.topics.add(topic)` or `topic.courses.add(course)`), are seen
   through Django's `m2m_changed` signal, connected once for every
-  many-to-many: a change of links no registered model follows or depends
-  on schedules nothing. A change made through a proxy instance of either
-  end counts (`proxy_topic.courses.add(course)`), and so does a
-  `to_field` on the through model. A many-to-many from a model to itself
-  is covered too. When it is symmetrical (the default), both ends follow
-  it: `ada.friends.add(bob)` replaces the groups of Ada and Bob. With
-  `symmetrical=False`, only the side that follows the links is replaced —
-  with `Person` following `mentees`, `ada.mentors.add(grace)` replaces
-  Grace's group, not Ada's. Not covered: a many-to-many declared to a proxy model
-  (`ManyToManyField(TopicProxy)`), and rows of a custom `through` model
-  created, changed or deleted directly — `Enrollment.objects.create(...)`,
-  an admin inline of the through model — which send no `m2m_changed`
-  (feature 11d-bis in the [roadmap](ROADMAP.md)).
+  many-to-many. On the side they are called from, the instance's group
+  alone is replaced at the commit, when its model follows the links; on
+  the other side, every row of a registered model following them is
+  resynced: `course.topics.add(topic)` replaces that course's group and,
+  with `Topic` following `courses`, resyncs every topic. A change of links
+  no registered model follows or depends on schedules nothing. A change
+  made through a proxy instance of either end counts
+  (`proxy_topic.courses.add(course)`), and so does a `to_field` on the
+  through model. A many-to-many from a model to itself is covered too:
+  when only the side the change is made from follows it — with `Person`
+  following `mentors`, `ada.mentors.add(grace)` — Ada's group alone is
+  replaced; otherwise (symmetrical, the default, or followed from the
+  other side) every row of the model is resynced. Rows of a custom
+  `through` model created, changed or deleted directly —
+  `Enrollment.objects.create(...)`, an admin inline of the through model,
+  a queryset delete — send no `m2m_changed`: they resync every row of the
+  registered models following the many-to-many. Not covered: a
+  many-to-many declared to a proxy model (`ManyToManyField(TopicProxy)`).
+- **Turning the model resync off.** Resyncing every row of a model on
+  each write it reads costs as much as the model is large.
+  `resync_on_related_writes=False`, on `rag.register()` or
+  `rag.register_extractor()`, turns it off for that model: only its own
+  saves and deletes, those of the children it follows — through a foreign
+  key to its primary key, or with a `to_field` the parent the child points
+  to alone — and the changes of its own many-to-many links made from its
+  side (`course.topics.add(topic)` still replaces that course's group) then
+  update its groups. The `sync_model_rag` command repairs the rest.
 
 **After the commit.** Nothing is sent while the transaction is open: the
 signal schedules the work with `transaction.on_commit`, and the instance is
@@ -620,8 +632,9 @@ instance just created. Both are listed in the
 several databases.
 
 A save, step by step. The followers are the registered instances whose
-documents read the saved one (a page following its text plugins, a product
-its category):
+documents read the saved one: the page a text plugin points to, when pages
+follow their text plugins; every product, when products follow their
+category:
 
 ```mermaid
 sequenceDiagram
@@ -631,7 +644,7 @@ sequenceDiagram
     participant P as SyncPipeline
     participant O as Output
     App->>S: pre_save
-    S->>DB: followers before the save (a row of a followed model with a primary key)
+    S->>DB: parents before the save (a followed child with a primary key)
     Note right of S: checks MODEL_RAG_OUTPUT: a bad setting raises before any write
     App->>DB: INSERT or UPDATE
     App->>S: post_save
@@ -644,7 +657,7 @@ sequenceDiagram
             P->>DB: reload it through get_queryset()
             P->>O: replace(the instance's group)
         end
-        S->>DB: followers reaching the row now (after an update)
+        S->>DB: parents now (after an update), every row of the other models reading it
         S->>P: run_queryset(followers), in batches of 500 per follower model
         P->>O: replace(the followers' groups)
     else it rolls back
@@ -703,13 +716,11 @@ registered models, the models they reach that way, and their proxies — and
 only while a registered model reaches them. Raw saves, such as `loaddata`
 loading a fixture — though not the many-to-many links it sets (see
 *Turning them off* below). Changes the ORM signals do not see:
-`QuerySet.update()`, `bulk_create()`, `bulk_update()`, raw SQL, and rows of
-a custom many-to-many `through` model written directly. A change to
+`QuerySet.update()`, `bulk_create()`, `bulk_update()` and raw SQL. A change to
 a related object whose text a registered model reads by any other way than
 those above leaves that model's documents stale until they are saved again:
-a path past a reverse one-to-one, a `GenericRelation` (a photo's tags, say),
-or whatever a custom extractor reads without declaring it in
-`depends_on`. For all of these, run
+a lookup path through a `GenericRelation`, or whatever a custom extractor
+reads without declaring it in `depends_on`. For all of these, run
 `sync_model_rag`, or sync the instances concerned from a receiver of your
 own: in a `transaction.on_commit` callback, call
 `SyncPipeline(configured_output()).run_queryset(queryset)` with a queryset
@@ -727,7 +738,9 @@ goes on: the instance keeps its previous documents until its next save or
 the next `sync_model_rag`, and the other instances of the transaction are
 still sent. A database error looking up, at the commit, the followers
 reaching a saved row is logged the same way; the followers found at the
-save are still replaced. A missing or invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
+save are still replaced. A model resync that fails is logged the same way,
+naming the model and the row whose write called for it. A missing or
+invalid `MODEL_RAG_OUTPUT` — including `OPTIONS`
 its `BACKEND` class does not accept, when Python can read the class's
 signature — is not logged: it raises
 `ImproperlyConfigured` at the save or the delete, so that a forgotten
@@ -737,10 +750,25 @@ delete raising this way is rolled back. A change of many-to-many links that
 a registered model follows or depends on checks it before the join rows
 are written or deleted, for the same reason.
 
+**Reacting to a failure.** The signals do not retry. Route the errors of
+the `django_model_rag` logger to your alerting (Sentry, the admins' mail…).
+The message names what was not synced: `shop.product:42` for a saved
+product, or `shop.product instances that follow shop.category:12` for the
+products resynced after a write to a category. Its traceback gives the
+cause. The message names the model, not each row: a failing batch of rows
+leaves some of them unsent. Once the cause is fixed, or has passed,
+`python manage.py sync_model_rag shop.product` repairs that model. Retry
+transient errors in the output's `replace()`, with backoff: a rate-limited
+embedding API, a timeout. Only the output can tell which exceptions are
+transient; a dimension mismatch, say, would fail again. Handing the sync to
+a task queue, with its retries, is planned (feature 12b in the
+[roadmap](ROADMAP.md)).
+
 **Several changes, one transaction.** Each saved or deleted instance gets a
-commit callback of its own: saving ten plugins of one page in a transaction
-replaces the page's group ten times, and deleting a queryset of 10,000 rows
-makes 10,000 `replace()` calls. Batching them per transaction is planned
+commit callback of its own: saving ten registered instances in a
+transaction makes ten `replace()` calls, and deleting a queryset of 10,000
+rows makes 10,000. Only a model resync runs once per transaction.
+Batching them per transaction is planned
 (feature 12b in the [roadmap](ROADMAP.md)).
 
 **Real time, plus a nightly sync.** The signals keep the output current
