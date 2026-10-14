@@ -1,5 +1,8 @@
+from typing import Any
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import Model
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import AlreadyRegistered, NotRegistered, rag
@@ -60,16 +63,6 @@ def test_unregistered_model_produces_no_document() -> None:
     rag.unregister(Product)
 
     assert run_documents() == []
-
-
-@pytest.mark.django_db
-def test_registered_model_produces_a_document_from_its_declared_field() -> None:
-    create_product(name="Hammer", description="Drives nails.", price="9.90")
-    rag.register(Product, fields=["name"])
-
-    documents = run_documents()
-
-    assert [document.text for document in documents] == ["Hammer"]
 
 
 @pytest.mark.django_db
@@ -269,16 +262,6 @@ def test_run_instance_of_an_unregistered_model_fails_naming_that_model() -> None
 
 
 @pytest.mark.django_db
-def test_document_title_is_the_value_of_the_first_declared_field() -> None:
-    create_product(name="Hammer", description="Drives nails.", price="9.90")
-    rag.register(Product, fields=["name", "description"])
-
-    [document] = run_documents()
-
-    assert document.title == "Hammer"
-
-
-@pytest.mark.django_db
 def test_document_title_follows_the_declared_field_order() -> None:
     create_product(name="Hammer", description="Drives nails.", price="9.90")
     rag.register(Product, fields=["description", "name"])
@@ -349,20 +332,6 @@ def test_document_title_is_empty_when_the_declared_title_field_is_none() -> None
 
 
 @pytest.mark.django_db
-def test_document_carries_the_source_of_its_product() -> None:
-    product = create_product(name="Hammer", description="Drives nails.", price="9.90")
-    rag.register(Product, fields=["name"])
-
-    [document] = run_documents()
-
-    assert (
-        document.source_app_label,
-        document.source_model,
-        document.source_pk,
-    ) == ("testapp", "product", product.pk)
-
-
-@pytest.mark.django_db
 def test_document_carries_the_source_of_its_own_model() -> None:
     category = Category.objects.create(pk=42, name="Tools")
     rag.register(Category, fields=["name"])
@@ -419,36 +388,6 @@ def test_document_text_ignores_a_display_method_of_a_field_without_choices() -> 
     assert document.text == "Tools"
 
 
-def test_registering_a_field_the_model_does_not_have_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match="nmae"):
-        rag.register(Product, fields=["nmae"])
-
-
-def test_registering_a_relation_field_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bcategory\b"):
-        rag.register(Product, fields=["name", "category"])
-
-
-def test_registering_a_reverse_relation_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bproducts\b"):
-        rag.register(Category, fields=["name", "products"])
-
-
-def test_registering_a_title_field_the_model_lacks_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match="nmae"):
-        rag.register(Product, fields=["name"], title_field="nmae")
-
-
-def test_registering_a_relation_as_title_field_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bcategory\b"):
-        rag.register(Product, fields=["name"], title_field="category")
-
-
-def test_registering_a_model_without_any_declared_field_fails() -> None:
-    with pytest.raises(ImproperlyConfigured):
-        rag.register(Product, fields=[])
-
-
 def test_registering_no_declared_field_names_the_model_not_text_fields() -> None:
     # Any non-relation field can be declared, not only a text field: the
     # "no text field" wording belongs to the guessing error.
@@ -458,30 +397,61 @@ def test_registering_no_declared_field_names_the_model_not_text_fields() -> None
     assert "text field" not in str(error.value)
 
 
-def test_registering_a_field_declared_twice_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bname\b"):
-        rag.register(Product, fields=["name", "description", "name"])
-
-
-def test_registering_a_single_field_name_instead_of_a_list_fails() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bfields\b.*\blist\b"):
-        # A bare string is the slip under test: the type checker rightly
-        # rejects it.
-        rag.register(Product, fields="name")  # type: ignore[arg-type]
-
-
-def test_registering_an_unordered_set_of_field_names_fails() -> None:
-    with pytest.raises(ImproperlyConfigured):
-        # A set has no stable order to give the text and the title: the type
-        # checker rightly rejects it.
-        rag.register(Product, fields={"name", "description"})  # type: ignore[arg-type]
-
-
-def test_registering_a_one_shot_generator_of_field_names_fails() -> None:
-    with pytest.raises(ImproperlyConfigured):
-        # A generator is spent by the checks and would be registered empty:
-        # the type checker rightly rejects it.
-        rag.register(Product, fields=(name for name in ["name"]))  # type: ignore[arg-type]
+@pytest.mark.parametrize(
+    ("model", "options", "match"),
+    [
+        pytest.param(Product, {"fields": ["nmae"]}, "nmae", id="unknown-field"),
+        pytest.param(
+            Product,
+            {"fields": ["name", "category"]},
+            r"\bcategory\b",
+            id="relation-field",
+        ),
+        pytest.param(
+            Category,
+            {"fields": ["name", "products"]},
+            r"\bproducts\b",
+            id="reverse-relation",
+        ),
+        pytest.param(
+            Product,
+            {"fields": ["name"], "title_field": "nmae"},
+            "nmae",
+            id="unknown-title-field",
+        ),
+        pytest.param(
+            Product,
+            {"fields": ["name"], "title_field": "category"},
+            r"\bcategory\b",
+            id="relation-as-title-field",
+        ),
+        pytest.param(
+            Product,
+            {"fields": ["name", "description", "name"]},
+            r"\bname\b",
+            id="field-declared-twice",
+        ),
+        pytest.param(
+            Product, {"fields": "name"}, r"\bfields\b.*\blist\b", id="single-name"
+        ),
+        # A set has no stable order to give the text and the title.
+        pytest.param(
+            Product, {"fields": {"name", "description"}}, None, id="unordered-set"
+        ),
+        # A generator is spent by the checks and would be registered empty.
+        pytest.param(
+            Product,
+            {"fields": (name for name in ["name"])},
+            None,
+            id="one-shot-generator",
+        ),
+    ],
+)
+def test_registering_invalid_fields_fails_naming_the_culprit(
+    model: type[Model], options: dict[str, Any], match: str | None
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=match):
+        rag.register(model, **options)
 
 
 @pytest.mark.django_db

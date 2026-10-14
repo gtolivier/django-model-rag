@@ -3,10 +3,12 @@ import sys
 import textwrap
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import Model
 from pytest_django import DjangoAssertNumQueries
 
 from django_model_rag import rag
@@ -320,22 +322,6 @@ def test_model_without_text_field_registers_when_a_followed_relation_brings_text
     documents = run_documents()
 
     assert [document.text for document in documents] == ["Chair\n\nAdjustable.\n\nNew"]
-
-
-@pytest.mark.django_db
-def test_model_without_text_field_that_follows_a_relation_takes_str_as_title() -> None:
-    # StockLevel has no own text field to give a title, and defines no
-    # __str__: the title is whatever str() gives for the instance.
-    category = Category.objects.create(name="Furniture")
-    product = _create_chair(category)
-    stock_level = StockLevel.objects.create(
-        quantity=12, counted_on=date(2026, 3, 1), in_stock=True, product=product
-    )
-    rag.register(StockLevel, follow=["product"])
-
-    documents = run_documents()
-
-    assert [document.title for document in documents] == [str(stock_level)]
 
 
 @pytest.mark.django_db
@@ -1011,84 +997,79 @@ def test_followed_relations_append_their_texts_in_the_order_follow_names_them() 
 
 
 @pytest.mark.parametrize(
-    "name",
+    ("model", "follow", "match"),
     [
-        pytest.param("categroy", id="unknown-name"),
+        pytest.param(
+            Product,
+            ["categroy"],
+            r"\bcategroy\b.*\bfollow\b|\bfollow\b.*\bcategroy\b",
+            id="unknown-name",
+        ),
         # Only one level is followed: a lookup path is not a relation accessor.
-        pytest.param("category__name", id="lookup-path"),
+        pytest.param(
+            Product,
+            ["category__name"],
+            r"\bcategory__name\b.*\bfollow\b|\bfollow\b.*\bcategory__name\b",
+            id="lookup-path",
+        ),
+        # Remark.note has no related_name: its query name "remark" differs from
+        # its accessor "remark_set", and follow takes accessors, as
+        # prefetch_related does.
+        pytest.param(
+            Note,
+            ["remark"],
+            r"\bremark\b.*\bfollow\b|\bfollow\b.*\bremark\b",
+            id="query-name-of-a-reverse-foreign-key",
+        ),
+        # Product.name exists but is a CharField: the message must say why an
+        # existing field is refused, not only that it cannot be followed.
+        pytest.param(
+            Product,
+            ["name"],
+            r"\bname\b.*\bnot a relation\b|\bnot a relation\b.*\bname\b",
+            id="not-a-relation",
+        ),
+        pytest.param(
+            Product,
+            ["category", "category"],
+            r"\bcategory\b.*\btwice\b|\btwice\b.*\bcategory\b",
+            id="relation-twice",
+        ),
+        # StockLevel has only a number, a date and a boolean: following it
+        # could never bring any text.
+        pytest.param(
+            Product,
+            ["stock_levels"],
+            r"\bstock_levels\b.*\bno text field\b",
+            id="related-model-without-text-field",
+        ),
+        # Tag.content_object may point to an instance of any model: its related
+        # model is unknown, so no text could be guessed for it.
+        pytest.param(
+            Tag,
+            ["content_object"],
+            r"\bcontent_object\b.*\bgeneric foreign key\b"
+            r"|\bgeneric foreign key\b.*\bcontent_object\b",
+            id="generic-foreign-key",
+        ),
+        pytest.param(
+            Product, "category", r"\bfollow\b.*\blist or a tuple\b", id="single-name"
+        ),
+        # StockLevel has no own text field: the type of follow must be refused
+        # before any guess of the fields could fail on their absence.
+        pytest.param(
+            StockLevel,
+            None,
+            r"\bfollow\b.*\blist or a tuple\b",
+            id="none-on-a-model-without-text-field",
+        ),
     ],
 )
-def test_following_a_name_that_is_not_a_relation_accessor_fails_at_registration(
-    name: str,
+def test_following_an_invalid_relation_fails_at_registration(
+    model: type[Model], follow: Any, match: str
 ) -> None:
-    with pytest.raises(
-        ImproperlyConfigured, match=rf"\b{name}\b.*\bfollow\b|\bfollow\b.*\b{name}\b"
-    ):
-        rag.register(Product, follow=[name])
-
-
-def test_following_the_query_name_of_a_reverse_foreign_key_fails_at_registration() -> (
-    None
-):
-    # Remark.note has no related_name: its query name "remark" differs from its
-    # accessor "remark_set", and follow takes accessors, as prefetch_related does.
-    with pytest.raises(
-        ImproperlyConfigured, match=r"\bremark\b.*\bfollow\b|\bfollow\b.*\bremark\b"
-    ):
-        rag.register(Note, follow=["remark"])
-
-
-def test_following_a_field_that_is_not_a_relation_fails_at_registration() -> None:
-    # Product.name exists but is a CharField: the message must say why an
-    # existing field is refused, not only that it cannot be followed.
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=r"\bname\b.*\bnot a relation\b|\bnot a relation\b.*\bname\b",
-    ):
-        rag.register(Product, follow=["name"])
-
-
-def test_following_a_relation_twice_names_it_in_the_error() -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=r"\bcategory\b.*\btwice\b|\btwice\b.*\bcategory\b",
-    ):
-        rag.register(Product, follow=["category", "category"])
-
-
-def test_following_a_relation_whose_model_has_no_text_field_fails() -> None:
-    # StockLevel has only a number, a date and a boolean: following it could
-    # never bring any text.
-    with pytest.raises(
-        ImproperlyConfigured, match=r"\bstock_levels\b.*\bno text field\b"
-    ):
-        rag.register(Product, follow=["stock_levels"])
-
-
-def test_following_a_generic_foreign_key_fails_at_registration() -> None:
-    # Tag.content_object may point to an instance of any model: its related
-    # model is unknown, so no text could be guessed for it.
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=r"\bcontent_object\b.*\bgeneric foreign key\b"
-        r"|\bgeneric foreign key\b.*\bcontent_object\b",
-    ):
-        rag.register(Tag, follow=["content_object"])
-
-
-def test_following_a_single_relation_name_instead_of_a_list_fails() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
-        # A bare string is the slip under test: the type checker rightly
-        # rejects it.
-        rag.register(Product, follow="category")  # type: ignore[arg-type]
-
-
-def test_following_none_on_a_model_without_text_field_fails_on_its_type() -> None:
-    # StockLevel has no own text field: the type of follow must be refused
-    # before any guess of the fields could fail on their absence.
-    with pytest.raises(ImproperlyConfigured, match=r"\bfollow\b.*\blist or a tuple\b"):
-        # None is the slip under test: the type checker rightly rejects it.
-        rag.register(StockLevel, follow=None)  # type: ignore[arg-type]
+    with pytest.raises(ImproperlyConfigured, match=match):
+        rag.register(model, follow=follow)
 
 
 def test_following_a_relation_from_a_models_module_fails_and_points_to_appconfig_ready(

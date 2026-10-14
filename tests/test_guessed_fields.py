@@ -2,6 +2,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -142,62 +143,55 @@ def test_excluded_field_is_left_out_of_the_guessed_text_and_title() -> None:
     )
 
 
-def test_excluding_a_field_the_model_does_not_have_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match="titel"):
-        rag.register(Note, exclude=["titel"])
-
-
-def test_excluding_a_field_twice_names_it_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\btitle\b"):
-        rag.register(Note, exclude=["title", "title"])
-
-
-def test_excluding_a_single_field_name_instead_of_a_list_fails() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bexclude\b"):
-        # A bare string is the slip under test: the type checker rightly
-        # rejects it.
-        rag.register(Note, exclude="title")  # type: ignore[arg-type]
-
-
-def test_model_without_text_field_registered_without_fields_names_it_in_the_error() -> (
-    None
-):
-    with pytest.raises(ImproperlyConfigured, match=r"\bStockLevel\b"):
-        rag.register(StockLevel)
-
-
-def test_model_without_text_field_registered_without_fields_says_none_to_guess() -> (
-    None
-):
-    with pytest.raises(ImproperlyConfigured, match=r"\bStockLevel\b.*\btext field\b"):
-        rag.register(StockLevel)
-
-
-def test_model_with_only_char_field_subclasses_registered_without_fields_names_it() -> (
-    None
-):
-    with pytest.raises(ImproperlyConfigured, match=r"\bContactCard\b"):
-        rag.register(ContactCard)
-
-
-def test_excluding_every_guessed_field_names_the_model_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bNote\b"):
-        rag.register(Note, exclude=["body", "title"])
-
-
-def test_excluding_every_guessed_field_says_no_text_field_is_left() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bNote\b.*\btext field\b"):
-        rag.register(Note, exclude=["body", "title"])
-
-
-def test_exclude_cannot_be_combined_with_declared_fields() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"fields.*exclude|exclude.*fields"):
-        rag.register(Note, fields=["body"], exclude=["title"])
-
-
-def test_exclude_combined_with_declared_fields_names_the_model_in_the_error() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"^Note: "):
-        rag.register(Note, fields=["body"], exclude=["title"])
+@pytest.mark.parametrize(
+    ("model", "options", "match"),
+    [
+        pytest.param(
+            Note, {"exclude": ["titel"]}, "titel", id="excluding-an-unknown-field"
+        ),
+        pytest.param(
+            Note,
+            {"exclude": ["title", "title"]},
+            r"\btitle\b",
+            id="excluding-a-field-twice",
+        ),
+        pytest.param(
+            Note, {"exclude": "title"}, r"\bexclude\b", id="excluding-a-single-name"
+        ),
+        pytest.param(
+            StockLevel,
+            {},
+            r"\bStockLevel\b.*\btext field\b",
+            id="no-text-field-to-guess",
+        ),
+        pytest.param(
+            ContactCard, {}, r"\bContactCard\b", id="only-char-field-subclasses"
+        ),
+        pytest.param(
+            Note,
+            {"exclude": ["body", "title"]},
+            r"\bNote\b.*\btext field\b",
+            id="excluding-every-guessed-field",
+        ),
+        pytest.param(
+            Note,
+            {"fields": ["body"], "exclude": ["title"]},
+            r"fields.*exclude|exclude.*fields",
+            id="exclude-with-declared-fields",
+        ),
+        pytest.param(
+            Note,
+            {"fields": ["body"], "exclude": ["title"]},
+            r"^Note: ",
+            id="exclude-with-declared-fields-names-the-model",
+        ),
+    ],
+)
+def test_registering_without_text_to_guess_or_with_invalid_exclude_fails(
+    model: type[Model], options: dict[str, Any], match: str
+) -> None:
+    with pytest.raises(ImproperlyConfigured, match=match):
+        rag.register(model, **options)
 
 
 @pytest.mark.django_db

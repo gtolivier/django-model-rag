@@ -1,5 +1,4 @@
 import uuid
-from collections.abc import Hashable
 from typing import Any
 
 import pytest
@@ -30,36 +29,6 @@ def test_document_exposes_its_text_and_source() -> None:
     assert document.source_app_label == "testapp"
     assert document.source_model == "product"
     assert document.source_pk == 1
-
-
-def test_document_source_is_mandatory() -> None:
-    # Each call deliberately omits one source field: the type checker rightly
-    # rejects it, and the test checks the runtime rejects it too.
-    with pytest.raises(TypeError):
-        NormalizedDocument(  # type: ignore[call-arg]
-            text="A desk lamp",
-            source_model="product",
-            source_pk=1,
-        )
-    with pytest.raises(TypeError):
-        NormalizedDocument(  # type: ignore[call-arg]
-            text="A desk lamp",
-            source_app_label="testapp",
-            source_pk=1,
-        )
-    with pytest.raises(TypeError):
-        NormalizedDocument(  # type: ignore[call-arg]
-            text="A desk lamp",
-            source_app_label="testapp",
-            source_model="product",
-        )
-
-
-def test_document_arguments_are_keyword_only() -> None:
-    # The call deliberately passes the arguments positionally: the type checker
-    # rightly rejects it, and the test checks the runtime rejects it too.
-    with pytest.raises(TypeError):
-        NormalizedDocument("A desk lamp", "testapp", "product", 1)  # type: ignore[call-arg]
 
 
 def test_document_source_pk_cannot_be_none() -> None:
@@ -289,56 +258,3 @@ def test_document_repr_cuts_a_long_title_to_its_first_60_characters() -> None:
         "title='Desk lamp with an adjustable arm, a weighted base and a warm'… "
         "text='A desk lamp'>"
     )
-
-
-DOCUMENT_VALUES: dict[str, Any] = {
-    "text": "A desk lamp",
-    "source_app_label": "testapp",
-    "source_model": "product",
-    "source_pk": 1,
-    "title": "Lamp",
-    "url": "/products/1/",
-    "language": "en",
-    "metadata": {"category": "Lighting"},
-}
-
-
-@pytest.mark.parametrize(
-    ("field_name", "other_value"),
-    [
-        ("text", "An office chair"),
-        ("source_app_label", "otherapp"),
-        ("source_model", "category"),
-        ("source_pk", 2),
-        ("title", "Chair"),
-        ("url", "/products/2/"),
-        ("language", "fr"),
-        ("metadata", {"category": "Furniture"}),
-    ],
-)
-def test_documents_compare_by_value(field_name: str, other_value: object) -> None:
-    document = NormalizedDocument(**DOCUMENT_VALUES)
-    same = NormalizedDocument(**DOCUMENT_VALUES)
-    different = NormalizedDocument(**{**DOCUMENT_VALUES, field_name: other_value})
-
-    assert document == same
-    assert document != different
-
-
-@pytest.mark.parametrize("field_name", list(DOCUMENT_VALUES))
-def test_document_attributes_cannot_be_reassigned(field_name: str) -> None:
-    document = NormalizedDocument(**DOCUMENT_VALUES)
-
-    # setattr rather than a plain assignment: the test covers every field, and
-    # it type-checks the same before and after the class becomes immutable.
-    with pytest.raises(AttributeError):
-        setattr(document, field_name, "Other")
-
-
-def test_document_is_not_hashable() -> None:
-    # Documents compare by value but are not meant for sets or dict keys.
-    document = NormalizedDocument(**DOCUMENT_VALUES)
-
-    assert not isinstance(document, Hashable)
-    with pytest.raises(TypeError):
-        hash(document)

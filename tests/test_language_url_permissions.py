@@ -1,7 +1,9 @@
 import re
+from typing import Any
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.db.models import Model
 from django.urls import NoReverseMatch
 from pytest_django import DjangoAssertNumQueries
 
@@ -463,98 +465,132 @@ def test_permissions_option_gives_every_document_those_permissions() -> None:
     assert all(isinstance(document.permissions, frozenset) for document in documents)
 
 
-def test_permissions_given_as_a_bare_string_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bpermissions\b"):
-        # A bare string is the slip under test: the type checker rightly
-        # rejects it.
-        rag.register(
-            Category,
-            fields=["name"],
-            permissions="testapp.view_category",  # type: ignore[arg-type]
-        )
-
-
-def test_permissions_given_as_a_set_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bpermissions\b"):
-        # A set is the slip under test: the type checker rightly rejects it.
-        rag.register(
-            Category,
-            fields=["name"],
-            permissions={"testapp.view_category"},  # type: ignore[arg-type]
-        )
+# Every permission is checked, not only the first: each bad one comes after
+# a well-formed one.
+WELL_FORMED_PERMISSION = "testapp.view_category"
 
 
 @pytest.mark.parametrize(
-    "permission",
+    ("model", "options", "match"),
     [
-        pytest.param("view_category", id="no-dot"),
-        pytest.param(".view_category", id="empty-app-label"),
-        pytest.param("testapp.", id="empty-codename"),
-    ],
-)
-def test_permission_not_of_the_form_app_label_codename_fails_naming_it(
-    permission: str,
-) -> None:
-    # After a well-formed one: every permission is checked, not only the first.
-    with pytest.raises(ImproperlyConfigured, match=re.escape(permission)):
-        rag.register(
+        pytest.param(
             Category,
-            fields=["name"],
-            permissions=["testapp.view_category", permission],
-        )
-
-
-@pytest.mark.parametrize(
-    "permission",
-    [
+            {"fields": ["name"], "permissions": "testapp.view_category"},
+            r"\bpermissions\b",
+            id="permissions-as-a-bare-string",
+        ),
+        pytest.param(
+            Category,
+            {"fields": ["name"], "permissions": {"testapp.view_category"}},
+            r"\bpermissions\b",
+            id="permissions-as-a-set",
+        ),
+        pytest.param(
+            Category,
+            {
+                "fields": ["name"],
+                "permissions": [WELL_FORMED_PERMISSION, "view_category"],
+            },
+            re.escape("view_category"),
+            id="permission-without-a-dot",
+        ),
+        pytest.param(
+            Category,
+            {
+                "fields": ["name"],
+                "permissions": [WELL_FORMED_PERMISSION, ".view_category"],
+            },
+            re.escape(".view_category"),
+            id="permission-with-an-empty-app-label",
+        ),
+        pytest.param(
+            Category,
+            {"fields": ["name"], "permissions": [WELL_FORMED_PERMISSION, "testapp."]},
+            re.escape("testapp."),
+            id="permission-with-an-empty-codename",
+        ),
         # Its text form, "1.5", looks like app_label.codename.
-        pytest.param(1.5, id="float-looking-well-formed"),
-        pytest.param(None, id="none"),
-        pytest.param(42, id="int"),
+        pytest.param(
+            Category,
+            {"fields": ["name"], "permissions": [WELL_FORMED_PERMISSION, 1.5]},
+            r"\bpermissions\b",
+            id="permission-as-a-float-looking-well-formed",
+        ),
+        pytest.param(
+            Category,
+            {"fields": ["name"], "permissions": [WELL_FORMED_PERMISSION, None]},
+            r"\bpermissions\b",
+            id="permission-as-none",
+        ),
+        pytest.param(
+            Category,
+            {"fields": ["name"], "permissions": [WELL_FORMED_PERMISSION, 42]},
+            r"\bpermissions\b",
+            id="permission-as-an-int",
+        ),
+        pytest.param(
+            Notice,
+            {"fields": ["title"], "language_field": "nonexistent"},
+            "nonexistent",
+            id="language-field-the-model-lacks",
+        ),
+        pytest.param(
+            Excerpt,
+            {"fields": ["title"], "language_field": "notice__nonexistent"},
+            "notice__nonexistent",
+            id="language-field-path-the-related-model-lacks",
+        ),
+        pytest.param(
+            Excerpt,
+            {"fields": ["title"], "language_field": "notice"},
+            "notice",
+            id="language-field-naming-a-relation",
+        ),
+        pytest.param(
+            Announcement,
+            {"fields": ["title"], "language_field": "language"},
+            "language",
+            id="language-field-naming-a-foreign-key",
+        ),
+        pytest.param(
+            Bookmark,
+            {"fields": ["title"], "url_field": "nonexistent"},
+            "nonexistent",
+            id="url-field-the-model-lacks",
+        ),
+        # A method, even the one that gives the url without url_field, is no
+        # field.
+        pytest.param(
+            Pamphlet,
+            {"fields": ["title"], "url_field": "get_absolute_url"},
+            "get_absolute_url",
+            id="url-field-naming-a-method",
+        ),
+        pytest.param(
+            Citation,
+            {"fields": ["title"], "url_field": "bookmark"},
+            "bookmark",
+            id="url-field-naming-a-relation",
+        ),
+        pytest.param(
+            Notice,
+            {"fields": ["title"], "language": "   "},
+            None,
+            id="blank-constant-language",
+        ),
+        pytest.param(
+            Notice,
+            {"fields": ["title"], "language": 42},
+            None,
+            id="non-string-constant-language",
+        ),
     ],
 )
-def test_permission_not_a_string_fails_at_registration_naming_permissions(
-    permission: object,
+def test_invalid_permissions_language_or_url_option_fails_at_registration(
+    model: type[Model], options: dict[str, Any], match: str | None
 ) -> None:
-    # After a well-formed one: every permission is checked, not only the first.
-    with pytest.raises(ImproperlyConfigured, match=r"\bpermissions\b"):
-        rag.register(
-            Category,
-            fields=["name"],
-            # A non-string item is the slip under test: the type checker
-            # rightly rejects it.
-            permissions=["testapp.view_category", permission],  # type: ignore[list-item]
-        )
-
-
-def test_language_field_the_model_lacks_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured, match="nonexistent"):
-        rag.register(Notice, fields=["title"], language_field="nonexistent")
-
-    with pytest.raises(ImproperlyConfigured, match="notice__nonexistent"):
-        rag.register(Excerpt, fields=["title"], language_field="notice__nonexistent")
-
-
-def test_language_field_naming_a_relation_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured, match="notice"):
-        rag.register(Excerpt, fields=["title"], language_field="notice")
-
-    with pytest.raises(ImproperlyConfigured, match="language"):
-        rag.register(Announcement, fields=["title"], language_field="language")
-
-
-def test_url_field_the_model_lacks_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured, match="nonexistent"):
-        rag.register(Bookmark, fields=["title"], url_field="nonexistent")
-
-    # A method, even the one that gives the url without url_field, is no field.
-    with pytest.raises(ImproperlyConfigured, match="get_absolute_url"):
-        rag.register(Pamphlet, fields=["title"], url_field="get_absolute_url")
-
-
-def test_url_field_naming_a_relation_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured, match="bookmark"):
-        rag.register(Citation, fields=["title"], url_field="bookmark")
+    with pytest.raises(ImproperlyConfigured, match=match):
+        rag.register(model, **options)
 
 
 def test_constant_language_with_language_field_fails_at_registration_naming_both() -> (
@@ -567,12 +603,3 @@ def test_constant_language_with_language_field_fails_at_registration_naming_both
     assert "language_field" in message
     # "language" alone, not as the start of "language_field"
     assert re.search(r"\blanguage\b", message)
-
-
-def test_blank_or_non_string_constant_language_fails_at_registration() -> None:
-    with pytest.raises(ImproperlyConfigured):
-        rag.register(Notice, fields=["title"], language="   ")
-
-    with pytest.raises(ImproperlyConfigured):
-        # A number is the slip under test: the type checker rightly rejects it.
-        rag.register(Notice, fields=["title"], language=42)  # type: ignore[arg-type]

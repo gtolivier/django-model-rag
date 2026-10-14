@@ -30,28 +30,75 @@ def _create_a_hammer() -> Product:
     )
 
 
-def test_the_command_without_an_output_setting_names_the_missing_setting() -> None:
-    # tests/settings.py defines no MODEL_RAG_OUTPUT.
-    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
-        call_command("sync_model_rag")
-
-
-def test_the_command_with_an_output_setting_that_is_not_a_dict_names_the_setting(
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        # tests/settings.py defines no MODEL_RAG_OUTPUT.
+        pytest.param({}, "MODEL_RAG_OUTPUT", id="missing-setting"),
+        pytest.param(
+            {"MODEL_RAG_OUTPUT": TRACKED_BACKEND},
+            "MODEL_RAG_OUTPUT",
+            id="setting-not-a-dict",
+        ),
+        pytest.param(
+            {"MODEL_RAG_OUTPUT": {"OPTIONS": {}}}, "BACKEND", id="without-a-backend"
+        ),
+        pytest.param(
+            {"MODEL_RAG_OUTPUT": {"BACKEND": TRACKED_BACKEND, "OPTIONS": None}},
+            "OPTIONS",
+            id="options-none",
+        ),
+        pytest.param(
+            {
+                "MODEL_RAG_OUTPUT": {
+                    "BACKEND": TRACKED_BACKEND,
+                    "OPTIONS": ["collection", "catalog"],
+                }
+            },
+            "OPTIONS",
+            id="options-a-list",
+        ),
+        pytest.param(
+            {"MODEL_RAG_OUTPUT": {"BACKEND": TrackedRecordingOutput}},
+            "BACKEND",
+            id="backend-a-class-not-its-path",
+        ),
+        pytest.param(
+            {"MODEL_RAG_OUTPUT": {"BACKEND": None}}, "BACKEND", id="backend-none"
+        ),
+        # The instance has a callable replace and prune of its own.
+        pytest.param(
+            {
+                "MODEL_RAG_OUTPUT": {
+                    "BACKEND": "tests.recording.RECORDING_OUTPUT_INSTANCE"
+                }
+            },
+            r"tests\.recording\.RECORDING_OUTPUT_INSTANCE",
+            id="backend-not-a-class",
+        ),
+    ],
+)
+@pytest.mark.django_db
+def test_the_command_with_an_invalid_output_setting_names_it_before_running_a_model(
     settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    overrides: dict[str, object],
+    match: str,
 ) -> None:
-    settings.MODEL_RAG_OUTPUT = TRACKED_BACKEND
+    # Registered with a row: running it would send the documents to the
+    # output, so only a check made up front keeps them from reaching it.
+    _create_a_hammer()
+    rag.register(Product, fields=["name"])
+    for name, value in overrides.items():
+        setattr(settings, name, value)
 
-    with pytest.raises(ImproperlyConfigured, match="MODEL_RAG_OUTPUT"):
+    with pytest.raises(ImproperlyConfigured, match=match):
         call_command("sync_model_rag")
 
-
-def test_the_command_with_an_output_setting_without_a_backend_names_the_backend_key(
-    settings: Settings,
-) -> None:
-    settings.MODEL_RAG_OUTPUT = {"OPTIONS": {}}
-
-    with pytest.raises(ImproperlyConfigured, match="BACKEND"):
-        call_command("sync_model_rag")
+    # The check may come before or after the backend is built: either way,
+    # nothing reaches it.
+    assert [output.calls for output in built_outputs] in ([], [[]])
+    assert RECORDING_OUTPUT_INSTANCE.calls == []
 
 
 def test_the_command_with_a_backend_that_cannot_be_imported_names_the_backend(
@@ -109,25 +156,6 @@ def test_the_command_with_a_backend_without_prune_names_it_before_running_a_mode
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("bad_options", [None, ["collection", "catalog"]])
-def test_the_command_with_options_that_are_not_a_dict_names_them_before_running_a_model(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    bad_options: object,
-) -> None:
-    # Registered with a row: running it would send the documents to the
-    # output, so only a check made up front keeps them from reaching it.
-    _create_a_hammer()
-    rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND, "OPTIONS": bad_options}
-
-    with pytest.raises(ImproperlyConfigured, match="OPTIONS"):
-        call_command("sync_model_rag")
-
-    assert [output.calls for output in built_outputs] in ([], [[]])
-
-
-@pytest.mark.django_db
 def test_the_command_with_options_the_backend_rejects_names_it_before_building_it(
     settings: Settings, built_outputs: list[TrackedRecordingOutput]
 ) -> None:
@@ -145,44 +173,6 @@ def test_the_command_with_options_the_backend_rejects_names_it_before_building_i
         call_command("sync_model_rag")
 
     assert built_outputs == []
-
-
-@pytest.mark.django_db
-@pytest.mark.parametrize("bad_backend", [TrackedRecordingOutput, None])
-def test_the_command_with_a_backend_not_a_string_names_it_before_running_a_model(
-    settings: Settings,
-    built_outputs: list[TrackedRecordingOutput],
-    bad_backend: object,
-) -> None:
-    # Registered with a row: running it would send the documents to the
-    # output, so only a check made up front keeps them from reaching it.
-    _create_a_hammer()
-    rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": bad_backend}
-
-    with pytest.raises(ImproperlyConfigured, match="BACKEND"):
-        call_command("sync_model_rag")
-
-    assert [output.calls for output in built_outputs] in ([], [[]])
-
-
-@pytest.mark.django_db
-def test_the_command_with_a_backend_not_a_class_names_it_before_running_a_model(
-    settings: Settings,
-) -> None:
-    # Registered with a row: running it would send the documents to the
-    # instance, which has a callable replace and prune of its own, so only a
-    # check made up front keeps them from reaching it.
-    _create_a_hammer()
-    rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": "tests.recording.RECORDING_OUTPUT_INSTANCE"}
-
-    with pytest.raises(
-        ImproperlyConfigured, match=r"tests\.recording\.RECORDING_OUTPUT_INSTANCE"
-    ):
-        call_command("sync_model_rag")
-
-    assert RECORDING_OUTPUT_INSTANCE.calls == []
 
 
 @pytest.mark.django_db
@@ -254,37 +244,26 @@ def test_the_command_with_a_model_named_twice_runs_it_once_where_first_named(
 
 
 @pytest.mark.django_db
-@pytest.mark.parametrize("bad_label", ["testapp.nosuchmodel", "product"])
-def test_the_command_with_a_label_naming_no_model_names_it_before_running_a_model(
+@pytest.mark.parametrize(
+    "bad_label",
+    [
+        pytest.param("testapp.nosuchmodel", id="unknown-model"),
+        pytest.param("product", id="without-an-app-label"),
+        # Category exists but is not registered.
+        pytest.param("testapp.category", id="unregistered-model"),
+    ],
+)
+def test_the_command_with_a_label_naming_no_registered_model_names_it_up_front(
     settings: Settings, built_outputs: list[TrackedRecordingOutput], bad_label: str
 ) -> None:
-    # The bad label comes after a valid one with a row: resolving the labels
-    # one by one while running would send that model's documents first.
+    # The bad label comes after a registered model with a row: resolving the
+    # labels one by one while running would send that model's documents first.
     _create_a_hammer()
     rag.register(Product, fields=["name"])
     settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
 
     with pytest.raises(CommandError, match=re.escape(bad_label)):
         call_command("sync_model_rag", "testapp.product", bad_label)
-
-    # The check may come before or after the backend is built: either way,
-    # nothing reaches it.
-    assert [output.calls for output in built_outputs] in ([], [[]])
-
-
-@pytest.mark.django_db
-def test_the_command_with_a_label_naming_an_unregistered_model_names_it_up_front(
-    settings: Settings, built_outputs: list[TrackedRecordingOutput]
-) -> None:
-    # Category exists but is not registered, and comes after a registered
-    # model with a row: running the models before checking them would send
-    # Product's documents first.
-    _create_a_hammer()
-    rag.register(Product, fields=["name"])
-    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
-
-    with pytest.raises(CommandError, match=re.escape("testapp.category")):
-        call_command("sync_model_rag", "testapp.product", "testapp.category")
 
     # The check may come before or after the backend is built: either way,
     # nothing reaches it.
