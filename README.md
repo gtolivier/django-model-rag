@@ -828,8 +828,8 @@ leaves some of them unsent. Once the cause is fixed, or has passed,
 transient errors in the output's `replace()`, with backoff: a rate-limited
 embedding API, a timeout. Only the output can tell which exceptions are
 transient; a dimension mismatch, say, would fail again. Handing the sync to
-a task queue, with its retries, is an optional, unscheduled step (feature 12b in the
-[roadmap](ROADMAP.md)).
+a task queue, with its retries, is an optional, unscheduled step (feature
+12b in the [roadmap](ROADMAP.md)).
 
 **Several changes, one transaction.** Each saved or deleted instance gets a
 commit callback of its own: saving ten registered instances in a
@@ -841,10 +841,8 @@ Batching them per transaction is an optional, unscheduled step
 **Turning them off.** `MODEL_RAG_SIGNALS = False` (default `True`) makes the
 signals send nothing and check nothing; the `post_delete` listeners stay
 connected, though, so the models they listen to do not get Django's fast
-delete back (a manual mode that connects nothing is an optional, unscheduled step:
-feature 12a).
-Your test settings need either
-that, or a `MODEL_RAG_OUTPUT` pointing to a test output — as with
+delete back (a manual mode that connects nothing is an optional,
+unscheduled step: feature 12a). Your test settings need either that, or a `MODEL_RAG_OUTPUT` pointing to a test output — as with
 `EMAIL_BACKEND` — or every save of a registered model in your tests raises
 `ImproperlyConfigured`.
 

@@ -1232,16 +1232,17 @@ setting.
     checks that `register`'s signature rejects them, and some messages
     are still matched loosely (`language_field` naming a foreign key,
     the constant-language rows).
-- [ ] **12a. Manual sync mode (optional, not scheduled).** `MODEL_RAG_SYNC = "auto" | "notify" |
-  "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
+- [ ] **12a. Manual sync mode (optional, not scheduled).**
+  `MODEL_RAG_SYNC = "auto" | "notify" | "manual"` replaces
+  `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `m2m_changed` receiver of 11d and the `post_delete` listeners
   included, so every model keeps Django's fast delete, which
   `MODEL_RAG_SIGNALS = False` does not give back today. The wiring is
   decided at startup and redone on `setting_changed` (tests).
   Adds `rag.signals_paused()`, a context manager for a `loaddata` (11d) or
   a bulk import followed by a sync. A mode per model is not needed yet.
-- [ ] **12b. Notify mode (optional, not scheduled).** The package sends a signal of its own at the
-  commit (`sources_changed`, say: the model and primary keys), once per
+- [ ] **12b. Notify mode (optional, not scheduled).** The package sends a
+  signal of its own at the commit (`sources_changed`, say: the model and primary keys), once per
   transaction and grouped by model, with the deleted keys apart. In `auto`,
   the built-in receiver is connected to it and syncs; in `notify`, only
   detection and the signal run — no extraction, no output, no output
