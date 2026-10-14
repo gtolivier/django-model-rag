@@ -1242,8 +1242,9 @@ setting.
   Adds `rag.signals_paused()`, a context manager for a `loaddata` (11d) or
   a bulk import followed by a sync. A mode per model is not needed yet.
 - [ ] **12b. Notify mode (optional, not scheduled).** The package sends a
-  signal of its own at the commit (`sources_changed`, say: the model and primary keys), once per
-  transaction and grouped by model, with the deleted keys apart. In `auto`,
+  signal of its own at the commit (`sources_changed`, say: the model and
+  primary keys), once per transaction and grouped by model, with the
+  deleted keys apart. In `auto`,
   the built-in receiver is connected to it and syncs; in `notify`, only
   detection and the signal run — no extraction, no output, no output
   check — and the project syncs when it wants (a task queue, a batch). Adds

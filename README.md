@@ -842,7 +842,8 @@ Batching them per transaction is an optional, unscheduled step
 signals send nothing and check nothing; the `post_delete` listeners stay
 connected, though, so the models they listen to do not get Django's fast
 delete back (a manual mode that connects nothing is an optional,
-unscheduled step: feature 12a). Your test settings need either that, or a `MODEL_RAG_OUTPUT` pointing to a test output — as with
+unscheduled step: feature 12a). Your test settings need either that, or a
+`MODEL_RAG_OUTPUT` pointing to a test output — as with
 `EMAIL_BACKEND` — or every save of a registered model in your tests raises
 `ImproperlyConfigured`.
 
