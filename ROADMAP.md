@@ -253,10 +253,12 @@ plugin models.
 The prototype has none of this: the behaviors come from design, not from a
 reference.
 
-What is left, in the order planned: 11f, which narrows the sync and closes
-11e. Then 12a, which rewires every receiver, the `m2m_changed` one of 11d
-included. Then 12b, which needs the `MODEL_RAG_SYNC` setting of 12a. 10c is
-dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
+Done up to 11f, which narrowed the sync and closed 11e; 10c is dropped and
+stays a known limit, and 11f lifted 11c-quater and 11d-bis. 12a and 12b are
+optional and not scheduled: work on the package stops here for now. If they
+are taken up, 12a comes first, since it rewires every receiver, the
+`m2m_changed` one of 11d included, and 12b needs its `MODEL_RAG_SYNC`
+setting.
 
 - [x] **9. A management command, `sync_model_rag`**, that runs the pipeline
   over every registered model, in registration order, or over the models it
@@ -1072,7 +1074,7 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
   - **Dropped for 11f: revisit the limits this may lift** (a lookup path
     past a reverse one-to-one, a `GenericRelation` in `follow`,
     11c-quater). 11f lifts them all.
-- [ ] **11f. A narrower signal sync: exact for an instance and its
+- [x] **11f. A narrower signal sync: exact for an instance and its
   children, a model resync for the rest.** Design note, to approve before
   any code.
 
@@ -1230,7 +1232,7 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
     checks that `register`'s signature rejects them, and some messages
     are still matched loosely (`language_field` naming a foreign key,
     the constant-language rows).
-- [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
+- [ ] **12a. Manual sync mode (optional, not scheduled).** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `m2m_changed` receiver of 11d and the `post_delete` listeners
   included, so every model keeps Django's fast delete, which
@@ -1238,7 +1240,7 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
   decided at startup and redone on `setting_changed` (tests).
   Adds `rag.signals_paused()`, a context manager for a `loaddata` (11d) or
   a bulk import followed by a sync. A mode per model is not needed yet.
-- [ ] **12b. Notify mode.** The package sends a signal of its own at the
+- [ ] **12b. Notify mode (optional, not scheduled).** The package sends a signal of its own at the
   commit (`sources_changed`, say: the model and primary keys), once per
   transaction and grouped by model, with the deleted keys apart. In `auto`,
   the built-in receiver is connected to it and syncs; in `notify`, only
