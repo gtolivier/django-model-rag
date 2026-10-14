@@ -3,6 +3,7 @@ import sys
 import textwrap
 from collections.abc import Iterator, Mapping
 from pathlib import Path
+from typing import Any
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -445,113 +446,119 @@ def test_each_run_instance_starts_with_a_fresh_extractor() -> None:
     assert second_call == first_call
 
 
+class SloppyCategoryExtractor(BaseExtractor[Category]):
+    # A bare string instead of a document is the slip under test: the type
+    # checker rightly rejects it.
+    def extract(self, instance: Category) -> str:  # type: ignore[override]
+        return f"Everything filed under {instance.name}."
+
+
+class CountingCategoryExtractor(BaseExtractor[Category]):
+    # A number instead of a document is the slip under test: the type checker
+    # rightly rejects it.
+    def extract(self, instance: Category) -> int:  # type: ignore[override]
+        return instance.pk
+
+
+class StringListCategoryExtractor(BaseExtractor[Category]):
+    # A list of strings instead of documents is the slip under test: the type
+    # checker rightly rejects it.
+    def extract(self, instance: Category) -> list[str]:  # type: ignore[override]
+        return [f"Everything filed under {instance.name}."]
+
+
+@pytest.mark.parametrize(
+    ("extractor", "match"),
+    [
+        pytest.param(SloppyCategoryExtractor, "SloppyCategoryExtractor", id="string"),
+        pytest.param(
+            CountingCategoryExtractor, "CountingCategoryExtractor", id="non-iterable"
+        ),
+        pytest.param(
+            StringListCategoryExtractor,
+            "StringListCategoryExtractor",
+            id="iterable-of-something-else-than-documents",
+        ),
+    ],
+)
 @pytest.mark.django_db
-def test_extractor_returning_a_string_fails_naming_the_extractor() -> None:
+def test_extractor_returning_something_else_than_documents_fails_naming_it(
+    extractor: type[BaseExtractor[Category]], match: str
+) -> None:
     Category.objects.create(name="Tools")
+    rag.register_extractor(Category)(extractor)
 
-    @rag.register_extractor(Category)
-    class SloppyCategoryExtractor(BaseExtractor[Category]):
-        # A bare string instead of a document is the slip under test: the
-        # type checker rightly rejects it.
-        def extract(self, instance: Category) -> str:  # type: ignore[override]
-            return f"Everything filed under {instance.name}."
-
-    with pytest.raises(TypeError, match="SloppyCategoryExtractor"):
+    with pytest.raises(TypeError, match=match):
         run_documents()
 
 
+class ListingCategoryExtractor(BaseExtractor[Category]):
+    # A list of the instances instead of a queryset is the slip under test:
+    # the type checker rightly rejects it.
+    def get_queryset(  # type: ignore[override]
+        self, queryset: QuerySet[Category]
+    ) -> list[Category]:
+        return list(queryset)
+
+    def extract(self, instance: Category) -> NormalizedDocument:
+        return self.build_document(instance, text=instance.name)
+
+
+class ValuesCategoryExtractor(BaseExtractor[Category]):
+    # A values() queryset, which loads dictionaries instead of instances, is
+    # the slip under test: the type checker rightly rejects it.
+    def get_queryset(  # type: ignore[override]
+        self, queryset: QuerySet[Category]
+    ) -> QuerySet[Category, Mapping[str, object]]:
+        return queryset.values("pk", "name")
+
+    def extract(self, instance: Category) -> NormalizedDocument:
+        return self.build_document(instance, text="A category.")
+
+
+class StrayExtractor(BaseExtractor[Category]):
+    # A queryset of products for a category extractor is the slip under test:
+    # the type checker rightly rejects it.
+    def get_queryset(  # type: ignore[override]
+        self, queryset: QuerySet[Category]
+    ) -> QuerySet[Product]:
+        return Product.objects.all()
+
+    def extract(self, instance: Category) -> NormalizedDocument:
+        return self.build_document(instance, text=instance.name)
+
+
+@pytest.mark.parametrize(
+    ("extractor", "match"),
+    [
+        pytest.param(
+            ListingCategoryExtractor,
+            r"ListingCategoryExtractor\.get_queryset\(\).*QuerySet",
+            id="list",
+        ),
+        pytest.param(
+            ValuesCategoryExtractor,
+            r"ValuesCategoryExtractor\.get_queryset\(\)",
+            id="values-queryset",
+        ),
+        pytest.param(
+            StrayExtractor,
+            r"StrayExtractor\.get_queryset\(\).*Category",
+            id="queryset-of-another-model",
+        ),
+    ],
+)
 @pytest.mark.django_db
-def test_extractor_returning_a_non_iterable_fails_naming_the_extractor() -> None:
-    Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class CountingCategoryExtractor(BaseExtractor[Category]):
-        # A number instead of a document is the slip under test: the type
-        # checker rightly rejects it.
-        def extract(self, instance: Category) -> int:  # type: ignore[override]
-            return instance.pk
-
-    with pytest.raises(TypeError, match="CountingCategoryExtractor"):
-        run_documents()
-
-
-@pytest.mark.django_db
-def test_extractor_yielding_something_else_than_a_document_fails_naming_it() -> None:
-    Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class StringListCategoryExtractor(BaseExtractor[Category]):
-        # A list of strings instead of documents is the slip under test: the
-        # type checker rightly rejects it.
-        def extract(self, instance: Category) -> list[str]:  # type: ignore[override]
-            return [f"Everything filed under {instance.name}."]
-
-    with pytest.raises(TypeError, match="StringListCategoryExtractor"):
-        run_documents()
-
-
-@pytest.mark.django_db
-def test_extractor_get_queryset_returning_a_list_fails_naming_the_extractor() -> None:
-    Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class ListingCategoryExtractor(BaseExtractor[Category]):
-        # A list of the instances instead of a queryset is the slip under
-        # test: the type checker rightly rejects it.
-        def get_queryset(  # type: ignore[override]
-            self, queryset: QuerySet[Category]
-        ) -> list[Category]:
-            return list(queryset)
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
-
-    with pytest.raises(
-        TypeError, match=r"ListingCategoryExtractor\.get_queryset\(\).*QuerySet"
-    ):
-        run_documents()
-
-
-@pytest.mark.django_db
-def test_extractor_get_queryset_returning_values_fails_naming_the_extractor() -> None:
-    Category.objects.create(name="Tools")
-
-    @rag.register_extractor(Category)
-    class ValuesCategoryExtractor(BaseExtractor[Category]):
-        # A values() queryset, which loads dictionaries instead of instances,
-        # is the slip under test: the type checker rightly rejects it.
-        def get_queryset(  # type: ignore[override]
-            self, queryset: QuerySet[Category]
-        ) -> QuerySet[Category, Mapping[str, object]]:
-            return queryset.values("pk", "name")
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text="A category.")
-
-    with pytest.raises(TypeError, match=r"ValuesCategoryExtractor\.get_queryset\(\)"):
-        run_documents()
-
-
-@pytest.mark.django_db
-def test_extractor_get_queryset_returning_another_model_fails_naming_both() -> None:
+def test_extractor_get_queryset_returning_something_else_fails_naming_it(
+    extractor: type[BaseExtractor[Category]], match: str
+) -> None:
     tools = Category.objects.create(name="Tools")
     Product.objects.create(
         name="Hammer", description="Drives nails.", price="9.90", category=tools
     )
+    rag.register_extractor(Category)(extractor)
 
-    @rag.register_extractor(Category)
-    class StrayExtractor(BaseExtractor[Category]):
-        # A queryset of products for a category extractor is the slip under
-        # test: the type checker rightly rejects it.
-        def get_queryset(  # type: ignore[override]
-            self, queryset: QuerySet[Category]
-        ) -> QuerySet[Product]:
-            return Product.objects.all()
-
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.name)
-
-    with pytest.raises(TypeError, match=r"StrayExtractor\.get_queryset\(\).*Category"):
+    with pytest.raises(TypeError, match=match):
         run_documents()
 
 
@@ -575,24 +582,8 @@ def test_type_checker_rejects_an_extractor_registered_for_another_model() -> Non
     assert decorated is ProductExtractor
 
 
-def test_registering_a_class_not_derived_from_base_extractor_fails() -> None:
-    class StandaloneCategoryExtractor:
-        def extract(self, instance: Category) -> NormalizedDocument:
-            return NormalizedDocument(
-                text=f"Everything filed under {instance.name}.",
-                source_app_label="testapp",
-                source_model="category",
-                source_pk=instance.pk,
-            )
-
-    with pytest.raises(ImproperlyConfigured, match="StandaloneCategoryExtractor"):
-        # A class that only looks like an extractor is the slip under test:
-        # the type checker rightly rejects it.
-        rag.register_extractor(Category)(StandaloneCategoryExtractor)  # type: ignore[arg-type]
-
-
-def test_registering_a_function_instead_of_a_class_fails_naming_it() -> None:
-    def extract_category(instance: Category) -> NormalizedDocument:
+class StandaloneCategoryExtractor:
+    def extract(self, instance: Category) -> NormalizedDocument:
         return NormalizedDocument(
             text=f"Everything filed under {instance.name}.",
             source_app_label="testapp",
@@ -600,165 +591,182 @@ def test_registering_a_function_instead_of_a_class_fails_naming_it() -> None:
             source_pk=instance.pk,
         )
 
-    with pytest.raises(ImproperlyConfigured, match="extract_category"):
-        # A plain function instead of an extractor class is the slip under
-        # test: the type checker rightly rejects it.
-        rag.register_extractor(Category)(extract_category)  # type: ignore[arg-type]
+
+def extract_category(instance: Category) -> NormalizedDocument:
+    return NormalizedDocument(
+        text=f"Everything filed under {instance.name}.",
+        source_app_label="testapp",
+        source_model="category",
+        source_pk=instance.pk,
+    )
 
 
-def test_registering_an_extractor_without_extract_fails() -> None:
-    class UnfinishedCategoryExtractor(BaseExtractor[Category]):
-        pass
-
-    with pytest.raises(ImproperlyConfigured, match="UnfinishedCategoryExtractor"):
-        # An extractor left abstract is the slip under test: the type checker
-        # rightly rejects it.
-        rag.register_extractor(Category)(UnfinishedCategoryExtractor)  # type: ignore[type-abstract]
+class UnfinishedCategoryExtractor(BaseExtractor[Category]):
+    pass
 
 
-def test_depending_on_a_single_relation_name_instead_of_a_list_fails() -> None:
-    with pytest.raises(
-        ImproperlyConfigured, match=r"\bdepends_on\b.*\blist or a tuple\b"
-    ):
-        # A bare string is the slip under test: the type checker rightly
-        # rejects it.
-        rag.register_extractor(TextPlugin, depends_on="page")(TextPluginBodyExtractor)  # type: ignore[arg-type]
+def naming_in_depends_on(name: str) -> str:
+    """Match an error naming both ``name`` and depends_on, in either order."""
+    return rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b"
 
 
 @pytest.mark.parametrize(
-    "item",
+    ("model", "options", "extractor", "match"),
     [
-        pytest.param(None, id="none"),
+        # A class that only looks like an extractor.
+        pytest.param(
+            Category,
+            {},
+            StandaloneCategoryExtractor,
+            "StandaloneCategoryExtractor",
+            id="class-not-derived-from-base-extractor",
+        ),
+        pytest.param(
+            Category,
+            {},
+            extract_category,
+            "extract_category",
+            id="function-instead-of-a-class",
+        ),
+        # An extractor left abstract.
+        pytest.param(
+            Category,
+            {},
+            UnfinishedCategoryExtractor,
+            "UnfinishedCategoryExtractor",
+            id="extractor-without-extract",
+        ),
+        pytest.param(
+            TextPlugin,
+            {"depends_on": "page"},
+            TextPluginBodyExtractor,
+            r"\bdepends_on\b.*\blist or a tuple\b",
+            id="depends-on-a-single-name",
+        ),
+        pytest.param(
+            TextPlugin,
+            {"depends_on": [None]},
+            TextPluginBodyExtractor,
+            r"\bdepends_on\b",
+            id="depends-on-none",
+        ),
         # The field object of TextPlugin.page, where its name was meant.
-        pytest.param(TextPlugin.page.field, id="field-object"),
-    ],
-)
-def test_depending_on_an_item_that_is_not_a_name_fails_at_registration(
-    item: object,
-) -> None:
-    with pytest.raises(ImproperlyConfigured, match=r"\bdepends_on\b"):
-        # An item that is not a string is the slip under test: the type
-        # checker rightly rejects it.
-        rag.register_extractor(TextPlugin, depends_on=[item])(TextPluginBodyExtractor)  # type: ignore[list-item]
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
+        pytest.param(
+            TextPlugin,
+            {"depends_on": [TextPlugin.page.field]},
+            TextPluginBodyExtractor,
+            r"\bdepends_on\b",
+            id="depends-on-a-field-object",
+        ),
         # TextPlugin.body exists but holds content: its changes are the
         # model's own, not a relation's.
-        pytest.param("body", id="content-field"),
-        pytest.param("pgae", id="unknown-name"),
-    ],
-)
-def test_depending_on_a_name_that_is_not_a_relation_fails_at_registration(
-    name: str,
-) -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
-
-
-@pytest.mark.parametrize(
-    ("model", "name"),
-    [
+        pytest.param(
+            TextPlugin,
+            {"depends_on": ["body"]},
+            TextPluginBodyExtractor,
+            naming_in_depends_on("body"),
+            id="depends-on-a-content-field",
+        ),
+        pytest.param(
+            TextPlugin,
+            {"depends_on": ["pgae"]},
+            TextPluginBodyExtractor,
+            naming_in_depends_on("pgae"),
+            id="depends-on-an-unknown-name",
+        ),
         # Tag.content_object may point to an instance of any model: there is
         # no single model whose changes to listen to.
-        pytest.param(Tag, "content_object", id="generic-foreign-key"),
-        pytest.param(Photo, "tags", id="generic-relation"),
+        pytest.param(
+            Tag,
+            {"depends_on": ["content_object"]},
+            AnyModelExtractor,
+            naming_in_depends_on("content_object"),
+            id="depends-on-a-generic-foreign-key",
+        ),
+        pytest.param(
+            Photo,
+            {"depends_on": ["tags"]},
+            AnyModelExtractor,
+            naming_in_depends_on("tags"),
+            id="depends-on-a-generic-relation",
+        ),
+        # TextPlugin.page is a foreign key, but Page.accordion_items is a
+        # reverse one: past the first link, a path goes through foreign keys
+        # only.
+        pytest.param(
+            TextPlugin,
+            {"depends_on": ["page__accordion_items"]},
+            TextPluginBodyExtractor,
+            naming_in_depends_on("page__accordion_items"),
+            id="path-through-a-later-reverse-relation",
+        ),
+        # Page.text_plugins alone is allowed, but a reverse relation is a
+        # path's last link only: a longer path goes through foreign keys only.
+        pytest.param(
+            Page,
+            {"depends_on": ["text_plugins__page"]},
+            AnyModelExtractor,
+            naming_in_depends_on("text_plugins__page"),
+            id="longer-path-starting-with-a-reverse-relation",
+        ),
+        # TextPlugin.page is a foreign key, but Page.title holds content: every
+        # link of a path is a relation.
+        pytest.param(
+            TextPlugin,
+            {"depends_on": ["page__title"]},
+            TextPluginBodyExtractor,
+            naming_in_depends_on("page__title"),
+            id="path-through-a-later-non-relation",
+        ),
+        # Membership.guild is a foreign key, but Guild.members a many-to-many.
+        pytest.param(
+            Membership,
+            {"depends_on": ["guild__members"]},
+            AnyModelExtractor,
+            naming_in_depends_on("guild__members"),
+            id="path-through-a-later-many-to-many",
+        ),
+        # Pin.tag is a foreign key, but Tag.content_object may point to an
+        # instance of any model.
+        pytest.param(
+            Pin,
+            {"depends_on": ["tag__content_object"]},
+            AnyModelExtractor,
+            naming_in_depends_on("tag__content_object"),
+            id="path-through-a-later-generic-foreign-key",
+        ),
+        # Pin.photo is a foreign key, but Photo.tags a generic relation.
+        pytest.param(
+            Pin,
+            {"depends_on": ["photo__tags"]},
+            AnyModelExtractor,
+            naming_in_depends_on("photo__tags"),
+            id="path-through-a-later-generic-relation",
+        ),
+        pytest.param(
+            TextPlugin,
+            {"depends_on": ["page", "page"]},
+            TextPluginBodyExtractor,
+            r"\bpage\b.*\btwice\b|\btwice\b.*\bpage\b",
+            id="relation-twice",
+        ),
     ],
 )
-def test_depending_on_a_generic_relation_fails_at_registration(
-    model: type[Model], name: str
+def test_registering_an_invalid_extractor_or_depends_on_fails_naming_the_culprit(
+    model: type[Model], options: dict[str, Any], extractor: Any, match: str
 ) -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
-
-
-def test_depending_on_a_path_through_a_later_reverse_relation_fails() -> None:
-    # TextPlugin.page is a foreign key, but Page.accordion_items is a reverse
-    # one: past the first link, a path goes through foreign keys only.
-    name = "page__accordion_items"
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
-
-
-def test_depending_on_a_longer_path_starting_with_a_reverse_relation_fails() -> None:
-    class PageExtractor(BaseExtractor[Page]):
-        def extract(self, instance: Page) -> NormalizedDocument:
-            return self.build_document(instance, text=instance.title)
-
-    # Page.text_plugins alone is allowed, but a reverse relation is a path's
-    # last link only: a longer path goes through foreign keys only.
-    name = "text_plugins__page"
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(Page, depends_on=[name])(PageExtractor)
-
-
-def test_depending_on_a_path_through_a_later_non_relation_fails() -> None:
-    # TextPlugin.page is a foreign key, but Page.title holds content: every
-    # link of a path is a relation.
-    name = "page__title"
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
+    with pytest.raises(ImproperlyConfigured, match=match):
+        rag.register_extractor(model, **options)(extractor)
 
 
 def test_depending_on_a_path_through_a_later_unknown_name_fails_unregistered() -> None:
     # TextPlugin.page is a foreign key, but Page has no field named nope.
-    name = "page__nope"
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(TextPlugin, depends_on=[name])(TextPluginBodyExtractor)
-
-    assert TextPlugin not in rag.registered_models()
-
-
-@pytest.mark.parametrize(
-    ("model", "name"),
-    [
-        # Membership.guild is a foreign key, but Guild.members a many-to-many.
-        pytest.param(Membership, "guild__members", id="many-to-many"),
-        # Pin.tag is a foreign key, but Tag.content_object may point to an
-        # instance of any model.
-        pytest.param(Pin, "tag__content_object", id="generic-foreign-key"),
-        # Pin.photo is a foreign key, but Photo.tags a generic relation.
-        pytest.param(Pin, "photo__tags", id="generic-relation"),
-    ],
-)
-def test_depending_on_a_path_through_a_later_many_to_many_or_generic_relation_fails(
-    model: type[Model], name: str
-) -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=rf"\b{name}\b.*\bdepends_on\b|\bdepends_on\b.*\b{name}\b",
-    ):
-        rag.register_extractor(model, depends_on=[name])(AnyModelExtractor)
-
-
-def test_depending_on_a_relation_twice_names_it_in_the_error() -> None:
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=r"\bpage\b.*\btwice\b|\btwice\b.*\bpage\b",
-    ):
-        rag.register_extractor(TextPlugin, depends_on=["page", "page"])(
+    with pytest.raises(ImproperlyConfigured, match=naming_in_depends_on("page__nope")):
+        rag.register_extractor(TextPlugin, depends_on=["page__nope"])(
             TextPluginBodyExtractor
         )
+
+    assert TextPlugin not in rag.registered_models()
 
 
 THROWAWAY_APP_SETTINGS = """\

@@ -1,8 +1,8 @@
-import re
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+from typing import Any
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
@@ -358,98 +358,102 @@ def test_lookup_path_and_follow_on_its_first_relation_are_read_in_a_single_query
 
 
 @pytest.mark.parametrize(
-    "path",
-    [
-        pytest.param("categroy__name", id="unknown-first-link"),
-        pytest.param("category__nmae", id="unknown-last-link"),
-    ],
-)
-def test_lookup_path_with_an_unknown_link_fails_at_registration_naming_the_path(
-    path: str,
-) -> None:
-    with pytest.raises(ImproperlyConfigured, match=re.escape(path)):
-        rag.register(Product, fields=["name", path])
-
-
-def test_lookup_path_with_an_unknown_last_link_names_the_registered_model() -> None:
-    # category leads to Category, which has no field nmae: the error is about
-    # the model being registered and its whole path, not about Category.
-    with pytest.raises(
-        ImproperlyConfigured,
-        match=re.escape("Product has no field 'category__nmae'"),
-    ):
-        rag.register(Product, fields=["name", "category__nmae"])
-
-
-def test_lookup_path_through_a_non_relation_fails_at_registration() -> None:
-    # description is a text field of Product: it leads to no related model.
-    with pytest.raises(ImproperlyConfigured) as excinfo:
-        rag.register(Product, fields=["name", "description__name"])
-
-    message = str(excinfo.value)
-    assert "Product" in message
-    assert "description__name" in message
-    assert "not a relation" in message
-
-
-def test_lookup_path_ending_on_a_relation_fails_at_registration() -> None:
-    # category is a foreign key of Product: the path ends on a relation, not text.
-    with pytest.raises(ImproperlyConfigured) as excinfo:
-        rag.register(Review, fields=["title", "product__category"])
-
-    message = str(excinfo.value)
-    assert "product__category" in message
-    assert "a relation" in message
-
-
-@pytest.mark.parametrize(
-    ("model", "fields", "path"),
+    ("model", "options", "fragments"),
     [
         pytest.param(
-            Category, ["name", "products__name"], "products__name", id="reverse-fk"
+            Product,
+            {"fields": ["name", "categroy__name"]},
+            ["categroy__name"],
+            id="unknown-first-link",
+        ),
+        # category leads to Category, which has no field nmae: the error is
+        # about the model being registered and its whole path, not about
+        # Category.
+        pytest.param(
+            Product,
+            {"fields": ["name", "category__nmae"]},
+            ["Product has no field 'category__nmae'"],
+            id="unknown-last-link",
+        ),
+        # description is a text field of Product: it leads to no related model.
+        pytest.param(
+            Product,
+            {"fields": ["name", "description__name"]},
+            ["Product", "description__name", "not a relation"],
+            id="through-a-non-relation",
+        ),
+        # category is a foreign key of Product: the path ends on a relation,
+        # not text.
+        pytest.param(
+            Review,
+            {"fields": ["title", "product__category"]},
+            ["product__category", "a relation"],
+            id="ending-on-a-relation",
+        ),
+        # Each first link of the next three can hold several objects: the path
+        # has no single value.
+        pytest.param(
+            Category,
+            {"fields": ["name", "products__name"]},
+            ["products__name", "several"],
+            id="through-a-reverse-fk",
         ),
         pytest.param(
-            Course, ["title", "topics__title"], "topics__title", id="many-to-many"
+            Course,
+            {"fields": ["title", "topics__title"]},
+            ["topics__title", "several"],
+            id="through-a-many-to-many",
         ),
         pytest.param(
-            Photo, ["title", "tags__label"], "tags__label", id="generic-relation"
+            Photo,
+            {"fields": ["title", "tags__label"]},
+            ["tags__label", "several"],
+            id="through-a-generic-relation",
+        ),
+        pytest.param(
+            Product,
+            {"fields": ["name"], "title_field": "categroy__name"},
+            ["categroy__name"],
+            id="title-field-with-an-unknown-link",
+        ),
+        pytest.param(
+            Review,
+            {"fields": ["title"], "title_field": "product__category"},
+            ["product__category"],
+            id="title-field-ending-on-a-relation",
+        ),
+        pytest.param(
+            Category,
+            {"fields": ["name"], "title_field": "products__name"},
+            ["products__name"],
+            id="title-field-through-a-many-valued-link",
+        ),
+        pytest.param(
+            Product,
+            {"fields": ["name", "category__name", "category__name"]},
+            ["category__name", "twice"],
+            id="declared-twice",
+        ),
+        # exclude removes fields from the model's own guessed text fields: a
+        # path through a relation is never among them, so there is nothing to
+        # remove.
+        pytest.param(
+            Product,
+            {"exclude": ["category__name"]},
+            ["category__name", "own field"],
+            id="in-exclude",
         ),
     ],
 )
-def test_lookup_path_through_a_many_valued_relation_fails_at_registration(
-    model: type[Model], fields: list[str], path: str
+def test_invalid_lookup_path_fails_at_registration_naming_it(
+    model: type[Model], options: dict[str, Any], fragments: list[str]
 ) -> None:
-    # Each first link can hold several objects: the path has no single value.
     with pytest.raises(ImproperlyConfigured) as excinfo:
-        rag.register(model, fields=fields)
+        rag.register(model, **options)
 
     message = str(excinfo.value)
-    assert path in message
-    assert "several" in message
-
-
-@pytest.mark.parametrize(
-    ("model", "fields", "path"),
-    [
-        pytest.param(Product, ["name"], "categroy__name", id="unknown-link"),
-        pytest.param(Review, ["title"], "product__category", id="ending-on-relation"),
-        pytest.param(Category, ["name"], "products__name", id="many-valued-link"),
-    ],
-)
-def test_title_field_invalid_lookup_path_fails_at_registration_naming_the_path(
-    model: type[Model], fields: list[str], path: str
-) -> None:
-    with pytest.raises(ImproperlyConfigured, match=re.escape(path)):
-        rag.register(model, fields=fields, title_field=path)
-
-
-def test_lookup_path_declared_twice_fails_at_registration_naming_it() -> None:
-    with pytest.raises(ImproperlyConfigured) as excinfo:
-        rag.register(Product, fields=["name", "category__name", "category__name"])
-
-    message = str(excinfo.value)
-    assert "category__name" in message
-    assert "twice" in message
+    for fragment in fragments:
+        assert fragment in message
 
 
 def test_lookup_path_through_a_generic_foreign_key_fails_at_registration() -> None:
@@ -463,17 +467,6 @@ def test_lookup_path_through_a_generic_foreign_key_fails_at_registration() -> No
     assert "generic foreign key" in message
     # A generic foreign key is a relation, only one without a single model.
     assert "not a relation" not in message
-
-
-def test_lookup_path_in_exclude_fails_at_registration_naming_it() -> None:
-    # exclude removes fields from the model's own guessed text fields: a path
-    # through a relation is never among them, so there is nothing to remove.
-    with pytest.raises(ImproperlyConfigured) as excinfo:
-        rag.register(Product, exclude=["category__name"])
-
-    message = str(excinfo.value)
-    assert "category__name" in message
-    assert "own field" in message
 
 
 def _register_a_lookup_path_from_a_models_module(tmp_path: Path) -> str:
