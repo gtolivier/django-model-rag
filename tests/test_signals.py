@@ -4547,6 +4547,106 @@ def test_adding_a_mentee_to_a_mentor_replaces_only_the_mentors_group(
 
 
 @pytest.mark.django_db
+def test_removing_a_mentee_from_a_mentor_replaces_only_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the remove below is observed.
+    # Ada has two mentors: Grace, which mentors another person too, so that its
+    # group keeps the mentee left, and Linus, which Ada keeps.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    grace.mentees.add(ada, alan)
+    linus.mentees.add(ada)
+
+    # Removed from the mentor's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with Grace as its instance and Ada's primary
+    # key in pk_set, so the person to replace is the instance, the mentor,
+    # not the one named in pk_set. No row is saved again: the remove deletes
+    # only Grace's link to Ada.
+    with django_capture_on_commit_callbacks(execute=True):
+        grace.mentees.remove(ada)
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, without Ada's name, its other mentee kept,
+    # and no group of the mentor Ada keeps. Ada's own group is not replaced:
+    # it follows its mentees, not its mentors, so the remove does not change
+    # it.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace\n\nAlan",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
+def test_clearing_the_mentees_of_a_mentor_replaces_only_the_mentors_group(
+    settings: Settings,
+    built_outputs: list[TrackedRecordingOutput],
+    django_capture_on_commit_callbacks: DjangoCaptureOnCommitCallbacks,
+) -> None:
+    settings.MODEL_RAG_OUTPUT = {"BACKEND": TRACKED_BACKEND}
+
+    _register_persons_following_their_mentees()
+
+    # Created outside the captured callbacks: the commit callbacks of these
+    # saves and these adds never run, so only the clear below is observed.
+    # Grace has two mentees: Alan mentors a person of its own, so that a
+    # replacement of its group would show that mentee, Ada mentors no one.
+    ada = Person.objects.create(name="Ada")
+    alan = Person.objects.create(name="Alan")
+    grace = Person.objects.create(name="Grace")
+    linus = Person.objects.create(name="Linus")
+    grace.mentees.add(ada, alan)
+    alan.mentees.add(linus)
+    # A person neither mentored by Grace nor mentoring Grace: the clear below
+    # does not change Barbara's group.
+    barbara = Person.objects.create(name="Barbara")
+    barbara.mentees.add(linus)
+
+    # Cleared from the mentor's side, the reverse side of the many-to-many:
+    # Django sends m2m_changed with Grace as its instance and no primary keys
+    # at all, so the person to replace is the instance, the mentor, not its
+    # former mentees. No row is saved again: the clear deletes only Grace's
+    # links to its mentees.
+    with django_capture_on_commit_callbacks(execute=True):
+        grace.mentees.clear()
+        # Nothing may reach the output before the commit.
+        assert _replaced(built_outputs) == []
+
+    # Grace's group as committed, without the names of its former mentees,
+    # and no group of the person unrelated to the clear. The groups of the
+    # former mentees are not replaced: each follows its own mentees, not its
+    # mentors, so the clear does not change them.
+    assert _received_groups(built_outputs) == {
+        f"testapp.person:{grace.pk}": [
+            NormalizedDocument(
+                text="Grace",
+                source_app_label="testapp",
+                source_model="person",
+                source_pk=grace.pk,
+                title="Grace",
+            ),
+        ],
+    }
+
+
+@pytest.mark.django_db
 def test_adding_a_mentor_to_a_person_following_both_sides_resyncs_every_person(
     settings: Settings,
     built_outputs: list[TrackedRecordingOutput],

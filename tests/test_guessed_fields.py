@@ -176,14 +176,8 @@ def test_excluded_field_is_left_out_of_the_guessed_text_and_title() -> None:
         pytest.param(
             Note,
             {"fields": ["body"], "exclude": ["title"]},
-            r"fields.*exclude|exclude.*fields",
+            r"^Note: .*(fields.*exclude|exclude.*fields)",
             id="exclude-with-declared-fields",
-        ),
-        pytest.param(
-            Note,
-            {"fields": ["body"], "exclude": ["title"]},
-            r"^Note: ",
-            id="exclude-with-declared-fields-names-the-model",
         ),
     ],
 )

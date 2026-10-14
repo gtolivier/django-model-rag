@@ -1217,12 +1217,19 @@ dropped and stays a known limit; 11f lifts 11c-quater and 11d-bis.
     guarantees (a frozen dataclass), shapes outside the scope, and the
     column-loading promises (the one-query promises stay). The
     error-message tests are grouped into parametrized tables. One pull
-    request touching tests only. Done: sixteen tests removed (TDD steps a
+    request touching tests only. Done: twelve tests removed (TDD steps a
     later test covers, the dataclass guarantees of `NormalizedDocument`, and
-    the Band and Mentor `remove()`/`clear()` tests that `add()`/`set()`
+    the Band `remove()`/`clear()` tests that its `add()`/`set()` tests
     already pin), and the registration and configuration errors grouped
     into tables. The column-loading promises stay: the pipeline loads its
-    columns with `only()`, so they remain tested as long as it does.
+    columns with `only()`, so they remain tested as long as it does. Kept
+    after review: `NormalizedDocument`'s unhashability (it opts out by
+    hand), the Mentor `remove()`/`clear()` tests (the self-referential
+    shape has no `set()` test) and the default-`__str__` title. Left as
+    is: the tables type their bad values as `Any`, so mypy no longer
+    checks that `register`'s signature rejects them, and some messages
+    are still matched loosely (`language_field` naming a foreign key,
+    the constant-language rows).
 - [ ] **12a. Manual sync mode.** `MODEL_RAG_SYNC = "auto" | "notify" |
   "manual"` replaces `MODEL_RAG_SIGNALS`. In `manual`, nothing is connected
   — the `m2m_changed` receiver of 11d and the `post_delete` listeners

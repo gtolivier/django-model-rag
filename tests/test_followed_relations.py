@@ -325,6 +325,24 @@ def test_model_without_text_field_registers_when_a_followed_relation_brings_text
 
 
 @pytest.mark.django_db
+def test_model_without_text_or_str_that_follows_a_relation_takes_the_default_str() -> (
+    None
+):
+    # StockLevel has no own text field to give a title, and defines no
+    # __str__: the title is whatever str() gives for the instance.
+    category = Category.objects.create(name="Furniture")
+    product = _create_chair(category)
+    stock_level = StockLevel.objects.create(
+        quantity=12, counted_on=date(2026, 3, 1), in_stock=True, product=product
+    )
+    rag.register(StockLevel, follow=["product"])
+
+    documents = run_documents()
+
+    assert [document.title for document in documents] == [str(stock_level)]
+
+
+@pytest.mark.django_db
 def test_model_without_text_field_that_follows_a_relation_takes_its_str_as_title() -> (
     None
 ):

@@ -438,13 +438,6 @@ def test_registering_no_declared_field_names_the_model_not_text_fields() -> None
         pytest.param(
             Product, {"fields": {"name", "description"}}, None, id="unordered-set"
         ),
-        # A generator is spent by the checks and would be registered empty.
-        pytest.param(
-            Product,
-            {"fields": (name for name in ["name"])},
-            None,
-            id="one-shot-generator",
-        ),
     ],
 )
 def test_registering_invalid_fields_fails_naming_the_culprit(
@@ -452,6 +445,14 @@ def test_registering_invalid_fields_fails_naming_the_culprit(
 ) -> None:
     with pytest.raises(ImproperlyConfigured, match=match):
         rag.register(model, **options)
+
+
+def test_registering_a_one_shot_generator_of_field_names_fails() -> None:
+    with pytest.raises(ImproperlyConfigured):
+        # A generator is spent by the checks and would be registered empty:
+        # the type checker rightly rejects it. Built here rather than in a
+        # table row, so that each run gets a fresh one.
+        rag.register(Product, fields=(name for name in ["name"]))  # type: ignore[arg-type]
 
 
 @pytest.mark.django_db

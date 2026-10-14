@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Hashable
 from typing import Any
 
 import pytest
@@ -258,3 +259,13 @@ def test_document_repr_cuts_a_long_title_to_its_first_60_characters() -> None:
         "title='Desk lamp with an adjustable arm, a weighted base and a warm'… "
         "text='A desk lamp'>"
     )
+
+
+def test_document_is_not_hashable() -> None:
+    # Documents compare by value but are not meant for sets or dict keys. A
+    # frozen dataclass would be hashable: NormalizedDocument opts out by hand.
+    document = make_document()
+
+    assert not isinstance(document, Hashable)
+    with pytest.raises(TypeError):
+        hash(document)
